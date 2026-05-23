@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+from math import floor
+
+from Core.Types.scene_data import SceneMeshPart
+from Geometry.Planes.plane_fitter import fit_plane
+from Geometry.Projection.camera_projection import (
+    image_uv,
+    project_image_depth_to_point,
+    ray_plane_intersect,
+)
+from Geometry.Regions.region_analyzer import DepthRegion
+
+
+_MIN_VALID_DEPTH = 0.04
+_MIN_POINTS_FOR_FIT = 6
+
+
+def build_masked_plane_part(
+    region: DepthRegion,
+    depth_map: list[list[float]],
+    *,
+    analysis_columns: int,
+    analysis_rows: int,
+    depth_strength: float,
+    aspect_ratio: float = 1.0,
+    depth_edge_threshold: float = 0.12,
+) -> SceneMeshPart:
+    points = _unproject_cell_centers(
+        region.cells,
+        depth_map,
+        analysis_columns,
+        analysis_rows,
+        aspect_ratio,
+        depth_strength,
+    )
+    fit = fit_plane(points) if len(points) >= _MIN_POINTS_FOR_FIT else None
+
+    vertices = []
+    uvs = []
+    corner_indices: dict[tuple[int, int], int] = {}
+    for cell_column, cell_row in sorted(region.cells, key=lambda cell: (cell[1], cell[0])):
+        for corner in (
+            (cell_column, cell_row),
+            (cell_column + 1, cell_row),
+            (cell_column, cell_row + 1),
+            (cell_column + 1, cell_row + 1),
+        ):
+            if corner in corner_indices:
+                continue
+            u = corner[0] / analysis_columns
+            raw_v = corner[1] / analysis_rows
+            vertex = _project_corner(
+                u=u,
+                raw_v=raw_v,
+                fit=fit,
+                region=region,
+                aspect_ratio=aspect_ratio,
+                depth_strength=depth_strength,
+            )
+            corner_indices[corner] = len(vertices)
+            vertices.append(vertex)
+            uvs.append(image_uv(u, raw_v))
+
+    faces = []
+    cell_depths = _cell_depths(region.cells, depth_map, analysis_columns, analysis_rows)
+    for cell_column, cell_row in sorted(region.cells, key=lambda cell: (cell[1], cell[0])):
+        if _is_depth_edge_cell(
+            cell_column,
+            cell_row,
+            cell_depths,
+            threshold=depth_edge_threshold,
+        ):
+            continue
+        top_left = corner_indices[(cell_column, cell_row)]
+        top_right = corner_indices[(cell_column + 1, cell_row)]
+        bottom_left = corner_indices[(cell_column, cell_row + 1)]
+        bottom_right = corner_indices[(cell_column + 1, cell_row + 1)]
+        faces.append((top_left, bottom_left, top_right))
+        faces.append((top_right, bottom_left, bottom_right))
+
+    return SceneMeshPart(
+        name=region.name,
+        kind="plane",
+        vertices=vertices,
+        faces=faces,
+        uvs=uvs,
+    )
+
+
+def _unproject_cell_centers(
+    cells: list[tuple[int, int]],
+    depth_map: list[list[float]],
+    analysis_columns: int,
+    analysis_rows: int,
+    aspect_ratio: float,
+    depth_strength: float,
+) -> list[tuple[float, float, float]]:
+    source_rows = len(depth_map)
+    source_cols = len(depth_map[0])
+    points = []
+    for col, row in cells:
+        src_x = min(floor((col + 0.5) * source_cols / analysis_columns), source_cols - 1)
+        src_y = min(floor((row + 0.5) * source_rows / analysis_rows), source_rows - 1)
+        depth = depth_map[src_y][src_x]
+        if depth < _MIN_VALID_DEPTH:
+            continue
+        u = (col + 0.5) / analysis_columns
+        raw_v = (row + 0.5) / analysis_rows
+        points.append(project_image_depth_to_point(u, raw_v, depth, aspect_ratio, depth_strength))
+    return points
+
+
+def _project_corner(
+    *,
+    u: float,
+    raw_v: float,
+    fit: tuple[tuple[float, float, float], tuple[float, float, float]] | None,
+    region: DepthRegion,
+    aspect_ratio: float,
+    depth_strength: float,
+) -> tuple[float, float, float]:
+    if fit is not None:
+        centroid, normal = fit
+        projected = ray_plane_intersect(u, raw_v, centroid, normal, aspect_ratio)
+        if projected is not None:
+            return projected
+    return project_image_depth_to_point(u, raw_v, region.average_depth, aspect_ratio, depth_strength)
+
+
+def _cell_depths(
+    cells: list[tuple[int, int]],
+    depth_map: list[list[float]],
+    analysis_columns: int,
+    analysis_rows: int,
+) -> dict[tuple[int, int], float]:
+    source_rows = len(depth_map)
+    source_cols = len(depth_map[0])
+    depths = {}
+    for col, row in cells:
+        src_x = min(floor((col + 0.5) * source_cols / analysis_columns), source_cols - 1)
+        src_y = min(floor((row + 0.5) * source_rows / analysis_rows), source_rows - 1)
+        depths[(col, row)] = depth_map[src_y][src_x]
+    return depths
+
+
+def _is_depth_edge_cell(
+    col: int,
+    row: int,
+    depths: dict[tuple[int, int], float],
+    *,
+    threshold: float,
+) -> bool:
+    if threshold <= 0:
+        return False
+
+    center = depths[(col, row)]
+    for neighbor in ((col - 1, row), (col + 1, row), (col, row - 1), (col, row + 1)):
+        neighbor_depth = depths.get(neighbor)
+        if neighbor_depth is not None and abs(center - neighbor_depth) > threshold:
+            return True
+    return False

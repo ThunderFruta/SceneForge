@@ -1,0 +1,18 @@
+[project]
+name = "sceneforge"
+version = "0.1.0"
+description = "Prototype tools for converting 2D images and depth maps into simple 3D meshes."
+requires-python = ">=3.11"
+dependencies = [
+  "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["Tests"]
+
