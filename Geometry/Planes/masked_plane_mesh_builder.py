@@ -26,6 +26,7 @@ def build_masked_plane_part(
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
 ) -> SceneMeshPart:
+    del depth_edge_threshold
     points = _unproject_cell_centers(
         region.cells,
         depth_map,
@@ -63,15 +64,7 @@ def build_masked_plane_part(
             uvs.append(image_uv(u, raw_v))
 
     faces = []
-    cell_depths = _cell_depths(region.cells, depth_map, analysis_columns, analysis_rows)
     for cell_column, cell_row in sorted(region.cells, key=lambda cell: (cell[1], cell[0])):
-        if _is_depth_edge_cell(
-            cell_column,
-            cell_row,
-            cell_depths,
-            threshold=depth_edge_threshold,
-        ):
-            continue
         top_left = corner_indices[(cell_column, cell_row)]
         top_right = corner_indices[(cell_column + 1, cell_row)]
         bottom_left = corner_indices[(cell_column, cell_row + 1)]
@@ -126,37 +119,3 @@ def _project_corner(
         if projected is not None:
             return projected
     return project_image_depth_to_point(u, raw_v, region.average_depth, aspect_ratio, depth_strength)
-
-
-def _cell_depths(
-    cells: list[tuple[int, int]],
-    depth_map: list[list[float]],
-    analysis_columns: int,
-    analysis_rows: int,
-) -> dict[tuple[int, int], float]:
-    source_rows = len(depth_map)
-    source_cols = len(depth_map[0])
-    depths = {}
-    for col, row in cells:
-        src_x = min(floor((col + 0.5) * source_cols / analysis_columns), source_cols - 1)
-        src_y = min(floor((row + 0.5) * source_rows / analysis_rows), source_rows - 1)
-        depths[(col, row)] = depth_map[src_y][src_x]
-    return depths
-
-
-def _is_depth_edge_cell(
-    col: int,
-    row: int,
-    depths: dict[tuple[int, int], float],
-    *,
-    threshold: float,
-) -> bool:
-    if threshold <= 0:
-        return False
-
-    center = depths[(col, row)]
-    for neighbor in ((col - 1, row), (col + 1, row), (col, row - 1), (col, row + 1)):
-        neighbor_depth = depths.get(neighbor)
-        if neighbor_depth is not None and abs(center - neighbor_depth) > threshold:
-            return True
-    return False

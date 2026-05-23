@@ -8,6 +8,7 @@ import warnings
 from Core.Types.scene_data import StructuredSceneData
 from Export.Blend.blend_exporter import export_blend_from_obj
 from Export.OBJ.obj_exporter import ObjExportResult, export_scene_obj
+from Geometry.Mesh.coverage_relief_builder import build_coverage_relief_part
 from Geometry.Mesh.region_relief_builder import build_region_relief_part
 from Geometry.Normals.normal_builder import with_scene_normals
 from Geometry.Planes.plane_mesh_builder import build_plane_part
@@ -125,6 +126,11 @@ def build_structured_scene_data(
         depth_map,
         analysis_columns=analysis_columns,
         analysis_rows=analysis_rows,
+        depth_bucket_size=0.04,
+        min_plane_cells=min(
+            max(12, analysis_columns // 2),
+            max(4, analysis_columns * analysis_rows // 4),
+        ),
     )
 
     plane_parts = [
@@ -161,5 +167,19 @@ def build_structured_scene_data(
             scene,
             plane_thickness=solidify_thickness,
             detail_thickness=solidify_thickness * 0.5,
+        )
+    if include_details:
+        coverage_part = build_coverage_relief_part(
+            depth_map,
+            analysis_columns=analysis_columns,
+            analysis_rows=analysis_rows,
+            depth_strength=depth_strength,
+            aspect_ratio=aspect_ratio,
+            depth_edge_threshold=depth_edge_threshold * 1.5,
+            depth_offset=solidify_thickness * 0.5 if solidify else 0.02,
+        )
+        scene = StructuredSceneData(
+            plane_parts=scene.plane_parts,
+            detail_parts=[*scene.detail_parts, coverage_part],
         )
     return with_scene_normals(scene)

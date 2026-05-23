@@ -45,6 +45,7 @@ def test_build_structured_scene_data_can_include_detail_patches() -> None:
     assert scene.plane_parts
     assert scene.detail_parts
     assert scene.detail_parts[0].name.startswith("detail_")
+    assert scene.detail_parts[-1].name == "coverage_000"
 
 
 def test_structured_scene_data_solidifies_by_default() -> None:

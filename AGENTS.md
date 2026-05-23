@@ -34,6 +34,7 @@ Prefer a visible, practical MVP over perfect reconstruction or large architectur
 - Prefer simple, inspectable algorithms before adding heavy ML dependencies.
 - Use existing, well-supported libraries for image IO, mesh processing, and export when they are clearly useful.
 - Do not introduce a framework, package manager, or large dependency stack without a concrete implementation need.
+- For large plan-based refactors, spawn subagents when it will improve speed, parallelism, or review coverage.
 - Document any new setup or run commands in a README once real code exists.
 
 ## Suggested First Implementation Shape

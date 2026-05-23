@@ -89,6 +89,23 @@ def test_build_plane_part_region_with_hole_does_not_fill_hole_cell() -> None:
     assert len(part.vertices) == 16
 
 
+def test_build_plane_part_keeps_region_faces_across_depth_edges() -> None:
+    region = _region([(0, 0), (1, 0), (0, 1), (1, 1)])
+    depth_map = [[0.1, 0.9], [0.1, 0.9]]
+
+    part = build_plane_part(
+        region,
+        depth_map,
+        analysis_columns=2,
+        analysis_rows=2,
+        depth_strength=1.0,
+        aspect_ratio=1.0,
+        depth_edge_threshold=0.12,
+    )
+
+    assert len(part.faces) == 8
+
+
 def test_build_plane_part_uvs_stay_normalized() -> None:
     region = _region([(0, 0), (1, 0), (0, 1)])
 
