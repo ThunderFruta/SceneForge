@@ -106,6 +106,7 @@ SceneForge/
       depth_loader.py
   Geometry/
     Mesh/
+      coverage_relief_builder.py
       grid_mesh_builder.py
       region_relief_builder.py
     Normals/
@@ -150,6 +151,7 @@ The current useful code focuses on:
 - Building large stable depth regions as masked fitted camera-space plane meshes in structured mode.
 - Filtering structured plane/detail faces across configurable depth discontinuities.
 - Solidifying structured scene parts with conservative boundary side walls for better off-camera inspection.
+- Filling structured `--details` output with a behind-plane coverage relief surface where plane segmentation misses receding walls, floors, or object pieces.
 - Assigning UV coordinates and per-vertex normals.
 - Exporting a Blender-friendly `.obj` file.
 

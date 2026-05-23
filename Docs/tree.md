@@ -61,6 +61,7 @@ SceneForge/
     __init__.py
     Mesh/
       __init__.py
+      coverage_relief_builder.py
       grid_mesh_builder.py
       region_relief_builder.py
     Normals/
@@ -110,6 +111,7 @@ SceneForge/
       test_blend_exporter.py
       test_obj_exporter.py
     Geometry/
+      test_coverage_relief_builder.py
       test_camera_projection.py
       test_plane_fitter.py
       test_grid_mesh_builder.py

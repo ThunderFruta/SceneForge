@@ -49,12 +49,16 @@ This file tracks notable project changes while SceneForge is still small.
 - Added structured-mode scan solidification with thin side walls on visible plane/detail boundaries.
 - Added `--solidify`, `--no-solidify`, `--solidify-thickness`, and `--depth-edge-threshold` CLI controls for structured mode.
 - Added depth-edge thresholding for structured plane/detail mesh faces before solidification.
+- Tightened structured depth bucket grouping and plane-size promotion so small fragments are less likely to become coarse occluding plane chunks.
+- Added `coverage_000`, a behind-plane valid-depth relief fallback in structured `--details` output, to fill visible floor/wall/object areas missed by plane segmentation.
+- Increased the CLI default resolution to `128` for cleaner structured scan masks.
 - Generated `Output/20260523_175613_structured_room_solidified/room_solidified.blend` from the room render/depth pair with `--details --obj`.
-- Tests: 48 passed.
+- Generated `Output/20260523_182651_structured_room_coverage_128/room_coverage_128.blend` from the room render/depth pair with `--details --obj`.
+- Tests: 51 passed.
 
 ## Current State
 
-SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, and adds side-wall thickness by default; add `--details` when you want to inspect the uncertain relief patches.
+SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, and adds side-wall thickness by default; add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
 
 ## Next Likely Change
 

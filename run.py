@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resolution",
         type=int,
-        default=64,
+        default=128,
         help="Maximum grid points along the largest image dimension.",
     )
     parser.add_argument(
@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
         "--details",
         action="store_true",
         help=(
-            "Structured mode only: include leftover relief detail patches. "
+            "Structured mode only: include leftover relief detail patches and a behind-plane coverage surface. "
             "Off by default while plane reconstruction stabilizes."
         ),
     )

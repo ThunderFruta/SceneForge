@@ -48,12 +48,12 @@ python3 run.py \
   --depth Assets/Samples/Room/room_render_depth.png \
   --output Output \
   --mode structured \
-  --resolution 64 \
+  --resolution 128 \
   --depth-strength 0.8 \
   --texture
 ```
 
-Add `--details` in structured mode to include leftover uncertain regions as relief patches. The default structured output is plane-only so visual debugging starts from the stable room surfaces instead of shredded detail fragments.
+Add `--details` in structured mode to include leftover uncertain regions as relief patches plus a valid-depth coverage surface behind the fitted planes. The default structured output is plane-only so visual debugging starts from the stable room surfaces instead of shredded detail fragments.
 
 Structured mode solidifies by default. Use `--no-solidify` to export front surfaces only, `--solidify` to force side walls, `--solidify-thickness` to tune side-wall depth, and `--depth-edge-threshold` to remove faces across depth discontinuities before solidification.
 
@@ -61,6 +61,6 @@ Outputs are written into timestamped run folders under `Output/`, such as `Outpu
 
 ## Current Boundary
 
-Relief mode intentionally uses a simple grid mesh and nearest-neighbor depth sampling. Structured mode is heuristic: it ignores near-black invalid depth cells, detects large stable depth regions, unprojects those cells into a simple camera-space point cloud, fits a best plane, creates masked textured meshes from the region cells, skips high-depth-jump faces, and adds thin side walls along open boundaries by default. Detail patches are opt-in with `--details`. It does not yet infer semantic labels like wall, floor, or chair, and it does not reconstruct hidden backs or unseen room surfaces. Creating `.blend` output requires Blender on PATH, or a custom path passed with `--blender`.
+Relief mode intentionally uses a simple grid mesh and nearest-neighbor depth sampling. Structured mode is heuristic: it ignores near-black invalid depth cells, detects large stable depth regions, unprojects those cells into a simple camera-space point cloud, fits a best plane, creates masked textured meshes from the region cells, skips high-depth-jump faces, and adds thin side walls along open boundaries by default. Detail patches and a behind-plane coverage surface are opt-in with `--details`. It does not yet infer semantic labels like wall, floor, or chair, and it does not reconstruct hidden backs or unseen room surfaces. Creating `.blend` output requires Blender on PATH, or a custom path passed with `--blender`.
 
 Keep export formats, depth estimation, and mesh generation separate. Each should remain replaceable without rewriting the full pipeline.
