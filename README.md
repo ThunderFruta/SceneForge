@@ -25,11 +25,25 @@ python run.py --image path/to/image.png --depth path/to/depth.png --mode relief
 Key options:
 
 - `--mode relief|structured`
+- `--segmentation none|mask|auto`
+- `--mask path/to/mask.png`
 - `--output Output`
 - `--resolution 128`
 - `--depth-strength 1.0`
 - `--obj`
 - `--no-texture`
+
+Structured segmentation example:
+
+```bash
+python run.py \
+  --mode structured \
+  --segmentation mask \
+  --mask Assets/Samples/Room/room_render_mask.png \
+  --image Assets/Samples/Room/room_render.png \
+  --depth Assets/Samples/Room/room_render_depth.png \
+  --details
+```
 
 ## Development
 

@@ -9,6 +9,7 @@ SceneForge/
   .gitignore
   AGENTS.md
   BEFORE_README.md
+  README.md
   pyproject.toml
   run.py
   current_changes.md
@@ -22,6 +23,7 @@ SceneForge/
     Samples/
       Room/
         README.md
+        room_render_mask.png
       testing_depth.png
       testing_image.png
 
@@ -30,6 +32,8 @@ SceneForge/
     Export/
     Mesh/
     Pipeline/
+    Segmentation/
+      README.md
 
   Core/
     __init__.py
@@ -44,6 +48,7 @@ SceneForge/
 
   Docs/
     architecture.md
+    segmentation.md
     tree.md
 
   Export/
@@ -103,6 +108,26 @@ SceneForge/
       __init__.py
       structured_scene_pipeline.py
 
+  Segmentation/
+    __init__.py
+    Core/
+      __init__.py
+      segmentation_labels.py
+      segmentation_mask.py
+    Integration/
+      __init__.py
+      mask_to_regions.py
+    Providers/
+      __init__.py
+      Heuristic/
+        __init__.py
+        heuristic_segmenter.py
+      Manual/
+        __init__.py
+        mask_loader.py
+      SAM3/
+        README.md
+
   Tests/
     __init__.py
     Core/
@@ -126,6 +151,10 @@ SceneForge/
     Pipeline/
       test_image_to_mesh_pipeline.py
       test_structured_scene_pipeline.py
+    Segmentation/
+      test_heuristic_segmenter.py
+      test_mask_loader.py
+      test_mask_to_regions.py
 
   Tools/
     Debug/

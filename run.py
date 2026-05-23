@@ -93,6 +93,16 @@ def parse_args() -> argparse.Namespace:
         help="Structured mode only: reject faces spanning larger normalized depth jumps.",
     )
     parser.add_argument(
+        "--segmentation",
+        choices=("none", "mask", "auto"),
+        default="none",
+        help="Structured mode only: segmentation source for mask-guided reconstruction.",
+    )
+    parser.add_argument(
+        "--mask",
+        help="Structured mode only: RGB label mask used with `--segmentation mask`.",
+    )
+    parser.add_argument(
         "--blender",
         default="blender",
         help="Blender executable name or path.",
@@ -109,6 +119,8 @@ def main() -> None:
         image_path=args.image,
     )
     try:
+        if args.mode != "structured" and (args.segmentation != "none" or args.mask):
+            raise ValueError("Segmentation options are only supported in structured mode.")
         if args.mode == "structured":
             result = run_structured_scene_pipeline(
                 image_path=Path(args.image),
@@ -123,6 +135,8 @@ def main() -> None:
                 solidify=args.solidify,
                 solidify_thickness=args.solidify_thickness,
                 depth_edge_threshold=args.depth_edge_threshold,
+                segmentation=args.segmentation,
+                mask_path=Path(args.mask) if args.mask else None,
             )
         else:
             result = run_image_to_mesh_pipeline(
@@ -135,7 +149,7 @@ def main() -> None:
                 keep_obj=args.obj,
                 blender_executable=args.blender,
             )
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         print(f"SceneForge error: {error}", file=sys.stderr)
         raise SystemExit(1) from error
 

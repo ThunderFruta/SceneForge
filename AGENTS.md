@@ -6,7 +6,7 @@ Guidance for coding agents working in this repository.
 
 SceneForge is an early-stage computer graphics project for turning 2D images into usable 3D assets and scenes. The current source of truth is `BEFORE_README.md`, which describes the idea, first milestone, and longer-term roadmap.
 
-There is not yet an application structure, build system, or implementation. Treat this repository as a project seed until real code exists.
+The repository now has a Python CLI prototype. It can load image/depth inputs, build relief or structured geometry, export `.blend` by default through Blender, optionally keep OBJ sidecars, render `preview.png`, and use optional segmentation masks for structured mode.
 
 Also read:
 
@@ -36,6 +36,14 @@ Prefer a visible, practical MVP over perfect reconstruction or large architectur
 - Do not introduce a framework, package manager, or large dependency stack without a concrete implementation need.
 - For large plan-based refactors, spawn subagents when it will improve speed, parallelism, or review coverage.
 - Document any new setup or run commands in a README once real code exists.
+
+## Agent Collaboration
+
+- Use subagents whenever a task has independent parallel work that can improve speed or review quality.
+- Good subagent lanes include docs/tree verification, test coverage review, visual acceptance checks, isolated subsystem implementation, and risk review.
+- Give subagents clear file or responsibility ownership.
+- Do not let multiple subagents edit overlapping files unless the ownership split is explicit.
+- Keep final integration, conflict resolution, and end-to-end verification in the main agent thread.
 
 ## Suggested First Implementation Shape
 

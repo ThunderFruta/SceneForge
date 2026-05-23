@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import floor
 
 from Core.Types.scene_data import SceneMeshPart
@@ -16,6 +17,12 @@ _MIN_VALID_DEPTH = 0.04
 _MIN_POINTS_FOR_FIT = 6
 
 
+@dataclass(frozen=True)
+class MaskedPlaneBuildResult:
+    part: SceneMeshPart
+    used_plane_fallback: bool
+
+
 def build_masked_plane_part(
     region: DepthRegion,
     depth_map: list[list[float]],
@@ -26,6 +33,27 @@ def build_masked_plane_part(
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
 ) -> SceneMeshPart:
+    return build_masked_plane_part_with_fallback(
+        region,
+        depth_map,
+        analysis_columns=analysis_columns,
+        analysis_rows=analysis_rows,
+        depth_strength=depth_strength,
+        aspect_ratio=aspect_ratio,
+        depth_edge_threshold=depth_edge_threshold,
+    ).part
+
+
+def build_masked_plane_part_with_fallback(
+    region: DepthRegion,
+    depth_map: list[list[float]],
+    *,
+    analysis_columns: int,
+    analysis_rows: int,
+    depth_strength: float,
+    aspect_ratio: float = 1.0,
+    depth_edge_threshold: float = 0.12,
+) -> MaskedPlaneBuildResult:
     del depth_edge_threshold
     points = _unproject_cell_centers(
         region.cells,
@@ -72,13 +100,14 @@ def build_masked_plane_part(
         faces.append((top_left, bottom_left, top_right))
         faces.append((top_right, bottom_left, bottom_right))
 
-    return SceneMeshPart(
+    part = SceneMeshPart(
         name=region.name,
         kind="plane",
         vertices=vertices,
         faces=faces,
         uvs=uvs,
     )
+    return MaskedPlaneBuildResult(part=part, used_plane_fallback=(fit is None))
 
 
 def _unproject_cell_centers(

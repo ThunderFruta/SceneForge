@@ -54,12 +54,18 @@ This file tracks notable project changes while SceneForge is still small.
 - Increased the CLI default resolution to `128` for cleaner structured scan masks.
 - Generated `Output/20260523_175613_structured_room_solidified/room_solidified.blend` from the room render/depth pair with `--details --obj`.
 - Generated `Output/20260523_182651_structured_room_coverage_128/room_coverage_128.blend` from the room render/depth pair with `--details --obj`.
-- Tests: 51 passed.
+- Added top-level `Segmentation/` with shared labels, mask data, manual RGB mask loading, heuristic segmentation, mask-to-region conversion, and SAM 3 provider documentation.
+- Added `--segmentation none|mask|auto` and `--mask PATH` for structured mode.
+- Added `Assets/Samples/Room/room_render_mask.png` as the first manual segmentation baseline for the room sample.
+- Added `Docs/segmentation.md` and `Configs/Segmentation/README.md`.
+- Updated `AGENTS.md` with explicit subagent collaboration guidance for parallel work.
+- Generated `Output/20260523_194731_structured_room_masked/room_masked.blend` from the room render/depth/mask set with `--details --obj`.
+- Tests: 63 passed.
 
 ## Current State
 
-SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, and adds side-wall thickness by default; add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
+SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, and adds side-wall thickness by default. Optional segmentation masks can guide wall/floor/ceiling plane regions and object/detail relief regions. Add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
 
 ## Next Likely Change
 
-Improve structured segmentation and region merging so the source-facing room preview resembles the input image with fewer coarse masks before adding semantic room completion.
+Improve the manual room mask and then add a real SAM 3 provider behind the `Segmentation/` interface once mask-guided reconstruction proves useful.
