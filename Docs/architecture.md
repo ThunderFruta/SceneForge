@@ -13,6 +13,7 @@ Input
 
 - `Input/Image/` loads source images as RGB.
 - `Input/Depth/` loads grayscale depth maps or derives fallback depth from image luminance.
+- `Geometry/Cleanup/` owns deterministic cleanup for structured scans: mask hole/island cleanup, obvious spike rejection, small mesh-hole patching, and large occlusion gap diagnostics.
 - `Geometry/Mesh/` converts normalized depth values into grid mesh vertices and triangle faces.
 - `Geometry/Normals/` computes deterministic per-vertex normals from mesh faces.
 - `Geometry/Regions/` finds connected low-variance depth regions for structured mode.
@@ -63,10 +64,12 @@ Use `--segmentation none|mask|auto` to choose the structured-mode segmentation s
 
 Structured mode solidifies by default. Use `--no-solidify` to export front surfaces only, `--solidify` to force side walls, `--solidify-thickness` to tune side-wall depth, and `--depth-edge-threshold` to remove faces across depth discontinuities before solidification.
 
+Structured cleanup is enabled by default. Use `--no-cleanup` to inspect raw structured geometry, `--cleanup` to force cleanup, `--hole-fill-size` to control conservative small-hole filling, and `--spike-threshold conservative|balanced|permissive` to tune horn/spike rejection. Cleanup intentionally does not invent large occluded surfaces; those are reported in `metrics.json` as occlusion gap diagnostics.
+
 Outputs are written into timestamped run folders under `Output/`, such as `Output/20260523_140506_structured_room_render/room_render.blend`. Each run folder also includes `preview.png` rendered from the source-facing camera for quick resemblance checks. Blender imports are scaled up for easier inspection while preserving SceneForge's canonical coordinates: X right, Y depth away from the camera, and Z up. By default, temporary OBJ files are removed after Blender saves the `.blend`. Add `--obj` to keep a sidecar `.obj`, `.mtl`, and texture image next to the `.blend`.
 
 ## Current Boundary
 
-Relief mode intentionally uses a simple grid mesh and nearest-neighbor depth sampling. Structured mode is heuristic: it ignores near-black invalid depth cells, detects large stable depth regions, unprojects those cells into a simple camera-space point cloud, fits a best plane, creates masked textured meshes from the region cells, skips high-depth-jump faces, and adds thin side walls along open boundaries by default. Segmentation can guide structured mode, but the current providers are manual masks and deterministic heuristics, not trained AI. Detail patches and a behind-plane coverage surface are opt-in with `--details`. It does not reconstruct hidden backs or unseen room surfaces. Creating `.blend` output requires Blender on PATH, or a custom path passed with `--blender`.
+Relief mode intentionally uses a simple grid mesh and nearest-neighbor depth sampling. Structured mode is heuristic: it ignores near-black invalid depth cells, detects large stable depth regions, unprojects those cells into a simple camera-space point cloud, fits a best plane, creates masked textured meshes from the region cells, skips high-depth-jump faces, cleans small mask/mesh defects, rejects obvious spike faces, and adds thin side walls along open boundaries by default. Segmentation can guide structured mode, but the current providers are manual masks and deterministic heuristics, not trained AI. Detail patches and a behind-plane coverage surface are opt-in with `--details`. It does not reconstruct hidden backs, unseen room surfaces, or giant occluded holes from one view. Creating `.blend` output requires Blender on PATH, or a custom path passed with `--blender`.
 
 Keep export formats, depth estimation, and mesh generation separate. Each should remain replaceable without rewriting the full pipeline.

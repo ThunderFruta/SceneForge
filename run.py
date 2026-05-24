@@ -92,6 +92,31 @@ def parse_args() -> argparse.Namespace:
         default=0.12,
         help="Structured mode only: reject faces spanning larger normalized depth jumps.",
     )
+    cleanup_group = parser.add_mutually_exclusive_group()
+    cleanup_group.add_argument(
+        "--cleanup",
+        dest="cleanup",
+        action="store_true",
+        help="Structured mode only: clean masks, patch small mesh holes, and filter obvious spike artifacts.",
+    )
+    cleanup_group.add_argument(
+        "--no-cleanup",
+        dest="cleanup",
+        action="store_false",
+        help="Structured mode only: disable cleanup for debugging raw structured output.",
+    )
+    parser.add_argument(
+        "--hole-fill-size",
+        type=int,
+        default=12,
+        help="Structured mode only: maximum small mask/mesh hole size to fill.",
+    )
+    parser.add_argument(
+        "--spike-threshold",
+        choices=("conservative", "balanced", "permissive"),
+        default="balanced",
+        help="Structured mode only: spike rejection strength.",
+    )
     parser.add_argument(
         "--segmentation",
         choices=("none", "mask", "auto"),
@@ -107,7 +132,7 @@ def parse_args() -> argparse.Namespace:
         default="blender",
         help="Blender executable name or path.",
     )
-    parser.set_defaults(texture=True, solidify=True)
+    parser.set_defaults(texture=True, solidify=True, cleanup=True)
     return parser.parse_args()
 
 
@@ -137,6 +162,9 @@ def main() -> None:
                 depth_edge_threshold=args.depth_edge_threshold,
                 segmentation=args.segmentation,
                 mask_path=Path(args.mask) if args.mask else None,
+                cleanup=args.cleanup,
+                hole_fill_size=args.hole_fill_size,
+                spike_threshold=args.spike_threshold,
             )
         else:
             result = run_image_to_mesh_pipeline(

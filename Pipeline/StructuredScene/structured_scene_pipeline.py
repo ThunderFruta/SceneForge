@@ -9,6 +9,8 @@ import warnings
 from Core.Types.scene_data import StructuredSceneData
 from Export.Blend.blend_exporter import export_blend_from_obj
 from Export.OBJ.obj_exporter import ObjExportResult, export_scene_obj
+from Geometry.Cleanup.mask_cleanup import cleanup_segmentation_mask
+from Geometry.Cleanup.scene_cleanup import cleanup_structured_scene
 from Geometry.Mesh.coverage_relief_builder import build_coverage_relief_part
 from Geometry.Mesh.region_relief_builder import build_region_relief_part
 from Geometry.Normals.normal_builder import with_scene_normals
@@ -45,6 +47,9 @@ class _StructuredSceneBuildArtifacts:
     analysis_columns: int
     analysis_rows: int
     fallback_counts: dict[str, int]
+    cleanup_counts: dict[str, int]
+    occlusion_gap_count: int
+    occlusion_gap_area_proxy: float
     scene_before_cleanup: StructuredSceneData
     scene_after_cleanup: StructuredSceneData
 
@@ -65,6 +70,9 @@ def run_structured_scene_pipeline(
     depth_edge_threshold: float = 0.12,
     segmentation: str = "none",
     mask_path: str | Path | None = None,
+    cleanup: bool = True,
+    hole_fill_size: int = 12,
+    spike_threshold: str = "balanced",
     collect_metrics: bool = True,
 ) -> StructuredSceneResult:
     memory_tracker = MemoryTracker().start() if collect_metrics else MemoryTracker()
@@ -103,6 +111,9 @@ def run_structured_scene_pipeline(
         solidify=solidify,
         solidify_thickness=solidify_thickness,
         depth_edge_threshold=depth_edge_threshold,
+        cleanup=cleanup,
+        hole_fill_size=hole_fill_size,
+        spike_threshold=spike_threshold,
     )
 
     runtime_breakdown = {
@@ -149,6 +160,9 @@ def run_structured_scene_pipeline(
             analysis_columns=metrics_artifacts.analysis_columns,
             analysis_rows=metrics_artifacts.analysis_rows,
             fallback_counts=metrics_artifacts.fallback_counts,
+            cleanup_counts=metrics_artifacts.cleanup_counts,
+            occlusion_gap_count=metrics_artifacts.occlusion_gap_count,
+            occlusion_gap_area_proxy=metrics_artifacts.occlusion_gap_area_proxy,
             scene_before_cleanup=metrics_artifacts.scene_before_cleanup,
             scene_after_cleanup=metrics_artifacts.scene_after_cleanup,
         )
@@ -175,6 +189,9 @@ def build_structured_scene_data(
     solidify_thickness: float = 0.04,
     depth_edge_threshold: float = 0.12,
     segmentation_mask: SegmentationMask | None = None,
+    cleanup: bool = True,
+    hole_fill_size: int = 12,
+    spike_threshold: str = "balanced",
 ) -> StructuredSceneData:
     scene, _ = _build_structured_scene_data_internal(
         depth_map,
@@ -185,6 +202,9 @@ def build_structured_scene_data(
         solidify_thickness=solidify_thickness,
         depth_edge_threshold=depth_edge_threshold,
         segmentation_mask=segmentation_mask,
+        cleanup=cleanup,
+        hole_fill_size=hole_fill_size,
+        spike_threshold=spike_threshold,
     )
     return scene
 
@@ -199,6 +219,9 @@ def _build_structured_scene_data_internal(
     solidify_thickness: float = 0.04,
     depth_edge_threshold: float = 0.12,
     segmentation_mask: SegmentationMask | None = None,
+    cleanup: bool = True,
+    hole_fill_size: int = 12,
+    spike_threshold: str = "balanced",
 ) -> tuple[StructuredSceneData, _StructuredSceneBuildArtifacts]:
     source_rows = len(depth_map)
     source_columns = len(depth_map[0])
@@ -220,12 +243,32 @@ def _build_structured_scene_data_internal(
         )
     else:
         segmentation_mask.validate_size(width=source_columns, height=source_rows)
+        if cleanup:
+            mask_result = cleanup_segmentation_mask(
+                segmentation_mask,
+                max_hole_cells=hole_fill_size,
+            )
+            segmentation_mask = mask_result.mask
+            mask_cleanup_counts = {
+                "filled_mask_holes": mask_result.filled_mask_holes,
+                "removed_mask_islands": mask_result.removed_mask_islands,
+            }
+        else:
+            mask_cleanup_counts = {
+                "filled_mask_holes": 0,
+                "removed_mask_islands": 0,
+            }
         regions = segmentation_mask_to_regions(
             segmentation_mask,
             depth_map,
             analysis_columns=analysis_columns,
             analysis_rows=analysis_rows,
         )
+    if segmentation_mask is None:
+        mask_cleanup_counts = {
+            "filled_mask_holes": 0,
+            "removed_mask_islands": 0,
+        }
     region_seconds = perf_counter() - region_start
 
     mesh_start = perf_counter()
@@ -263,16 +306,6 @@ def _build_structured_scene_data_internal(
             if not part.faces:
                 fallback_counts["base"] += 1
 
-    scene_before_cleanup = StructuredSceneData(plane_parts=plane_parts, detail_parts=detail_parts)
-    scene = scene_before_cleanup
-
-    if solidify:
-        scene = solidify_scene(
-            scene,
-            plane_thickness=solidify_thickness,
-            detail_thickness=solidify_thickness * 0.5,
-        )
-
     if include_details:
         coverage_part = build_coverage_relief_part(
             depth_map,
@@ -283,12 +316,41 @@ def _build_structured_scene_data_internal(
             depth_edge_threshold=depth_edge_threshold * 1.5,
             depth_offset=solidify_thickness * 0.5 if solidify else 0.02,
         )
-        scene = StructuredSceneData(
-            plane_parts=scene.plane_parts,
-            detail_parts=[*scene.detail_parts, coverage_part],
-        )
+        detail_parts.append(coverage_part)
         if not coverage_part.faces:
             fallback_counts["base"] += 1
+
+    scene_before_cleanup = StructuredSceneData(plane_parts=plane_parts, detail_parts=detail_parts)
+    scene = scene_before_cleanup
+    cleanup_counts = {
+        "filled_mask_holes": mask_cleanup_counts["filled_mask_holes"],
+        "removed_mask_islands": mask_cleanup_counts["removed_mask_islands"],
+        "patched_mesh_holes": 0,
+        "rejected_spikes": 0,
+    }
+    occlusion_gap_count = 0
+    occlusion_gap_area_proxy = 0.0
+
+    if cleanup:
+        cleanup_result = cleanup_structured_scene(
+            scene,
+            hole_fill_size=hole_fill_size,
+            spike_threshold=spike_threshold,
+        )
+        scene = cleanup_result.scene
+        for key, count in cleanup_result.cleanup_counts.items():
+            cleanup_counts[key] = cleanup_counts.get(key, 0) + count
+        occlusion_gap_count = cleanup_result.occlusion_gap_count
+        occlusion_gap_area_proxy = cleanup_result.occlusion_gap_area_proxy
+
+    scene_after_cleanup = scene
+
+    if solidify:
+        scene = solidify_scene(
+            scene,
+            plane_thickness=solidify_thickness,
+            detail_thickness=solidify_thickness * 0.5,
+        )
 
     scene = with_scene_normals(scene)
     mesh_seconds = perf_counter() - mesh_start
@@ -300,8 +362,11 @@ def _build_structured_scene_data_internal(
         analysis_columns=analysis_columns,
         analysis_rows=analysis_rows,
         fallback_counts=fallback_counts,
+        cleanup_counts=cleanup_counts,
+        occlusion_gap_count=occlusion_gap_count,
+        occlusion_gap_area_proxy=occlusion_gap_area_proxy,
         scene_before_cleanup=scene_before_cleanup,
-        scene_after_cleanup=scene,
+        scene_after_cleanup=scene_after_cleanup,
     )
 
 

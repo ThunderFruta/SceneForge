@@ -3,6 +3,12 @@
 SceneForge does not depend on SAM 3 yet. This directory reserves the adapter
 boundary for a future provider.
 
+## Intended Role
+
+Use SAM-style output as segment proposals and boundary hints. Do not trust SAM
+class names as SceneForge geometry labels without a local confidence/checking
+step.
+
 ## Intended Contract
 
 Input:
@@ -10,7 +16,7 @@ Input:
 - RGB source image.
 - Optional prompt list.
 
-Default prompts:
+Possible prompts:
 
 - `wall`
 - `floor`
@@ -24,7 +30,8 @@ Default prompts:
 
 Output:
 
-- A `SegmentationMask` using SceneForge labels:
+- Segment proposals that can be converted into a `SegmentationMask` using
+  SceneForge labels:
   - `wall`
   - `floor`
   - `ceiling`

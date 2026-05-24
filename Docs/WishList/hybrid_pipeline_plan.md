@@ -1,7 +1,19 @@
 # Hybrid Pipeline Wish List Plan
 
 This plan captures the highest-priority work for a confidence-gated hybrid pipeline:
-depth-first global reconstruction plus selective object refinement.
+fuzzy-to-detail reconstruction with a coarse depth scaffold first, then selective
+detail only where confidence is high.
+
+## Pivot: Fuzzy to Detail
+
+SceneForge should start with a robust, coarse geometric scaffold that captures
+the big room/object shape before adding finer geometry. Fine detail should be
+layered onto the scaffold only when the supporting depth, silhouette, and region
+evidence is strong enough.
+
+SAM-style segmentation should be used for segment proposals and boundaries, not
+as a trusted semantic classifier. SceneForge labels remain an internal geometry
+decision layer.
 
 ## Goal
 
@@ -14,7 +26,8 @@ Ship a stable structured reconstruction path that:
 ## Phase 1: Stable Base Geometry (Depth-First)
 
 1. Keep depth-driven structured mesh as the required base output.
-2. Improve base mesh boundary quality (mask edge smoothing, seam reduction, tiny-hole fill).
+2. Improve base mesh boundary quality with small cleanup, horn rejection, and
+   large occlusion gap detection/reporting rather than full large-hole filling.
 3. Keep deterministic defaults for reproducibility and test coverage.
 
 Exit criteria:
@@ -22,9 +35,15 @@ Exit criteria:
 - Base scene exports reliably without AI stages.
 - No severe mesh cracks on sample fixtures.
 
+Implemented foundation:
+
+- `Geometry/Cleanup/` is the cleanup subsystem boundary.
+- Structured mode can clean small segmentation mask defects, cap small internal mesh holes, reject obvious spike faces, and report large occlusion gaps in `metrics.json`.
+- Giant holes caused by occlusion are explicitly not filled in Phase 1; they become later candidate-completion work.
+
 ## Phase 2: Object Candidate Generation
 
-1. Use segmentation masks to define object regions.
+1. Use segmentation masks to define region proposals and boundaries.
 2. Generate multiple per-object geometry candidates:
    - primitive fit candidate (sphere, ellipsoid, cylinder, box),
    - optional AI 2D->3D candidate.
@@ -55,8 +74,9 @@ Exit criteria:
 
 1. Insert selected object meshes into the base scene.
 2. Run cleanup:
-   - penetration checks,
-   - boundary stitch/weld,
+   - reject horn/spike artifacts,
+   - close only small defects,
+   - report large occlusion gaps instead of hallucinating hidden geometry,
    - normals/UV consistency checks.
 3. Export `.blend` and optional `.obj` sidecar as usual.
 

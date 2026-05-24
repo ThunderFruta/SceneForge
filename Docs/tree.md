@@ -23,6 +23,8 @@ SceneForge/
     Samples/
       Room/
         README.md
+        room_render.png
+        room_render_depth.png
         room_render_mask.png
       testing_depth.png
       testing_image.png
@@ -64,6 +66,12 @@ SceneForge/
 
   Geometry/
     __init__.py
+    Cleanup/
+      __init__.py
+      mask_cleanup.py
+      mesh_hole_patcher.py
+      scene_cleanup.py
+      spike_filter.py
     Mesh/
       __init__.py
       coverage_relief_builder.py
@@ -106,6 +114,7 @@ SceneForge/
       image_to_mesh_pipeline.py
     StructuredScene/
       __init__.py
+      structured_scene_metrics.py
       structured_scene_pipeline.py
 
   Segmentation/
@@ -136,15 +145,18 @@ SceneForge/
       test_blend_exporter.py
       test_obj_exporter.py
     Geometry/
-      test_coverage_relief_builder.py
       test_camera_projection.py
-      test_plane_fitter.py
+      test_coverage_relief_builder.py
       test_grid_mesh_builder.py
+      test_mask_cleanup.py
+      test_mesh_hole_patcher.py
       test_normal_builder.py
+      test_plane_fitter.py
       test_plane_mesh_builder.py
       test_region_analyzer.py
       test_region_relief_builder.py
       test_scan_solidifier.py
+      test_spike_filter.py
       test_uv_projector.py
     Input/
       test_image_and_depth_loaders.py
@@ -160,4 +172,5 @@ SceneForge/
     Debug/
     Profiling/
     Scripts/
+      view_blend.py
 ```

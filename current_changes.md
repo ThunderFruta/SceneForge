@@ -61,11 +61,19 @@ This file tracks notable project changes while SceneForge is still small.
 - Updated `AGENTS.md` with explicit subagent collaboration guidance for parallel work.
 - Generated `Output/20260523_194731_structured_room_masked/room_masked.blend` from the room render/depth/mask set with `--details --obj`.
 - Tests: 63 passed.
+- Added `Tools/Scripts/view_blend.py` to render multi-view previews, optional orbit snapshots, and `.glb` from any `.blend` file for quick inspection.
+- Added JSON report output (`*_view_report.json`) with mesh counts, bounds, and per-view camera transforms for agent-friendly diagnostics.
+- Added `Geometry/Cleanup/` as a visible cleanup subsystem for structured mode.
+- Added structured mask cleanup for small same-label holes and tiny non-border islands.
+- Added structured mesh cleanup for small internal boundary-loop caps, obvious horn/spike face rejection, and large occlusion gap diagnostics.
+- Added `--cleanup`, `--no-cleanup`, `--hole-fill-size`, and `--spike-threshold` CLI controls.
+- Added `cleanup_counts` and occlusion gap fields to structured `metrics.json`.
+- Tests: 72 passed.
 
 ## Current State
 
-SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, and adds side-wall thickness by default. Optional segmentation masks can guide wall/floor/ceiling plane regions and object/detail relief regions. Add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
+SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, cleans small mask/mesh defects, rejects obvious spikes, and adds side-wall thickness by default. Optional segmentation masks can guide wall/floor/ceiling plane regions and object/detail relief regions. Add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
 
 ## Next Likely Change
 
-Improve the manual room mask and then add a real SAM 3 provider behind the `Segmentation/` interface once mask-guided reconstruction proves useful.
+Pivot structured reconstruction toward a fuzzy-to-detail pipeline: build a robust coarse scaffold first, then add fine geometry only where confidence is high. Future SAM-style segmentation should provide segment proposals and boundaries, not trusted semantic classification. Next cleanup/refinement work should use the new metrics to distinguish small fixable defects from large occluded gaps that require object/room priors, multi-view input, or AI-assisted completion.

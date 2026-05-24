@@ -179,6 +179,38 @@ def test_structured_pipeline_auto_segmentation_runs_without_extra_dependencies(
     assert (tmp_path / "metrics.json").exists()
 
 
+def test_structured_pipeline_records_mask_cleanup_counts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        structured_scene_pipeline,
+        "export_blend_from_obj",
+        _fake_export_blend_from_obj,
+    )
+    image_path = tmp_path / "room_rgb.png"
+    depth_path = tmp_path / "room_depth.png"
+    mask_path = tmp_path / "room_mask.png"
+    Image.new("RGB", (5, 5), (80, 140, 200)).save(image_path)
+    Image.new("L", (5, 5), 128).save(depth_path)
+    mask = Image.new("RGB", (5, 5), (255, 0, 0))
+    mask.putpixel((2, 2), (0, 0, 0))
+    mask.save(mask_path)
+
+    result = structured_scene_pipeline.run_structured_scene_pipeline(
+        image_path=image_path,
+        depth_path=depth_path,
+        output_path=tmp_path / "scene.blend",
+        resolution=5,
+        segmentation="mask",
+        mask_path=mask_path,
+        solidify=False,
+    )
+
+    metrics = json.loads((result.blend_path.parent / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["cleanup_counts"]["filled_mask_holes"] == 1
+
+
 def test_structured_pipeline_exports_blend_without_persistent_obj_by_default(
     tmp_path,
     monkeypatch,
@@ -267,6 +299,7 @@ def test_structured_pipeline_writes_metrics_json_with_expected_fields(
         "peak_memory_bytes",
         "region_confidence_inputs",
         "fallback_counts",
+        "cleanup_counts",
         "mesh_validity",
         "seam_diagnostics",
     }
@@ -293,6 +326,16 @@ def test_structured_pipeline_writes_metrics_json_with_expected_fields(
         assert isinstance(count, int)
         assert count >= 0
 
+    assert set(metrics["cleanup_counts"]) >= {
+        "filled_mask_holes",
+        "removed_mask_islands",
+        "patched_mesh_holes",
+        "rejected_spikes",
+    }
+    for count in metrics["cleanup_counts"].values():
+        assert isinstance(count, int)
+        assert count >= 0
+
     validity = metrics["mesh_validity"]
     assert set(validity) >= {
         "non_manifold_edge_count",
@@ -308,6 +351,10 @@ def test_structured_pipeline_writes_metrics_json_with_expected_fields(
     assert set(seams) >= {
         "boundary_edge_count_before_cleanup",
         "boundary_edge_count_after_cleanup",
+        "occlusion_gap_count",
+        "occlusion_gap_area_proxy",
     }
     assert seams["boundary_edge_count_before_cleanup"] >= 0
     assert seams["boundary_edge_count_after_cleanup"] >= 0
+    assert seams["occlusion_gap_count"] >= 0
+    assert seams["occlusion_gap_area_proxy"] >= 0.0

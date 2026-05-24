@@ -36,6 +36,7 @@ SceneForge/
     Depth/
 
   Geometry/
+    Cleanup/
     Mesh/
     UV/
     Normals/
@@ -93,7 +94,7 @@ This layout follows the HCRBot pattern of capability-focused top-level modules, 
 
 - `Core/`: shared configuration loading, project types, and small utilities.
 - `Input/`: image and depth loading. Keep raw input concerns separate from geometry generation.
-- `Geometry/`: mesh, UV, normal, plane, projection, region, solidification, smoothing, and geometry-processing logic.
+- `Geometry/`: cleanup, mesh, UV, normal, plane, projection, region, solidification, smoothing, and geometry-processing logic.
 - `Export/`: output format writers. Use Blender `.blend` as the default user-facing output, write `preview.png` beside each blend, and keep `.obj` as an explicit sidecar/export path.
 - `Pipeline/`: orchestration code that wires input, geometry, and export modules together. `ImageToMesh/` is relief mode; `StructuredScene/` is fitted-plane mode with optional detail patches.
 - `Segmentation/`: optional mask and provider layer for structured reconstruction. Manual masks and deterministic heuristics live here; future SAM 3 integration should plug in here instead of directly into geometry.
@@ -115,6 +116,11 @@ SceneForge/
     Depth/
       depth_loader.py
   Geometry/
+    Cleanup/
+      mask_cleanup.py
+      mesh_hole_patcher.py
+      scene_cleanup.py
+      spike_filter.py
     Mesh/
       coverage_relief_builder.py
       grid_mesh_builder.py
@@ -172,6 +178,8 @@ The current useful code focuses on:
 - Loading an image and optional depth map.
 - Building a simple grid mesh from depth values in relief mode.
 - Building large stable depth regions as masked fitted camera-space plane meshes in structured mode.
+- Cleaning structured segmentation masks and meshes with small deterministic repairs before solidification.
+- Reporting large occlusion gaps instead of filling hidden surfaces that the source image cannot support.
 - Filtering structured plane/detail faces across configurable depth discontinuities.
 - Solidifying structured scene parts with conservative boundary side walls for better off-camera inspection.
 - Filling structured `--details` output with a behind-plane coverage relief surface where plane segmentation misses receding walls, floors, or object pieces.
