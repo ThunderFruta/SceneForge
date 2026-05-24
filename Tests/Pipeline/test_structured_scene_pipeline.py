@@ -211,6 +211,36 @@ def test_structured_pipeline_records_mask_cleanup_counts(
     assert metrics["cleanup_counts"]["filled_mask_holes"] == 1
 
 
+def test_structured_pipeline_preserves_near_black_back_wall_by_default(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        structured_scene_pipeline,
+        "export_blend_from_obj",
+        _fake_export_blend_from_obj,
+    )
+    image_path = tmp_path / "wall_rgb.png"
+    depth_path = tmp_path / "wall_depth.png"
+    Image.new("RGB", (8, 8), (80, 140, 200)).save(image_path)
+    Image.new("L", (8, 8), 3).save(depth_path)
+
+    result = structured_scene_pipeline.run_structured_scene_pipeline(
+        image_path=image_path,
+        depth_path=depth_path,
+        output_path=tmp_path / "scene.blend",
+        resolution=8,
+        depth_strength=1.0,
+        write_texture=False,
+        solidify=False,
+    )
+
+    metrics = json.loads((result.blend_path.parent / "metrics.json").read_text(encoding="utf-8"))
+    assert result.scene_data.plane_parts
+    assert metrics["depth_validity_counts"]["invalid_depth_cells"] == 0
+    assert metrics["depth_validity_counts"]["recovered_far_depth_cells"] == 64
+
+
 def test_structured_pipeline_exports_blend_without_persistent_obj_by_default(
     tmp_path,
     monkeypatch,
@@ -300,6 +330,7 @@ def test_structured_pipeline_writes_metrics_json_with_expected_fields(
         "region_confidence_inputs",
         "fallback_counts",
         "cleanup_counts",
+        "depth_validity_counts",
         "mesh_validity",
         "seam_diagnostics",
     }
@@ -333,6 +364,15 @@ def test_structured_pipeline_writes_metrics_json_with_expected_fields(
         "rejected_spikes",
     }
     for count in metrics["cleanup_counts"].values():
+        assert isinstance(count, int)
+        assert count >= 0
+
+    assert set(metrics["depth_validity_counts"]) >= {
+        "invalid_depth_cells",
+        "recovered_far_depth_cells",
+        "discarded_near_black_cells",
+    }
+    for count in metrics["depth_validity_counts"].values():
         assert isinstance(count, int)
         assert count >= 0
 

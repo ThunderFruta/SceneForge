@@ -38,8 +38,25 @@ Exit criteria:
 Implemented foundation:
 
 - `Geometry/Cleanup/` is the cleanup subsystem boundary.
+- `Geometry/DepthValidity/` separates invalid/no-data depth from valid far-depth surfaces.
 - Structured mode can clean small segmentation mask defects, cap small internal mesh holes, reject obvious spike faces, and report large occlusion gaps in `metrics.json`.
+- Structured mode defaults to treating exact black depth as invalid while preserving near-black stable surfaces such as dark back walls.
 - Giant holes caused by occlusion are explicitly not filled in Phase 1; they become later candidate-completion work.
+
+## Phase 1.5: Visibility and Completion Split
+
+Do not treat every missing surface as a cleanup hole. Split the failure modes:
+
+1. False invalid-depth/background removal:
+   - valid far surfaces can be dark in the depth map,
+   - exact black/no-data should remain invalid by default,
+   - near-black stable surfaces should survive unless threshold mode is requested.
+2. True occluded geometry:
+   - surfaces hidden behind objects need priors, multi-view input, or candidate completion.
+3. Low-confidence object/detail geometry:
+   - rough detail should remain gated and inspectable instead of becoming horn artifacts.
+
+Next major milestone after depth validity repair: primitive candidate completion for room layout and object regions.
 
 ## Phase 2: Object Candidate Generation
 

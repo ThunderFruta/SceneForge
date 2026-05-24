@@ -234,6 +234,7 @@ def build_structured_scene_metrics_payload(
     analysis_rows: int,
     fallback_counts: dict[str, int],
     cleanup_counts: dict[str, int],
+    depth_validity_counts: dict[str, int],
     occlusion_gap_count: int,
     occlusion_gap_area_proxy: float,
     scene_before_cleanup: StructuredSceneData,
@@ -260,6 +261,7 @@ def build_structured_scene_metrics_payload(
         ],
         "fallback_counts": fallback_counts,
         "cleanup_counts": cleanup_counts,
+        "depth_validity_counts": depth_validity_counts,
         "mesh_validity": {
             "non_manifold_edge_count": quality.non_manifold_edge_count,
             "degenerate_face_count": quality.degenerate_face_count,

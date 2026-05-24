@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from Core.Types.scene_data import SceneMeshPart
+from Geometry.DepthValidity.depth_validity import DepthValidityConfig, is_depth_valid
 from Geometry.Projection.camera_projection import image_uv, project_image_depth_to_point
 from Geometry.Regions.region_analyzer import DepthRegion
 
@@ -15,12 +16,18 @@ def build_region_relief_part(
     aspect_ratio: float = 1.0,
     max_steps: int = 18,
     depth_edge_threshold: float = 0.12,
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> SceneMeshPart:
     min_column, min_row, max_column, max_row = region.bounds
     source_rows = len(depth_map)
     source_columns = len(depth_map[0])
     region_columns = max(2, min(max_column - min_column + 1, max_steps))
     region_rows = max(2, min(max_row - min_row + 1, max_steps))
+    validity_config = DepthValidityConfig(
+        min_valid_depth=min_valid_depth,
+        invalid_mode=depth_invalid_mode,
+    )
 
     vertices = []
     uvs = []
@@ -55,6 +62,8 @@ def build_region_relief_part(
                 sampled_depths[bottom_left],
                 sampled_depths[bottom_right],
             ]
+            if any(not is_depth_valid(depth, validity_config) for depth in depths):
+                continue
             if depth_edge_threshold > 0 and max(depths) - min(depths) > depth_edge_threshold:
                 continue
             faces.append((top_left, bottom_left, top_right))

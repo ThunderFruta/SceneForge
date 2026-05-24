@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from math import floor
 
 from Core.Types.scene_data import SceneMeshPart
+from Geometry.DepthValidity.depth_validity import DepthValidityConfig, is_depth_valid
 from Geometry.Planes.plane_fitter import fit_plane
 from Geometry.Projection.camera_projection import (
     image_uv,
@@ -13,7 +14,6 @@ from Geometry.Projection.camera_projection import (
 from Geometry.Regions.region_analyzer import DepthRegion
 
 
-_MIN_VALID_DEPTH = 0.04
 _MIN_POINTS_FOR_FIT = 6
 
 
@@ -32,6 +32,8 @@ def build_masked_plane_part(
     depth_strength: float,
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> SceneMeshPart:
     return build_masked_plane_part_with_fallback(
         region,
@@ -41,6 +43,8 @@ def build_masked_plane_part(
         depth_strength=depth_strength,
         aspect_ratio=aspect_ratio,
         depth_edge_threshold=depth_edge_threshold,
+        min_valid_depth=min_valid_depth,
+        depth_invalid_mode=depth_invalid_mode,
     ).part
 
 
@@ -53,8 +57,14 @@ def build_masked_plane_part_with_fallback(
     depth_strength: float,
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> MaskedPlaneBuildResult:
     del depth_edge_threshold
+    validity_config = DepthValidityConfig(
+        min_valid_depth=min_valid_depth,
+        invalid_mode=depth_invalid_mode,
+    )
     points = _unproject_cell_centers(
         region.cells,
         depth_map,
@@ -62,6 +72,7 @@ def build_masked_plane_part_with_fallback(
         analysis_rows,
         aspect_ratio,
         depth_strength,
+        validity_config,
     )
     fit = fit_plane(points) if len(points) >= _MIN_POINTS_FOR_FIT else None
 
@@ -117,6 +128,7 @@ def _unproject_cell_centers(
     analysis_rows: int,
     aspect_ratio: float,
     depth_strength: float,
+    validity_config: DepthValidityConfig,
 ) -> list[tuple[float, float, float]]:
     source_rows = len(depth_map)
     source_cols = len(depth_map[0])
@@ -125,7 +137,7 @@ def _unproject_cell_centers(
         src_x = min(floor((col + 0.5) * source_cols / analysis_columns), source_cols - 1)
         src_y = min(floor((row + 0.5) * source_rows / analysis_rows), source_rows - 1)
         depth = depth_map[src_y][src_x]
-        if depth < _MIN_VALID_DEPTH:
+        if not is_depth_valid(depth, validity_config):
             continue
         u = (col + 0.5) / analysis_columns
         raw_v = (row + 0.5) / analysis_rows

@@ -12,6 +12,8 @@ def build_plane_part(
     depth_strength: float,
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> SceneMeshPart:
     return build_masked_plane_part(
         region,
@@ -21,4 +23,6 @@ def build_plane_part(
         depth_strength=depth_strength,
         aspect_ratio=aspect_ratio,
         depth_edge_threshold=depth_edge_threshold,
+        min_valid_depth=min_valid_depth,
+        depth_invalid_mode=depth_invalid_mode,
     )

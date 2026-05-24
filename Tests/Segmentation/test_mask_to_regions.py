@@ -49,7 +49,7 @@ def test_mask_to_regions_preserves_l_shape_and_hole_cells() -> None:
     ]
 
 
-def test_mask_to_regions_maps_unknown_to_detail_and_skips_invalid_depth() -> None:
+def test_mask_to_regions_maps_unknown_to_detail_and_skips_exact_black_depth() -> None:
     mask = SegmentationMask.from_labels(
         [
             [SegmentationLabel.WALL, SegmentationLabel.WALL],
@@ -59,7 +59,7 @@ def test_mask_to_regions_maps_unknown_to_detail_and_skips_invalid_depth() -> Non
 
     regions = segmentation_mask_to_regions(
         mask,
-        [[0.01, 0.5], [0.5, 0.01]],
+        [[0.0, 0.5], [0.5, 0.0]],
         analysis_columns=2,
         analysis_rows=2,
     )
@@ -68,3 +68,42 @@ def test_mask_to_regions_maps_unknown_to_detail_and_skips_invalid_depth() -> Non
         ("plane", [(1, 0)]),
         ("detail", [(0, 1)]),
     ]
+
+
+def test_mask_to_regions_preserves_near_black_plane_label_by_default() -> None:
+    mask = SegmentationMask.from_labels(
+        [
+            [SegmentationLabel.WALL, SegmentationLabel.WALL],
+            [SegmentationLabel.WALL, SegmentationLabel.WALL],
+        ]
+    )
+
+    regions = segmentation_mask_to_regions(
+        mask,
+        [[0.01, 0.01], [0.01, 0.01]],
+        analysis_columns=2,
+        analysis_rows=2,
+    )
+
+    assert [(region.kind, region.cells) for region in regions] == [
+        ("plane", [(0, 0), (1, 0), (0, 1), (1, 1)]),
+    ]
+
+
+def test_mask_to_regions_can_threshold_near_black_depth() -> None:
+    mask = SegmentationMask.from_labels(
+        [
+            [SegmentationLabel.WALL, SegmentationLabel.WALL],
+            [SegmentationLabel.WALL, SegmentationLabel.WALL],
+        ]
+    )
+
+    regions = segmentation_mask_to_regions(
+        mask,
+        [[0.01, 0.01], [0.01, 0.01]],
+        analysis_columns=2,
+        analysis_rows=2,
+        depth_invalid_mode="threshold",
+    )
+
+    assert regions == []

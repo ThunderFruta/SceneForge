@@ -4,6 +4,8 @@ from collections import deque
 from dataclasses import dataclass
 from math import floor
 
+from Geometry.DepthValidity.depth_validity import DepthValidityConfig, is_depth_valid
+
 
 @dataclass(frozen=True)
 class DepthRegion:
@@ -25,6 +27,7 @@ def analyze_depth_regions(
     min_plane_cells: int = 12,
     min_thin_plane_cells: int = 64,
     min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> list[DepthRegion]:
     _validate_depth_map(depth_map)
     source_rows = len(depth_map)
@@ -36,16 +39,20 @@ def analyze_depth_regions(
     rows = max(2, min(rows, source_rows))
 
     averages, variances = _downsample_depth(depth_map, columns, rows)
+    validity_config = DepthValidityConfig(
+        min_valid_depth=min_valid_depth,
+        invalid_mode=depth_invalid_mode,
+    )
     planar = [
         [
-            averages[row][column] >= min_valid_depth
+            is_depth_valid(averages[row][column], validity_config)
             and variances[row][column] <= flat_variance_threshold
             for column in range(columns)
         ]
         for row in range(rows)
     ]
     valid = [
-        [averages[row][column] >= min_valid_depth for column in range(columns)]
+        [is_depth_valid(averages[row][column], validity_config) for column in range(columns)]
         for row in range(rows)
     ]
     buckets = [

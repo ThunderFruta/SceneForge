@@ -11,6 +11,10 @@ from Export.Blend.blend_exporter import export_blend_from_obj
 from Export.OBJ.obj_exporter import ObjExportResult, export_scene_obj
 from Geometry.Cleanup.mask_cleanup import cleanup_segmentation_mask
 from Geometry.Cleanup.scene_cleanup import cleanup_structured_scene
+from Geometry.DepthValidity.depth_validity import (
+    DepthValidityConfig,
+    build_depth_validity_metrics,
+)
 from Geometry.Mesh.coverage_relief_builder import build_coverage_relief_part
 from Geometry.Mesh.region_relief_builder import build_region_relief_part
 from Geometry.Normals.normal_builder import with_scene_normals
@@ -48,6 +52,7 @@ class _StructuredSceneBuildArtifacts:
     analysis_rows: int
     fallback_counts: dict[str, int]
     cleanup_counts: dict[str, int]
+    depth_validity_counts: dict[str, int]
     occlusion_gap_count: int
     occlusion_gap_area_proxy: float
     scene_before_cleanup: StructuredSceneData
@@ -73,6 +78,8 @@ def run_structured_scene_pipeline(
     cleanup: bool = True,
     hole_fill_size: int = 12,
     spike_threshold: str = "balanced",
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
     collect_metrics: bool = True,
 ) -> StructuredSceneResult:
     memory_tracker = MemoryTracker().start() if collect_metrics else MemoryTracker()
@@ -114,6 +121,8 @@ def run_structured_scene_pipeline(
         cleanup=cleanup,
         hole_fill_size=hole_fill_size,
         spike_threshold=spike_threshold,
+        min_valid_depth=min_valid_depth,
+        depth_invalid_mode=depth_invalid_mode,
     )
 
     runtime_breakdown = {
@@ -161,6 +170,7 @@ def run_structured_scene_pipeline(
             analysis_rows=metrics_artifacts.analysis_rows,
             fallback_counts=metrics_artifacts.fallback_counts,
             cleanup_counts=metrics_artifacts.cleanup_counts,
+            depth_validity_counts=metrics_artifacts.depth_validity_counts,
             occlusion_gap_count=metrics_artifacts.occlusion_gap_count,
             occlusion_gap_area_proxy=metrics_artifacts.occlusion_gap_area_proxy,
             scene_before_cleanup=metrics_artifacts.scene_before_cleanup,
@@ -192,6 +202,8 @@ def build_structured_scene_data(
     cleanup: bool = True,
     hole_fill_size: int = 12,
     spike_threshold: str = "balanced",
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> StructuredSceneData:
     scene, _ = _build_structured_scene_data_internal(
         depth_map,
@@ -205,6 +217,8 @@ def build_structured_scene_data(
         cleanup=cleanup,
         hole_fill_size=hole_fill_size,
         spike_threshold=spike_threshold,
+        min_valid_depth=min_valid_depth,
+        depth_invalid_mode=depth_invalid_mode,
     )
     return scene
 
@@ -222,6 +236,8 @@ def _build_structured_scene_data_internal(
     cleanup: bool = True,
     hole_fill_size: int = 12,
     spike_threshold: str = "balanced",
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> tuple[StructuredSceneData, _StructuredSceneBuildArtifacts]:
     source_rows = len(depth_map)
     source_columns = len(depth_map[0])
@@ -240,6 +256,8 @@ def _build_structured_scene_data_internal(
                 max(12, analysis_columns // 2),
                 max(4, analysis_columns * analysis_rows // 4),
             ),
+            min_valid_depth=min_valid_depth,
+            depth_invalid_mode=depth_invalid_mode,
         )
     else:
         segmentation_mask.validate_size(width=source_columns, height=source_rows)
@@ -263,6 +281,8 @@ def _build_structured_scene_data_internal(
             depth_map,
             analysis_columns=analysis_columns,
             analysis_rows=analysis_rows,
+            min_valid_depth=min_valid_depth,
+            depth_invalid_mode=depth_invalid_mode,
         )
     if segmentation_mask is None:
         mask_cleanup_counts = {
@@ -286,6 +306,8 @@ def _build_structured_scene_data_internal(
                 depth_strength=depth_strength,
                 aspect_ratio=aspect_ratio,
                 depth_edge_threshold=depth_edge_threshold,
+                min_valid_depth=min_valid_depth,
+                depth_invalid_mode=depth_invalid_mode,
             )
             plane_parts.append(part_result.part)
             if part_result.used_plane_fallback:
@@ -301,6 +323,8 @@ def _build_structured_scene_data_internal(
                 depth_strength=depth_strength,
                 aspect_ratio=aspect_ratio,
                 depth_edge_threshold=depth_edge_threshold,
+                min_valid_depth=min_valid_depth,
+                depth_invalid_mode=depth_invalid_mode,
             )
             detail_parts.append(part)
             if not part.faces:
@@ -315,6 +339,8 @@ def _build_structured_scene_data_internal(
             aspect_ratio=aspect_ratio,
             depth_edge_threshold=depth_edge_threshold * 1.5,
             depth_offset=solidify_thickness * 0.5 if solidify else 0.02,
+            min_valid_depth=min_valid_depth,
+            depth_invalid_mode=depth_invalid_mode,
         )
         detail_parts.append(coverage_part)
         if not coverage_part.faces:
@@ -328,6 +354,13 @@ def _build_structured_scene_data_internal(
         "patched_mesh_holes": 0,
         "rejected_spikes": 0,
     }
+    depth_validity_counts = build_depth_validity_metrics(
+        depth_map,
+        DepthValidityConfig(
+            min_valid_depth=min_valid_depth,
+            invalid_mode=depth_invalid_mode,
+        ),
+    )
     occlusion_gap_count = 0
     occlusion_gap_area_proxy = 0.0
 
@@ -363,6 +396,7 @@ def _build_structured_scene_data_internal(
         analysis_rows=analysis_rows,
         fallback_counts=fallback_counts,
         cleanup_counts=cleanup_counts,
+        depth_validity_counts=depth_validity_counts,
         occlusion_gap_count=occlusion_gap_count,
         occlusion_gap_area_proxy=occlusion_gap_area_proxy,
         scene_before_cleanup=scene_before_cleanup,

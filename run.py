@@ -92,6 +92,21 @@ def parse_args() -> argparse.Namespace:
         default=0.12,
         help="Structured mode only: reject faces spanning larger normalized depth jumps.",
     )
+    parser.add_argument(
+        "--min-valid-depth",
+        type=float,
+        default=0.04,
+        help="Structured mode only: threshold used when depth invalid mode is `threshold`.",
+    )
+    parser.add_argument(
+        "--depth-invalid-mode",
+        choices=("black", "threshold", "none"),
+        default="black",
+        help=(
+            "Structured mode only: choose whether exact black, values below "
+            "`--min-valid-depth`, or no depth values are treated as invalid."
+        ),
+    )
     cleanup_group = parser.add_mutually_exclusive_group()
     cleanup_group.add_argument(
         "--cleanup",
@@ -160,6 +175,8 @@ def main() -> None:
                 solidify=args.solidify,
                 solidify_thickness=args.solidify_thickness,
                 depth_edge_threshold=args.depth_edge_threshold,
+                min_valid_depth=args.min_valid_depth,
+                depth_invalid_mode=args.depth_invalid_mode,
                 segmentation=args.segmentation,
                 mask_path=Path(args.mask) if args.mask else None,
                 cleanup=args.cleanup,

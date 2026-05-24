@@ -150,6 +150,24 @@ def test_build_plane_part_tilted_floor_vertices_lie_on_fitted_plane() -> None:
 
 def test_build_plane_part_falls_back_gracefully_with_no_valid_depth() -> None:
     region = _region([(0, 0), (1, 0), (0, 1), (1, 1)])
+    depth_map = [[0.0] * 4 for _ in range(4)]
+
+    part = build_plane_part(
+        region,
+        depth_map,
+        analysis_columns=4,
+        analysis_rows=4,
+        depth_strength=1.0,
+        aspect_ratio=1.0,
+    )
+
+    assert part.name == "plane_000"
+    assert len(part.vertices) == 9
+    assert len(part.faces) == 8
+
+
+def test_build_plane_part_uses_near_black_depth_by_default() -> None:
+    region = _region([(0, 0), (1, 0), (0, 1), (1, 1)], average_depth=0.01)
     depth_map = [[0.01] * 4 for _ in range(4)]
 
     part = build_plane_part(

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from Core.Types.scene_data import SceneMeshPart
+from Geometry.DepthValidity.depth_validity import DepthValidityConfig, is_depth_valid
 from Geometry.Projection.camera_projection import image_uv, project_image_depth_to_point
-
-
-_MIN_VALID_DEPTH = 0.04
 
 
 def build_coverage_relief_part(
@@ -16,9 +14,15 @@ def build_coverage_relief_part(
     aspect_ratio: float = 1.0,
     depth_edge_threshold: float = 0.12,
     depth_offset: float = 0.02,
+    min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> SceneMeshPart:
     source_rows = len(depth_map)
     source_columns = len(depth_map[0])
+    validity_config = DepthValidityConfig(
+        min_valid_depth=min_valid_depth,
+        invalid_mode=depth_invalid_mode,
+    )
 
     vertices = []
     uvs = []
@@ -55,7 +59,7 @@ def build_coverage_relief_part(
                 sampled_depths[bottom_left],
                 sampled_depths[bottom_right],
             ]
-            if min(depths) < _MIN_VALID_DEPTH:
+            if any(not is_depth_valid(depth, validity_config) for depth in depths):
                 continue
             if depth_edge_threshold > 0 and max(depths) - min(depths) > depth_edge_threshold:
                 continue

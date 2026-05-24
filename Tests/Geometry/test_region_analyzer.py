@@ -60,6 +60,34 @@ def test_analyze_depth_regions_rejects_tiny_plane_region() -> None:
     assert [region.kind for region in regions] == ["detail"]
 
 
+def test_analyze_depth_regions_preserves_near_black_stable_wall_by_default() -> None:
+    depth = [[0.01 for _column in range(4)] for _row in range(4)]
+
+    regions = analyze_depth_regions(
+        depth,
+        analysis_columns=4,
+        analysis_rows=4,
+        min_plane_cells=4,
+    )
+
+    assert [region.kind for region in regions] == ["plane"]
+    assert regions[0].bounds == (0, 0, 4, 4)
+
+
+def test_analyze_depth_regions_can_still_threshold_near_black_depth() -> None:
+    depth = [[0.01 for _column in range(4)] for _row in range(4)]
+
+    regions = analyze_depth_regions(
+        depth,
+        analysis_columns=4,
+        analysis_rows=4,
+        min_plane_cells=4,
+        depth_invalid_mode="threshold",
+    )
+
+    assert regions == []
+
+
 def test_analyze_depth_regions_rejects_thin_small_plane_region() -> None:
     depth = [[0.5 for _column in range(8)], [0.0 for _column in range(8)]]
 

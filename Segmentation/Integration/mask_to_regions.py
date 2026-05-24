@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from math import floor
 
+from Geometry.DepthValidity.depth_validity import DepthValidityConfig, is_depth_valid
 from Geometry.Regions.region_analyzer import DepthRegion
 from Segmentation.Core.segmentation_labels import PLANE_LABELS, SegmentationLabel
 from Segmentation.Core.segmentation_mask import SegmentationMask
@@ -15,6 +16,7 @@ def segmentation_mask_to_regions(
     analysis_columns: int,
     analysis_rows: int,
     min_valid_depth: float = 0.04,
+    depth_invalid_mode: str = "black",
 ) -> list[DepthRegion]:
     _validate_depth_map(depth_map)
     mask.validate_size(width=len(depth_map[0]), height=len(depth_map))
@@ -26,7 +28,7 @@ def segmentation_mask_to_regions(
         depth_map,
         columns,
         rows,
-        min_valid_depth,
+        DepthValidityConfig(min_valid_depth=min_valid_depth, invalid_mode=depth_invalid_mode),
     )
 
     regions: list[DepthRegion] = []
@@ -67,7 +69,7 @@ def _downsample_mask_and_depth(
     depth_map: list[list[float]],
     columns: int,
     rows: int,
-    min_valid_depth: float,
+    validity_config: DepthValidityConfig,
 ) -> tuple[
     list[list[SegmentationLabel]],
     list[list[float]],
@@ -106,7 +108,7 @@ def _downsample_mask_and_depth(
             label_row.append(label)
             average_row.append(average)
             variance_row.append(sum((depth - average) ** 2 for depth in depths) / len(depths))
-            valid_row.append(average >= min_valid_depth)
+            valid_row.append(is_depth_valid(average, validity_config))
         label_rows.append(label_row)
         averages.append(average_row)
         variances.append(variance_row)
