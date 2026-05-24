@@ -69,11 +69,16 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `--cleanup`, `--no-cleanup`, `--hole-fill-size`, and `--spike-threshold` CLI controls.
 - Added `cleanup_counts` and occlusion gap fields to structured `metrics.json`.
 - Tests: 72 passed.
+- Added `Geometry/DepthValidity/` to separate invalid/no-data depth from valid near-black far-depth surfaces.
+- Added `--depth-invalid-mode black|threshold|none` and `--min-valid-depth` CLI controls for structured mode.
+- Changed structured mode's default invalid-depth policy from threshold-like near-black removal to exact-black invalid handling, preserving stable dark back walls by default.
+- Added `depth_validity_counts` to structured `metrics.json`.
+- Tests: 83 passed.
 
 ## Current State
 
-SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, filters large depth jumps, cleans small mask/mesh defects, rejects obvious spikes, and adds side-wall thickness by default. Optional segmentation masks can guide wall/floor/ceiling plane regions and object/detail relief regions. Add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
+SceneForge currently has a first Python CLI MVP that writes `.blend` and `preview.png` output from an image and optional depth map when Blender is installed. Sidecar OBJ output is optional via `--obj` and now includes explicit normals. Structured mode starts with masked plane output, preserves near-black far-depth surfaces unless threshold mode is requested, filters large depth jumps, cleans small mask/mesh defects, rejects obvious spikes, and adds side-wall thickness by default. Optional segmentation masks can guide wall/floor/ceiling plane regions and object/detail relief regions. Add `--details` when you want uncertain relief patches plus the coverage fallback for better visual completeness.
 
 ## Next Likely Change
 
-Pivot structured reconstruction toward a fuzzy-to-detail pipeline: build a robust coarse scaffold first, then add fine geometry only where confidence is high. Future SAM-style segmentation should provide segment proposals and boundaries, not trusted semantic classification. Next cleanup/refinement work should use the new metrics to distinguish small fixable defects from large occluded gaps that require object/room priors, multi-view input, or AI-assisted completion.
+Pivot structured reconstruction toward primitive candidate completion: preserve valid far-depth scaffold surfaces first, then add room/object priors only where true occlusion gaps remain. Future SAM-style segmentation should provide segment proposals and boundaries, not trusted semantic classification.

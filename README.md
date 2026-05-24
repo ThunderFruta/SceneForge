@@ -30,6 +30,8 @@ Key options:
 - `--output Output`
 - `--resolution 128`
 - `--depth-strength 1.0`
+- `--depth-invalid-mode black|threshold|none`
+- `--min-valid-depth 0.04`
 - `--obj`
 - `--no-texture`
 - `--cleanup` / `--no-cleanup`
@@ -50,6 +52,8 @@ python run.py \
 ```
 
 Structured cleanup is deterministic and conservative. It fills small mask/mesh defects, removes tiny non-border mask islands, rejects obvious horn/spike faces, and records large occlusion gaps in `metrics.json` instead of inventing hidden room geometry from one view.
+
+Structured depth validity defaults to exact-black invalid handling. That keeps true no-data depth out of the mesh while preserving near-black far surfaces such as dark back walls. Use `--depth-invalid-mode threshold` to discard values below `--min-valid-depth`.
 
 ## Viewing .blend outputs
 

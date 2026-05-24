@@ -72,6 +72,9 @@ SceneForge/
       mesh_hole_patcher.py
       scene_cleanup.py
       spike_filter.py
+    DepthValidity/
+      __init__.py
+      depth_validity.py
     Mesh/
       __init__.py
       coverage_relief_builder.py
@@ -147,6 +150,7 @@ SceneForge/
     Geometry/
       test_camera_projection.py
       test_coverage_relief_builder.py
+      test_depth_validity.py
       test_grid_mesh_builder.py
       test_mask_cleanup.py
       test_mesh_hole_patcher.py
