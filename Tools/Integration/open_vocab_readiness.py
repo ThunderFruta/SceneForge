@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from Tools.Integration.open_vocab_import_probe import build_report as build_import_probe_report
+from Tools.Integration.open_vocab_preflight import DEFAULT_TEXT_PROMPT, build_report as build_preflight_report
+from Tools.Integration.open_vocab_setup import OpenVocabLayout, SMOKE_IMAGE_PATH, SMOKE_PROMPT_PATH, smoke_test_command
+
+
+SCHEMA_VERSION = 1
+
+
+def build_report(
+    *,
+    root_dir: str | Path,
+    backend: str = "groundingdino-sam3",
+    text_prompt: str = DEFAULT_TEXT_PROMPT,
+    run_import_probe: bool = True,
+) -> dict:
+    layout = OpenVocabLayout(Path(root_dir))
+    manifest_exists = layout.manifest_path.is_file()
+    setup_script_exists = layout.setup_script.is_file()
+    smoke_image_exists = Path(SMOKE_IMAGE_PATH).is_file()
+    smoke_prompt_exists = Path(SMOKE_PROMPT_PATH).is_file()
+    preflight = build_preflight_report(
+        backend=backend,
+        groundingdino_repo_dir=layout.groundingdino_repo_dir,
+        groundingdino_config=layout.groundingdino_config,
+        groundingdino_checkpoint=layout.groundingdino_checkpoint,
+        sam3_repo_dir=layout.sam3_repo_dir,
+        sam3_model_dir=layout.sam3_model_dir,
+        text_prompt=text_prompt,
+    )
+    import_probe = None
+    if run_import_probe:
+        import_probe = build_import_probe_report(
+            backend=backend,
+            groundingdino_repo_dir=layout.groundingdino_repo_dir,
+            sam3_repo_dir=layout.sam3_repo_dir,
+        )
+    ready_for_import_probe = bool(preflight["ready"])
+    ready_for_smoke_test = bool(preflight["ready"] and (import_probe is None or import_probe["ready"]))
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "backend": backend,
+        "root_dir": str(layout.root_dir),
+        "status": readiness_status(
+            manifest_exists=manifest_exists,
+            setup_script_exists=setup_script_exists,
+            preflight_ready=bool(preflight["ready"]),
+            import_probe_ready=None if import_probe is None else bool(import_probe["ready"]),
+        ),
+        "ready_for_import_probe": ready_for_import_probe,
+        "ready_for_smoke_test": ready_for_smoke_test,
+        "manifest_exists": manifest_exists,
+        "setup_script_exists": setup_script_exists,
+        "smoke_image_exists": smoke_image_exists,
+        "smoke_prompt_exists": smoke_prompt_exists,
+        "paths": {
+            "manifest": str(layout.manifest_path),
+            "setup_script": str(layout.setup_script),
+            "smoke_image_path": SMOKE_IMAGE_PATH,
+            "smoke_prompt_path": SMOKE_PROMPT_PATH,
+            "groundingdino_repo_dir": str(layout.groundingdino_repo_dir),
+            "groundingdino_config": str(layout.groundingdino_config),
+            "groundingdino_checkpoint": str(layout.groundingdino_checkpoint),
+            "sam3_repo_dir": str(layout.sam3_repo_dir),
+            "sam3_model_dir": str(layout.sam3_model_dir),
+        },
+        "preflight": preflight,
+        "import_probe": import_probe,
+        "first_smoke_test_command": smoke_test_command(layout),
+        "next_steps": next_steps(
+            manifest_exists=manifest_exists,
+            setup_script_exists=setup_script_exists,
+            preflight_ready=bool(preflight["ready"]),
+            import_probe_ready=None if import_probe is None else bool(import_probe["ready"]),
+        ),
+    }
+
+
+def readiness_status(
+    *,
+    manifest_exists: bool,
+    setup_script_exists: bool,
+    preflight_ready: bool,
+    import_probe_ready: bool | None,
+) -> str:
+    if preflight_ready and (import_probe_ready is True or import_probe_ready is None):
+        return "ready_for_smoke_test"
+    if preflight_ready and import_probe_ready is False:
+        return "imports_not_ready"
+    if manifest_exists and setup_script_exists:
+        return "layout_prepared_sources_missing"
+    return "layout_not_prepared"
+
+
+def next_steps(
+    *,
+    manifest_exists: bool,
+    setup_script_exists: bool,
+    preflight_ready: bool,
+    import_probe_ready: bool | None,
+) -> list[str]:
+    if preflight_ready and (import_probe_ready is True or import_probe_ready is None):
+        return ["Run the first detect-shapes smoke test with --backend groundingdino-sam3."]
+    if preflight_ready and import_probe_ready is False:
+        return ["Fix Python environment/import errors from import_probe.checks, then rerun probe-open-vocab-imports."]
+    if manifest_exists and setup_script_exists:
+        return ["Review and run setup_open_vocab_sources.sh, handle Hugging Face auth for SAM3, then rerun check-open-vocab-integration."]
+    return ["Run prepare-open-vocab-layout --root Models/OpenVocabulary, then review the generated setup script."]
+
+
+def write_report(report: dict, output_path: str | Path | None) -> None:
+    if output_path is None:
+        return
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def print_summary(report: dict) -> None:
+    print(f"open-vocab readiness: {report['status']}")
+    print(f"root: {report['root_dir']}")
+    print(f"path preflight: {'ready' if report['preflight']['ready'] else 'not_ready'}")
+    import_probe = report.get("import_probe")
+    if import_probe is not None:
+        print(f"import probe: {'ready' if import_probe['ready'] else 'not_ready'}")
+    for step in report["next_steps"]:
+        print(f"next: {step}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Audit local readiness for the first GroundingDINO/SAM3 integration smoke test.")
+    parser.add_argument("--root", default="Models/OpenVocabulary")
+    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--text-prompt", default=DEFAULT_TEXT_PROMPT)
+    parser.add_argument("--skip-import-probe", action="store_true")
+    parser.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    report = build_report(
+        root_dir=args.root,
+        backend=args.backend,
+        text_prompt=args.text_prompt,
+        run_import_probe=not args.skip_import_probe,
+    )
+    write_report(report, args.output)
+    print_summary(report)
+    return 0 if report["ready_for_smoke_test"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

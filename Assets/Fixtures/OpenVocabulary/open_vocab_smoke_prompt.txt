@@ -1,0 +1,1 @@
+box . ball . sphere . cylinder . table . plane . foreground object .

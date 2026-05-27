@@ -57,6 +57,9 @@ SceneForge/
       HAWP/
     Depth/
       DepthAnythingV3/
+    OpenVocabulary/
+      GroundingDINO/
+      SAM3/
 
   Tools/
     Dataset/
@@ -78,7 +81,7 @@ Do not assume any of the old CLI, package metadata, output formats, or module bo
 ## Current Prototype Responsibilities
 
 - `Input/`: load and validate RGB images.
-- `Segmentation/`: detector backend boundary and runtime factory. The active fallback scaffold is depth+edge instance proposal, with `learned_depth_edge_segmenter.py` and `primitive_3d.py` holding the Primitive3D class-agnostic point-cloud instance-mask model seam. YOLO modules remain lazy-loaded legacy/debug/training comparison code.
+- `Segmentation/`: detector backend boundary and runtime factory. The active fallback scaffold is depth+edge instance proposal, with `learned_depth_edge_segmenter.py` and `primitive_3d.py` holding the Primitive3D class-agnostic point-cloud instance-mask model seam. Open-vocabulary adapters for GroundingDINO and SAM3 are lazy-loaded proposal backends. YOLO modules remain lazy-loaded legacy/debug/training comparison code.
 - `ShapeDetection/`: build detection reports and legacy/fallback primitive label helpers.
 - `SceneGeometry/`: shared coordinate/FOV/depth contracts so source renders, detections, enrichment crops, fitting, exports, and metric views use the same frame.
 - `ObjectEnrichment/`: build per-object mask/depth/edge/mesh evidence packs; geometry scoring/fusion is the primitive-label authority and detector labels are weak or absent proposal evidence.

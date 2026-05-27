@@ -36,6 +36,14 @@ class DetectShapesBackendConfig:
     confidence: float
     overlap_iou_threshold: float
     rgbd_channel_weights: str
+    text_prompt: str = "object . plane . foreground object ."
+    box_threshold: float = 0.35
+    text_threshold: float = 0.25
+    groundingdino_repo_dir: str | None = None
+    groundingdino_config: str | None = None
+    groundingdino_checkpoint: str | None = None
+    sam3_repo_dir: str | None = None
+    sam3_model_dir: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +58,14 @@ class ReconstructDetectionBackendConfig:
     detector_overlap_iou_threshold: float
     rgbd_channel_weights: str
     max_objects: int
+    text_prompt: str = "object . plane . foreground object ."
+    box_threshold: float = 0.35
+    text_threshold: float = 0.25
+    groundingdino_repo_dir: str | None = None
+    groundingdino_config: str | None = None
+    groundingdino_checkpoint: str | None = None
+    sam3_repo_dir: str | None = None
+    sam3_model_dir: str | None = None
 
 
 def build_detect_shapes_runtime(
@@ -88,6 +104,12 @@ def build_detect_shapes_runtime(
             classifier=DepthGeometryPrimitiveClassifier(depth_path) if config.backend == "depth-edge-object" else None,
             classifier_backend="depth-geometry-weak" if config.backend == "depth-edge-object" else "unassigned",
         )
+
+    if config.backend == "sam3":
+        return sam3_runtime(config, require_dir=require_dir)
+
+    if config.backend == "groundingdino-sam3":
+        return groundingdino_sam3_runtime(config, require_file=require_file, require_dir=require_dir)
 
     if config.backend in {"real", "rgb-yolo"}:
         return legacy_rgb_yolo_runtime(config, require_file=require_file, require_dir=require_dir)
@@ -147,6 +169,55 @@ def build_reconstruct_detection_runtime(
             edge_backend=getattr(edge_provider, "backend", None),
             classifier=DepthGeometryPrimitiveClassifier(depth_path) if config.detector_backend == "depth-edge-object" else None,
             classifier_backend="depth-geometry-weak" if config.detector_backend == "depth-edge-object" else "unassigned",
+        )
+
+    if config.detector_backend == "sam3":
+        detect_config = DetectShapesBackendConfig(
+            backend=config.detector_backend,
+            depth=str(depth_path),
+            edge_map=None,
+            detector_model=config.detector_model,
+            detector_weights=config.detector_weights,
+            clip_model_dir=None,
+            device=config.device,
+            primitive_source=config.primitive_source,
+            confidence=config.detector_confidence,
+            overlap_iou_threshold=config.detector_overlap_iou_threshold,
+            rgbd_channel_weights=config.rgbd_channel_weights,
+            text_prompt=config.text_prompt,
+            box_threshold=config.box_threshold,
+            text_threshold=config.text_threshold,
+            sam3_repo_dir=config.sam3_repo_dir,
+            sam3_model_dir=config.sam3_model_dir,
+        )
+        return sam3_runtime(detect_config, require_dir=lambda value, label: Path(value) if Path(value or "").is_dir() else require_file(value, label).parent)
+
+    if config.detector_backend == "groundingdino-sam3":
+        detect_config = DetectShapesBackendConfig(
+            backend=config.detector_backend,
+            depth=str(depth_path),
+            edge_map=None,
+            detector_model=config.detector_model,
+            detector_weights=config.detector_weights,
+            clip_model_dir=None,
+            device=config.device,
+            primitive_source=config.primitive_source,
+            confidence=config.detector_confidence,
+            overlap_iou_threshold=config.detector_overlap_iou_threshold,
+            rgbd_channel_weights=config.rgbd_channel_weights,
+            text_prompt=config.text_prompt,
+            box_threshold=config.box_threshold,
+            text_threshold=config.text_threshold,
+            groundingdino_repo_dir=config.groundingdino_repo_dir,
+            groundingdino_config=config.groundingdino_config,
+            groundingdino_checkpoint=config.groundingdino_checkpoint,
+            sam3_repo_dir=config.sam3_repo_dir,
+            sam3_model_dir=config.sam3_model_dir,
+        )
+        return groundingdino_sam3_runtime(
+            detect_config,
+            require_file=require_file,
+            require_dir=lambda value, label: Path(value) if Path(value or "").is_dir() else require_file(value, label).parent,
         )
 
     if config.detector_backend == "rgbd-yolo":
@@ -220,6 +291,61 @@ def learned_depth_edge_runtime(
         classifier=UnassignedPrimitiveClassifier(),
         model_info=model_info,
     )
+
+
+def open_vocabulary_runtime(segmenter: object) -> DetectionRuntime:
+    backend_info = segmenter.backend_info
+    model_info = {
+        "detector_backend": backend_info.name,
+        "detector_architecture": backend_info.architecture,
+        "detector_input_channels": list(backend_info.input_channels),
+        "detector_backend_info": backend_info.to_dict(),
+        "classifier_backend": "unassigned",
+        "primitive_label_policy": backend_info.primitive_label_policy,
+        "legacy_yolo": backend_info.legacy,
+        "text_prompt": getattr(segmenter, "text_prompt", None),
+    }
+    return DetectionRuntime(
+        segmenter=segmenter,
+        classifier=UnassignedPrimitiveClassifier(),
+        model_info=model_info,
+    )
+
+
+def sam3_runtime(config: DetectShapesBackendConfig, *, require_dir: RequireDir) -> DetectionRuntime:
+    from Segmentation.sam3_segmenter import Sam3Segmenter
+
+    segmenter = Sam3Segmenter(
+        repo_dir=require_dir(config.sam3_repo_dir, "--sam3-repo-dir"),
+        model_dir=require_dir(config.sam3_model_dir, "--sam3-model-dir"),
+        text_prompt=config.text_prompt,
+        score_threshold=config.confidence,
+        device=resolve_torch_device(config.device),
+    )
+    return open_vocabulary_runtime(segmenter)
+
+
+def groundingdino_sam3_runtime(
+    config: DetectShapesBackendConfig,
+    *,
+    require_file: RequireFile,
+    require_dir: RequireDir,
+) -> DetectionRuntime:
+    from Segmentation.groundingdino_sam3_segmenter import GroundingDinoSam3Segmenter
+
+    segmenter = GroundingDinoSam3Segmenter(
+        groundingdino_repo_dir=require_dir(config.groundingdino_repo_dir, "--groundingdino-repo-dir"),
+        groundingdino_config=require_file(config.groundingdino_config, "--groundingdino-config"),
+        groundingdino_checkpoint=require_file(config.groundingdino_checkpoint, "--groundingdino-checkpoint"),
+        sam3_repo_dir=require_dir(config.sam3_repo_dir, "--sam3-repo-dir"),
+        sam3_model_dir=require_dir(config.sam3_model_dir, "--sam3-model-dir"),
+        text_prompt=config.text_prompt,
+        box_threshold=config.box_threshold,
+        text_threshold=config.text_threshold,
+        score_threshold=config.confidence,
+        device=resolve_torch_device(config.device),
+    )
+    return open_vocabulary_runtime(segmenter)
 
 
 def legacy_rgb_yolo_runtime(

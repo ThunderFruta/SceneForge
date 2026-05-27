@@ -123,3 +123,83 @@ def test_factory_builds_primitive_3d_detector_model(tmp_path: Path) -> None:
     assert runtime.model_info["detector_backend_info"]["output_contract"] == "class_agnostic_instance_masks"
     assert runtime.model_info["classifier_backend"] == "unassigned"
     assert runtime.segmenter.detect(Image.new("RGB", (16, 16), "black")) == []
+
+
+def test_factory_builds_sam3_runtime_without_importing_external_repo(tmp_path: Path) -> None:
+    import sys
+
+    repo_dir = tmp_path / "sam3_repo"
+    model_dir = tmp_path / "sam3_model"
+    repo_dir.mkdir()
+    model_dir.mkdir()
+
+    runtime = build_detect_shapes_runtime(
+        DetectShapesBackendConfig(
+            backend="sam3",
+            depth=None,
+            edge_map=None,
+            detector_model=None,
+            detector_weights=None,
+            clip_model_dir=None,
+            device="cpu",
+            primitive_source="none",
+            confidence=0.25,
+            overlap_iou_threshold=0.7,
+            rgbd_channel_weights="0.20,0.20,0.20,0.40",
+            sam3_repo_dir=str(repo_dir),
+            sam3_model_dir=str(model_dir),
+            text_prompt="chair . table .",
+        ),
+        require_file=require_file,
+        require_dir=lambda value, label: Path(value),
+    )
+
+    assert runtime.model_info["detector_backend"] == "sam3-open-vocabulary"
+    assert runtime.model_info["detector_backend_info"]["proposal_only"] is True
+    assert runtime.model_info["primitive_label_policy"] == "geometry_fitting_downstream"
+    assert "sam3.model_builder" not in sys.modules
+
+
+def test_factory_builds_groundingdino_sam3_runtime_without_importing_external_repos(tmp_path: Path) -> None:
+    import sys
+
+    gdino_repo = tmp_path / "GroundingDINO"
+    gdino_repo.mkdir()
+    gdino_config = tmp_path / "GroundingDINO_SwinT_OGC.py"
+    gdino_checkpoint = tmp_path / "groundingdino_swint_ogc.pth"
+    gdino_config.write_text("# test config", encoding="utf-8")
+    gdino_checkpoint.write_bytes(b"checkpoint")
+    sam3_repo = tmp_path / "sam3_repo"
+    sam3_model = tmp_path / "sam3_model"
+    sam3_repo.mkdir()
+    sam3_model.mkdir()
+
+    runtime = build_detect_shapes_runtime(
+        DetectShapesBackendConfig(
+            backend="groundingdino-sam3",
+            depth=None,
+            edge_map=None,
+            detector_model=None,
+            detector_weights=None,
+            clip_model_dir=None,
+            device="cpu",
+            primitive_source="none",
+            confidence=0.25,
+            overlap_iou_threshold=0.7,
+            rgbd_channel_weights="0.20,0.20,0.20,0.40",
+            groundingdino_repo_dir=str(gdino_repo),
+            groundingdino_config=str(gdino_config),
+            groundingdino_checkpoint=str(gdino_checkpoint),
+            sam3_repo_dir=str(sam3_repo),
+            sam3_model_dir=str(sam3_model),
+            text_prompt="chair . table .",
+        ),
+        require_file=require_file,
+        require_dir=lambda value, label: Path(value),
+    )
+
+    assert runtime.model_info["detector_backend"] == "groundingdino-sam3-open-vocabulary"
+    assert runtime.model_info["detector_backend_info"]["output_contract"] == "open_vocab_box_guided_instance_masks"
+    assert runtime.model_info["legacy_yolo"] is False
+    assert "groundingdino.util.inference" not in sys.modules
+    assert "sam3.model_builder" not in sys.modules

@@ -14,7 +14,7 @@ from PrimitiveFitting.pipeline import run_primitive_fitting
 
 
 ROOT = Path(__file__).resolve().parent
-PUBLIC_DETECTOR_BACKENDS = ("depth-edge", "depth-edge-object", "rgb-yolo", "rgbd-yolo", "real")
+PUBLIC_DETECTOR_BACKENDS = ("depth-edge", "depth-edge-object", "sam3", "groundingdino-sam3", "rgb-yolo", "rgbd-yolo", "real")
 PUBLIC_EDGE_BACKENDS = ("none", "simple", "dexined")
 PUBLIC_MESH_BACKENDS = ("none", "triposr")
 PUBLIC_WIREFRAME_BACKENDS = ("none", "hawp")
@@ -40,6 +40,56 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SceneForge modular image/depth to primitive scene pipeline.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+
+    preflight = subparsers.add_parser("check-open-vocab-integration", help="Preflight local GroundingDINO/SAM3 repo and model paths.")
+    preflight.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    preflight.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
+    preflight.add_argument(
+        "--groundingdino-config",
+        default="Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+    )
+    preflight.add_argument(
+        "--groundingdino-checkpoint",
+        default="Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth",
+    )
+    preflight.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
+    preflight.add_argument("--sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
+    preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    preflight.add_argument("--output", default="Output/Latest/open_vocab_preflight.json")
+    preflight.set_defaults(func=cmd_check_open_vocab_integration)
+
+
+    import_probe = subparsers.add_parser("probe-open-vocab-imports", help="Probe local GroundingDINO/SAM3 imports without loading checkpoints.")
+    import_probe.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    import_probe.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
+    import_probe.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
+    import_probe.add_argument("--output", default="Output/Latest/open_vocab_import_probe.json")
+    import_probe.set_defaults(func=cmd_probe_open_vocab_imports)
+
+
+    prepare_open_vocab = subparsers.add_parser("prepare-open-vocab-layout", help="Create local GroundingDINO/SAM3 layout and setup manifest.")
+    prepare_open_vocab.add_argument("--root", default="Models/OpenVocabulary")
+    prepare_open_vocab.add_argument("--no-create-dirs", action="store_true")
+    prepare_open_vocab.add_argument("--no-script", action="store_true")
+    prepare_open_vocab.set_defaults(func=cmd_prepare_open_vocab_layout)
+
+
+    readiness = subparsers.add_parser("audit-open-vocab-readiness", help="Run non-inference readiness checks for GroundingDINO/SAM3 integration.")
+    readiness.add_argument("--root", default="Models/OpenVocabulary")
+    readiness.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    readiness.add_argument("--skip-import-probe", action="store_true")
+    readiness.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
+    readiness.set_defaults(func=cmd_audit_open_vocab_readiness)
+
+
+    smoke = subparsers.add_parser("run-open-vocab-smoke", help="Run guarded GroundingDINO/SAM3 detect-shapes smoke test.")
+    smoke.add_argument("--root", default="Models/OpenVocabulary")
+    smoke.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    smoke.add_argument("--output", default="Output/Latest/open_vocab_smoke.json")
+    smoke.set_defaults(func=cmd_run_open_vocab_smoke)
+
     detect = subparsers.add_parser("detect-shapes", help="Write detections.json and overlay.png.")
     detect.add_argument("--image", required=True)
     detect.add_argument("--depth")
@@ -54,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--confidence", type=float, default=0.25)
     detect.add_argument("--overlap-iou-threshold", type=float, default=0.50)
     detect.add_argument("--rgbd-channel-weights", default="0.25,0.25,0.25,0.25")
+    add_open_vocabulary_detector_args(detect)
     detect.set_defaults(func=cmd_detect_shapes)
 
     enrich = subparsers.add_parser("enrich-objects", help="Fuse depth, edge, wireframe, and mesh evidence.")
@@ -98,6 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
     reconstruct.add_argument("--detector-confidence", type=float, default=0.20)
     reconstruct.add_argument("--detector-overlap-iou-threshold", type=float, default=0.50)
     reconstruct.add_argument("--rgbd-channel-weights", default="0.25,0.25,0.25,0.25")
+    add_open_vocabulary_detector_args(reconstruct)
     add_provider_args(reconstruct)
     add_enrichment_tuning_args(reconstruct)
     reconstruct.add_argument("--final-layout", choices=("camera", "ground", "original-camera"), default="camera")
@@ -201,6 +253,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--text-prompt", default="object . plane . foreground object .")
+    parser.add_argument("--box-threshold", type=float, default=0.35)
+    parser.add_argument("--text-threshold", type=float, default=0.25)
+    parser.add_argument("--groundingdino-repo-dir")
+    parser.add_argument("--groundingdino-config")
+    parser.add_argument("--groundingdino-checkpoint")
+    parser.add_argument("--sam3-repo-dir")
+    parser.add_argument("--sam3-model-dir")
+
+
 def add_provider_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--edge-backend", choices=PUBLIC_EDGE_BACKENDS, default="simple")
     parser.add_argument("--edge-model-dir")
@@ -250,6 +313,83 @@ def parse_shards(value: str) -> str | int:
     return parsed
 
 
+def cmd_check_open_vocab_integration(args: argparse.Namespace) -> int:
+    from Tools.Integration.open_vocab_preflight import build_report, print_summary, write_report
+
+    report = build_report(
+        backend=args.backend,
+        groundingdino_repo_dir=args.groundingdino_repo_dir,
+        groundingdino_config=args.groundingdino_config,
+        groundingdino_checkpoint=args.groundingdino_checkpoint,
+        sam3_repo_dir=args.sam3_repo_dir,
+        sam3_model_dir=args.sam3_model_dir,
+        text_prompt=args.text_prompt,
+    )
+    write_report(report, args.output)
+    print_summary(report)
+    if not report["ready"]:
+        raise CliError(f"Open-vocabulary integration is not ready; wrote {args.output}")
+    return 0
+
+
+def cmd_probe_open_vocab_imports(args: argparse.Namespace) -> int:
+    from Tools.Integration.open_vocab_import_probe import build_report, print_summary, write_report
+
+    report = build_report(
+        backend=args.backend,
+        groundingdino_repo_dir=args.groundingdino_repo_dir,
+        sam3_repo_dir=args.sam3_repo_dir,
+    )
+    write_report(report, args.output)
+    print_summary(report)
+    if not report["ready"]:
+        raise CliError(f"Open-vocabulary imports are not ready; wrote {args.output}")
+    return 0
+
+
+def cmd_prepare_open_vocab_layout(args: argparse.Namespace) -> int:
+    from Tools.Integration.open_vocab_setup import prepare_layout, print_summary
+
+    manifest = prepare_layout(
+        args.root,
+        create_dirs=not args.no_create_dirs,
+        write_script=not args.no_script,
+    )
+    print_summary(manifest)
+    return 0
+
+
+def cmd_audit_open_vocab_readiness(args: argparse.Namespace) -> int:
+    from Tools.Integration.open_vocab_readiness import build_report, print_summary, write_report
+
+    report = build_report(
+        root_dir=args.root,
+        backend=args.backend,
+        text_prompt=args.text_prompt,
+        run_import_probe=not args.skip_import_probe,
+    )
+    write_report(report, args.output)
+    print_summary(report)
+    if not report["ready_for_smoke_test"]:
+        raise CliError(f"Open-vocabulary integration is not ready for smoke test; wrote {args.output}")
+    return 0
+
+
+def cmd_run_open_vocab_smoke(args: argparse.Namespace) -> int:
+    from Tools.Integration.open_vocab_smoke import print_summary, run_smoke_test
+
+    report = run_smoke_test(
+        root_dir=args.root,
+        backend=args.backend,
+        text_prompt=args.text_prompt,
+        output=args.output,
+    )
+    print_summary(report)
+    if report["status"] != "passed":
+        raise CliError(f"Open-vocabulary smoke test did not pass; wrote {args.output}")
+    return 0
+
+
 def cmd_detect_shapes(args: argparse.Namespace) -> int:
     from Segmentation.factory import DetectShapesBackendConfig, build_detect_shapes_runtime
     from ShapeDetection.pipeline import run_shape_detection
@@ -267,6 +407,14 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
             confidence=args.confidence,
             overlap_iou_threshold=args.overlap_iou_threshold,
             rgbd_channel_weights=args.rgbd_channel_weights,
+            text_prompt=args.text_prompt,
+            box_threshold=args.box_threshold,
+            text_threshold=args.text_threshold,
+            groundingdino_repo_dir=args.groundingdino_repo_dir,
+            groundingdino_config=args.groundingdino_config,
+            groundingdino_checkpoint=args.groundingdino_checkpoint,
+            sam3_repo_dir=args.sam3_repo_dir,
+            sam3_model_dir=args.sam3_model_dir,
         ),
         require_file=_require_file,
         require_dir=_require_dir,
@@ -534,6 +682,15 @@ def _preflight_reconstruct(args: argparse.Namespace) -> None:
     _require_file(args.reference_blend, "--reference-blend")
     if args.detector_backend in {"rgb-yolo", "rgbd-yolo", "real"} and not args.detector_model:
         _require_file(args.detector_weights, "--detector-weights")
+    if args.detector_backend == "sam3":
+        _require_dir(args.sam3_repo_dir, "--sam3-repo-dir")
+        _require_dir(args.sam3_model_dir, "--sam3-model-dir")
+    if args.detector_backend == "groundingdino-sam3":
+        _require_dir(args.groundingdino_repo_dir, "--groundingdino-repo-dir")
+        _require_file(args.groundingdino_config, "--groundingdino-config")
+        _require_file(args.groundingdino_checkpoint, "--groundingdino-checkpoint")
+        _require_dir(args.sam3_repo_dir, "--sam3-repo-dir")
+        _require_dir(args.sam3_model_dir, "--sam3-model-dir")
     if args.detector_model:
         _require_file(args.detector_model, "--detector-model")
     if args.final_layout == "original-camera":
@@ -604,6 +761,14 @@ def _run_reconstruct_detect(args: argparse.Namespace, output_dir: Path, render_i
             detector_overlap_iou_threshold=args.detector_overlap_iou_threshold,
             rgbd_channel_weights=args.rgbd_channel_weights,
             max_objects=args.max_objects,
+            text_prompt=args.text_prompt,
+            box_threshold=args.box_threshold,
+            text_threshold=args.text_threshold,
+            groundingdino_repo_dir=args.groundingdino_repo_dir,
+            groundingdino_config=args.groundingdino_config,
+            groundingdino_checkpoint=args.groundingdino_checkpoint,
+            sam3_repo_dir=args.sam3_repo_dir,
+            sam3_model_dir=args.sam3_model_dir,
         ),
         image_path=Path(render_info["image_path"]),
         depth_path=Path(render_info["depth_path"]),

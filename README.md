@@ -63,7 +63,7 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/python run.py detect-shapes \
-  --image path/to/image.png \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
   --depth path/to/depth.png \
   --output Output/Latest/detect
 ```
@@ -75,7 +75,7 @@ Legacy/debug path using YOLO detector labels as primitive labels:
 ```bash
 .venv/bin/python run.py detect-shapes \
   --backend rgb-yolo \
-  --image path/to/image.png \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
   --detector-weights Models/YOLO/sceneforge-primitives-yolo11m-seg-v2.pt \
   --primitive-source detector-label \
   --output Output/Latest/detect \
@@ -89,7 +89,7 @@ Use a trained 4-channel RGBD detector:
 ```bash
 .venv/bin/python run.py detect-shapes \
   --backend rgbd-yolo \
-  --image path/to/image.png \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
   --depth path/to/depth.png \
   --detector-weights Models/YOLO/sceneforge-yolo26l-rgbd-stage5.pt \
   --primitive-source none \
@@ -101,7 +101,7 @@ Build per-object evidence packs after detection:
 
 ```bash
 .venv/bin/python run.py enrich-objects \
-  --image path/to/image.png \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
   --depth path/to/depth.png \
   --detections Output/Latest/detect/detections.json \
   --edge-backend simple \
@@ -120,6 +120,71 @@ Models/Mesh/TripoSR/           # TripoSR repo, checkpoint, and local DINO depend
 Models/Wireframe/HAWP/         # HAWP repo and hawpv*.pth checkpoints
 Models/Depth/DepthAnythingV3/  # downloaded future depth checkpoint, not used in V1
 ```
+
+Open-vocabulary segmentation integration is prepared for local GroundingDINO and SAM3 repos. First create the local layout and reviewed setup script without running network operations:
+
+```bash
+.venv/bin/python run.py prepare-open-vocab-layout --root Models/OpenVocabulary
+```
+
+Then review `Models/OpenVocabulary/setup_open_vocab_sources.sh` before running it. SAM3 checkpoint access is gated by Hugging Face approval/authentication, so keep that step explicit. You can audit the full non-inference readiness state at any point:
+
+```bash
+.venv/bin/python run.py audit-open-vocab-readiness \
+  --root Models/OpenVocabulary \
+  --backend groundingdino-sam3 \
+  --output Output/Latest/open_vocab_readiness.json
+```
+
+Preflight the expected local layout before running real inference:
+
+```bash
+.venv/bin/python run.py check-open-vocab-integration \
+  --backend groundingdino-sam3 \
+  --groundingdino-repo-dir Models/OpenVocabulary/GroundingDINO/repo \
+  --groundingdino-config Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py \
+  --groundingdino-checkpoint Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth \
+  --sam3-repo-dir Models/OpenVocabulary/SAM3/repo \
+  --sam3-model-dir Models/OpenVocabulary/SAM3/hf \
+  --output Output/Latest/open_vocab_preflight.json
+```
+
+When preflight passes, check that the local repo APIs import in this Python environment without loading checkpoints:
+
+```bash
+.venv/bin/python run.py probe-open-vocab-imports \
+  --backend groundingdino-sam3 \
+  --groundingdino-repo-dir Models/OpenVocabulary/GroundingDINO/repo \
+  --sam3-repo-dir Models/OpenVocabulary/SAM3/repo \
+  --output Output/Latest/open_vocab_import_probe.json
+```
+
+When both checks pass, run the guarded proposal-only smoke test against `Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png`:
+
+```bash
+.venv/bin/python run.py run-open-vocab-smoke \
+  --root Models/OpenVocabulary \
+  --backend groundingdino-sam3 \
+  --output Output/Latest/open_vocab_smoke.json
+```
+
+Or run the underlying command directly:
+
+```bash
+.venv/bin/python run.py detect-shapes \
+  --backend groundingdino-sam3 \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
+  --groundingdino-repo-dir Models/OpenVocabulary/GroundingDINO/repo \
+  --groundingdino-config Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py \
+  --groundingdino-checkpoint Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth \
+  --sam3-repo-dir Models/OpenVocabulary/SAM3/repo \
+  --sam3-model-dir Models/OpenVocabulary/SAM3/hf \
+  --text-prompt "chair . table . box . sphere . cylinder . cone . plane . foreground object ." \
+  --output Output/Latest/detect \
+  --device auto
+```
+
+GroundingDINO and SAM3 outputs are weak proposal evidence only. SceneForge still chooses final primitive labels during enrichment and geometric fitting.
 
 Use real providers only when those local adapters and weights exist:
 
@@ -156,7 +221,7 @@ Fit detected primitive masks to a Blender scene with synthetic depth:
 
 ```bash
 .venv/bin/python run.py fit-primitives \
-  --image path/to/image.png \
+  --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
   --depth path/to/depth.png \
   --detections Output/Latest/detect/detections.json \
   --enrichment Output/Latest/enrich/object_enrichment.json \

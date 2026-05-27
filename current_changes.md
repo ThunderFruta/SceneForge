@@ -2,6 +2,18 @@
 
 This file tracks notable project changes while SceneForge is still small.
 
+## 2026-05-27
+
+- Added the first open-source integration scaffold for local GroundingDINO and SAM3 repos as proposal-only segmentation backends.
+- Added `sam3` and `groundingdino-sam3` detector backends with lazy imports, local repo/checkpoint path flags, text prompts, and backend metadata that keeps primitive labels downstream.
+- Added `Docs/integration_contract.md` to pin the adapter contract, model directory convention, and no-runtime-download rule for open-source integrations.
+- Added `run.py check-open-vocab-integration` and `Tools/Integration/open_vocab_preflight.py` to validate local GroundingDINO/SAM3 repo and checkpoint layout before real inference.
+- Added `run.py probe-open-vocab-imports` and `Tools/Integration/open_vocab_import_probe.py` to isolate external repo import/API issues before checkpoint loading or inference.
+- Added `run.py prepare-open-vocab-layout` and `Tools/Integration/open_vocab_setup.py` to create the local open-vocabulary model layout plus a reviewed setup script before network cloning/downloading.
+- Added `run.py audit-open-vocab-readiness` and `Tools/Integration/open_vocab_readiness.py` to combine setup, path preflight, import probe, next steps, and smoke-test command reporting.
+- Added deterministic open-vocabulary smoke-test assets under `Assets/Fixtures/OpenVocabulary/` and updated generated smoke-test commands to use them.
+- Added `run.py run-open-vocab-smoke` and `Tools/Integration/open_vocab_smoke.py` to guard and run the first GroundingDINO/SAM3 `detect-shapes` smoke test after readiness passes.
+
 ## 2026-05-24
 
 - Reset the repository for a fresh implementation direction.

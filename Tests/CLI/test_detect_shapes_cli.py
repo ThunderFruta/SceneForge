@@ -206,3 +206,25 @@ def test_cli_compare_metrics_writes_summary(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert (output_dir / "summary.json").is_file()
     assert (output_dir / "comparison" / "metrics_comparison.csv").is_file()
+
+
+def test_cli_sam3_missing_repo_fails_clearly(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    Image.new("RGB", (8, 8), "white").save(image_path)
+
+    result = run_cli(
+        "detect-shapes",
+        "--backend",
+        "sam3",
+        "--image",
+        str(image_path),
+        "--sam3-repo-dir",
+        str(tmp_path / "missing-sam3"),
+        "--sam3-model-dir",
+        str(tmp_path / "missing-model"),
+        "--output",
+        str(tmp_path / "out"),
+    )
+
+    assert result.returncode == 2
+    assert "--sam3-repo-dir does not exist" in result.stderr
