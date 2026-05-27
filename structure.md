@@ -1,17 +1,19 @@
 # Structure
 
-SceneForge has a first Python CLI prototype. This file describes the project layout and where new pieces should fit.
+SceneForge has been reset for a fresh implementation direction. This file describes the current prototype layout.
 
 ## Current Files
 
 - `BEFORE_README.md`: early project idea, roadmap, and first milestone.
-- `README.md`: current project overview and entry documentation.
+- `README.md`: current project overview and reset status.
+- `requirements.txt`: local Python dependencies for image IO, segmentation, CLIP inference, and tests.
+- `run.py`: CLI entrypoint.
 - `AGENTS.md`: instructions for coding agents working in this repository.
 - `structure.md`: intended repository structure and naming notes.
 - `current_changes.md`: short record of recent project changes.
 - `project_preferences.md`: project conventions and preferences.
 
-## Intended Layout
+## Current Layout
 
 Use PascalCase for directories and snake_case for files.
 
@@ -20,8 +22,89 @@ SceneForge/
   AGENTS.md
   BEFORE_README.md
   README.md
-  pyproject.toml
+  requirements.txt
   run.py
+  current_changes.md
+  project_preferences.md
+  structure.md
+
+  Input/
+    Image/
+
+  Segmentation/
+
+  ShapeDetection/
+
+  SceneGeometry/
+
+  PrimitiveFitting/
+
+  OutputWriter/
+
+  Output/
+    Latest/
+    Archive/
+
+  Configs/
+    YOLO/
+
+  Models/
+    Edges/
+      DexiNed/
+    Mesh/
+      TripoSR/
+    Wireframe/
+      HAWP/
+    Depth/
+      DepthAnythingV3/
+
+  Tools/
+    Dataset/
+    Training/
+
+  Tests/
+    CLI/
+    Input/
+    Pipeline/
+    ShapeDetection/
+```
+
+## Previous Prototype Removed
+
+The previous Python image-to-mesh prototype has been intentionally deleted, including source modules, tests, generated outputs, sample assets, configuration placeholders, and local environment/cache artifacts.
+
+Do not assume any of the old CLI, package metadata, output formats, or module boundaries still exist. Reintroduce them only if they fit the new direction.
+
+## Current Prototype Responsibilities
+
+- `Input/`: load and validate RGB images.
+- `Segmentation/`: detector backend boundary and runtime factory. The active fallback scaffold is depth+edge instance proposal, with `learned_depth_edge_segmenter.py` and `primitive_3d.py` holding the Primitive3D class-agnostic point-cloud instance-mask model seam. YOLO modules remain lazy-loaded legacy/debug/training comparison code.
+- `ShapeDetection/`: build detection reports and legacy/fallback primitive label helpers.
+- `SceneGeometry/`: shared coordinate/FOV/depth contracts so source renders, detections, enrichment crops, fitting, exports, and metric views use the same frame.
+- `ObjectEnrichment/`: build per-object mask/depth/edge/mesh evidence packs; geometry scoring/fusion is the primitive-label authority and detector labels are weak or absent proposal evidence.
+- `EdgeDetection/`: provide no-op, simple classical, and local-model dense edge providers.
+- `WireframeDetection/`: provide no-op and local HAWP wireframe providers for per-object line/junction evidence.
+- `MeshReconstruction/`: provide no-op and local-model advisory mesh candidate providers.
+- `PrimitiveFitting/`: load synthetic depth/enrichment, unproject masked pixels, fit simple geometric 3D primitive proxies, and export Blender scenes.
+- `Runtime/`: backend-neutral runtime helpers such as torch device resolution shared by detector, enrichment, and future 3D model paths.
+- `OutputWriter/`: write stable JSON reports, annotated overlay images, depth previews, and metric comparison summaries.
+- `Models/InstanceDetector/`: local learned Primitive3D instance-mask detector checkpoints.
+- `Output/Latest/`: ignored active run output.
+- `Output/Archive/`: ignored timestamped run folders only.
+- `Tools/Dataset/`: generate local synthetic primitive-shape datasets with Blender, write detector-neutral `instance_dataset_manifest.json` files for Primitive3D instance models, and render labeled dataset previews. YOLO label conversion remains for legacy detector experiments.
+- `Configs/InstanceDetector/`: detector-neutral configs for the Primitive3D instance-mask model.
+- `Tools/Training/`: detector-neutral Primitive3D train/eval from `instance_dataset_manifest.json` plus `Configs/InstanceDetector/`; RGBD YOLO training remains legacy comparison tooling.
+- `Tests/`: verify image loading, schemas, test-double pipeline behavior, overlays, and CLI errors without model weights.
+
+## Possible Future Layout
+
+If SceneForge returns to image-to-mesh export work, a practical expanded layout may look like this:
+
+```text
+SceneForge/
+  AGENTS.md
+  BEFORE_README.md
+  README.md
   current_changes.md
   project_preferences.md
   structure.md
@@ -85,110 +168,9 @@ SceneForge/
 
   Docs/
     architecture.md
-    segmentation.md
     tree.md
 ```
 
-This layout follows the HCRBot pattern of capability-focused top-level modules, subsystem-specific configs, mirrored tests, separate tools, and dedicated architecture/tree docs.
+Treat this as a candidate layout, not a requirement. Keep the next structure smaller if the new idea does not need these boundaries yet.
 
-## Module Responsibilities
-
-- `Core/`: shared configuration loading, project types, and small utilities.
-- `Input/`: image and depth loading. Keep raw input concerns separate from geometry generation.
-- `Geometry/`: cleanup, depth validity, mesh, UV, normal, plane, projection, region, solidification, smoothing, and geometry-processing logic.
-- `Export/`: output format writers. Use Blender `.blend` as the default user-facing output, write `preview.png` beside each blend, and keep `.obj` as an explicit sidecar/export path.
-- `Pipeline/`: orchestration code that wires input, geometry, and export modules together. `ImageToMesh/` is relief mode; `StructuredScene/` is fitted-plane mode with optional detail patches.
-- `Segmentation/`: optional mask and provider layer for structured reconstruction. Manual masks and deterministic heuristics live here; future SAM 3 integration should plug in here instead of directly into geometry.
-- `Configs/`: user-editable settings split by subsystem.
-- `Assets/`: samples, generated fixtures, and small test assets.
-- `Tests/`: tests that mirror the project modules.
-- `Tools/`: debug, profiling, and one-off scripts.
-- `Docs/`: architecture notes and generated tree snapshots.
-
-## Example First Files
-
-The first implementation lives inside this structure:
-
-```text
-SceneForge/
-  Input/
-    Image/
-      image_loader.py
-    Depth/
-      depth_loader.py
-  Geometry/
-    Cleanup/
-      mask_cleanup.py
-      mesh_hole_patcher.py
-      scene_cleanup.py
-      spike_filter.py
-    DepthValidity/
-      depth_validity.py
-    Mesh/
-      coverage_relief_builder.py
-      grid_mesh_builder.py
-      region_relief_builder.py
-    Normals/
-      normal_builder.py
-    Planes/
-      masked_plane_mesh_builder.py
-      plane_fitter.py
-      plane_mesh_builder.py
-    Projection/
-      camera_projection.py
-    Regions/
-      region_analyzer.py
-    Solidify/
-      scan_solidifier.py
-    UV/
-      uv_projector.py
-  Export/
-    Blend/
-      blend_exporter.py
-    OBJ/
-      obj_exporter.py
-  Pipeline/
-    ImageToMesh/
-      image_to_mesh_pipeline.py
-    StructuredScene/
-      structured_scene_pipeline.py
-  Segmentation/
-    Core/
-      segmentation_labels.py
-      segmentation_mask.py
-    Providers/
-      Manual/
-        mask_loader.py
-      Heuristic/
-        heuristic_segmenter.py
-      SAM3/
-        README.md
-    Integration/
-      mask_to_regions.py
-  Tests/
-    Geometry/
-      test_grid_mesh_builder.py
-    Export/
-      test_obj_exporter.py
-```
-
-Do not add `Source/`; keep new code in the capability modules above. Adjust the layout only when a new subsystem has a clear boundary.
-
-## Current Code Area
-
-The current useful code focuses on:
-
-- Loading an image and optional depth map.
-- Building a simple grid mesh from depth values in relief mode.
-- Separating invalid depth/no-data from valid near-black far-depth surfaces.
-- Building large stable depth regions as masked fitted camera-space plane meshes in structured mode.
-- Cleaning structured segmentation masks and meshes with small deterministic repairs before solidification.
-- Reporting large occlusion gaps instead of filling hidden surfaces that the source image cannot support.
-- Filtering structured plane/detail faces across configurable depth discontinuities.
-- Solidifying structured scene parts with conservative boundary side walls for better off-camera inspection.
-- Filling structured `--details` output with a behind-plane coverage relief surface where plane segmentation misses receding walls, floors, or object pieces.
-- Optionally guiding structured mode with segmentation masks so wall/floor/ceiling labels become plane regions and object/detail labels become relief regions.
-- Assigning UV coordinates and per-vertex normals.
-- Exporting a Blender-friendly `.obj` file.
-
-Avoid building directories for future roadmap items until SceneForge has a working image-to-mesh prototype.
+Avoid building directories for future roadmap items until SceneForge has a useful image-to-object-to-primitive detection prototype.

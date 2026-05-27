@@ -43,7 +43,7 @@ Build the smallest useful SceneForge prototype:
 
 - Input: grayscale depth image or normal image.
 - Output: simple textured mesh.
-- Export: `.obj` file that opens in Blender.
+- Export: `.blend` file that opens in Blender.
 - Controls: mesh resolution, depth strength, smoothing, and texture on/off.
 
 ## Why This Project

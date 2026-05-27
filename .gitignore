@@ -10,7 +10,11 @@ __pycache__/
 .venv/
 venv/
 
-Output/
+Output/Latest/*
+Output/Archive/*
+Models/
+Datasets/
+runs/
 *.blend
 *.blend[0-9]
 *.obj

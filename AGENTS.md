@@ -6,7 +6,7 @@ Guidance for coding agents working in this repository.
 
 SceneForge is an early-stage computer graphics project for turning 2D images into usable 3D assets and scenes. The current source of truth is `BEFORE_README.md`, which describes the idea, first milestone, and longer-term roadmap.
 
-The repository now has a Python CLI prototype. It can load image/depth inputs, build relief or structured geometry, export `.blend` by default through Blender, optionally keep OBJ sidecars, render `preview.png`, and use optional segmentation masks for structured mode.
+The repository was reset on 2026-05-24. The old depth-to-mesh prototype was deleted and replaced with a fresh Python CLI prototype for segmenting a 2D image, labeling each detected object with a closest primitive shape, and fitting those detections to rough geometric 3D proxies from synthetic depth.
 
 Also read:
 
@@ -16,13 +16,14 @@ Also read:
 
 ## Current Goal
 
-Keep early work focused on the first SceneForge prototype:
+Keep early work focused on the current primitive-detection prototype:
 
 1. Load a 2D image.
-2. Use a provided or estimated depth map.
-3. Convert depth into a mesh.
-4. Project the image as a texture.
-5. Export a Blender-friendly asset, starting with `.obj`.
+2. Segment visible objects.
+3. Classify each object as a closest primitive approximation: sphere, cylinder, cone, box, plane, or unknown.
+4. Write `detections.json`.
+5. Write `overlay.png`.
+6. For synthetic depth inputs, fit detections to simple geometric 3D primitives and export a Blender scene.
 
 Prefer a visible, practical MVP over perfect reconstruction or large architecture.
 
@@ -47,23 +48,25 @@ Prefer a visible, practical MVP over perfect reconstruction or large architectur
 
 ## Suggested First Implementation Shape
 
-When code is added, a reasonable first pass is:
+For the current code, keep the first pass shaped around:
 
-- A small CLI that accepts an image path and optional depth image path.
-- A mesh builder that samples pixels on a configurable grid.
-- A basic smoothing or decimation option.
-- `.obj` export with optional texture material support.
-- A tiny sample asset or generated test fixture, if licensing is clear.
+- A small CLI that accepts an image path, local YOLO segmentation weights, a local CLIP model directory, and an output directory.
+- Lazy imports for heavy ML dependencies so fake-backend tests run without model files.
+- Deterministic fake backends for tests.
+- JSON and overlay outputs before any 3D export work.
+- Geometric-only 3D primitive fitting for synthetic depth maps, keeping unknown detections as box proxies.
 
 ## Testing And Verification
 
-For early code, prioritize tests that confirm:
+Once code exists again, prioritize tests that confirm:
 
-- Image and depth dimensions are handled correctly.
-- Mesh vertices, faces, UVs, and normals are generated consistently.
-- Exported files can be parsed by a standard library or opened by Blender.
+- Image loading rejects missing and invalid files.
+- Primitive labels stay fixed for V1.
+- Detection reports serialize deterministically.
+- Fake backend pipeline writes `detections.json` and `overlay.png`.
+- Primitive fitting writes `primitive_fits.json` and `fitted_scene.blend` from fake detections plus synthetic depth.
 - CLI options produce deterministic output for small fixtures.
 
 ## Boundaries
 
-Avoid jumping ahead into RigForge, AvatarForge, or ElasticForge implementation until SceneForge has a usable image-to-mesh export path.
+Avoid jumping ahead into RigForge, AvatarForge, or ElasticForge until SceneForge has a usable image-to-object-to-geometric-primitive fitting path.

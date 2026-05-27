@@ -2,31 +2,32 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
+import numpy as np
+from PIL import Image, UnidentifiedImageError
 
 
-DepthMap = list[list[float]]
+class DepthLoadError(ValueError):
+    pass
 
 
-def load_depth_map(depth_path: str | Path) -> DepthMap:
-    path = Path(depth_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Depth file does not exist: {path}")
+def load_grayscale_depth(
+    path: str | Path,
+    expected_size: tuple[int, int] | None = None,
+) -> np.ndarray:
+    depth_path = Path(path)
+    if not depth_path.is_file():
+        raise DepthLoadError(f"Depth path does not exist or is not a file: {depth_path}")
 
-    with Image.open(path) as image:
-        gray = image.convert("L")
-        return _image_to_normalized_depth(gray)
+    try:
+        with Image.open(depth_path) as image:
+            depth = image.convert("L")
+    except UnidentifiedImageError as exc:
+        raise DepthLoadError(f"Depth file could not be decoded: {depth_path}") from exc
 
+    if expected_size is not None and depth.size != expected_size:
+        raise DepthLoadError(
+            f"Depth image size {depth.size[0]}x{depth.size[1]} does not match "
+            f"RGB image size {expected_size[0]}x{expected_size[1]}."
+        )
 
-def derive_depth_from_luminance(image: Image.Image) -> DepthMap:
-    return _image_to_normalized_depth(image.convert("L"))
-
-
-def _image_to_normalized_depth(image: Image.Image) -> DepthMap:
-    width, height = image.size
-    pixels = image.load()
-    return [
-        [float(pixels[x, y]) / 255.0 for x in range(width)]
-        for y in range(height)
-    ]
-
+    return np.asarray(depth, dtype=np.float32) / 255.0

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "depth_edge_3d_instance",
+  "architecture": "depth_edge_3d_instance_model",
+  "input_channels": ["depth", "edge"],
+  "optional_context_channels": ["rgb"],
+  "output_contract": "instance_masks_only",
+  "primitive_label_policy": "geometry_fitting_downstream",
+  "model_family": "scaffold",
+  "notes": "Post-YOLO detector config scaffold. Replace model_family and implementation details when the learned adapter is implemented."
+}
