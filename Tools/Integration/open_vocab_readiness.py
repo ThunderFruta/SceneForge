@@ -91,10 +91,13 @@ def build_report(
 def build_sam3_access_report(layout: OpenVocabLayout) -> dict:
     token_names = ["HF_TOKEN", "HUGGINGFACE_HUB_TOKEN"]
     token_env_present = any(os.environ.get(name) for name in token_names)
+    token_cache_present = huggingface_token_cache_present()
     cache_config_exists = any(layout.sam3_model_dir.rglob("config.json")) if layout.sam3_model_dir.exists() else False
-    ready = bool(token_env_present or cache_config_exists)
+    ready = bool(token_env_present or token_cache_present or cache_config_exists)
     if token_env_present:
         status = "token_env_present"
+    elif token_cache_present:
+        status = "token_cache_present"
     elif cache_config_exists:
         status = "cached_config_present"
     else:
@@ -106,9 +109,27 @@ def build_sam3_access_report(layout: OpenVocabLayout) -> dict:
         "model_dir": str(layout.sam3_model_dir),
         "token_env_names": token_names,
         "token_env_present": token_env_present,
+        "token_cache_present": token_cache_present,
         "cache_config_exists": cache_config_exists,
         "detail": "SAM3 is gated on Hugging Face; authenticate or pre-populate the local cache before smoke tests.",
     }
+
+
+def huggingface_token_cache_present() -> bool:
+    if os.environ.get("SCENEFORGE_DISABLE_HF_TOKEN_CACHE") == "1":
+        return False
+    try:
+        from huggingface_hub import get_token
+
+        return bool(get_token())
+    except Exception:
+        pass
+    try:
+        from huggingface_hub import HfFolder
+
+        return bool(HfFolder.get_token())
+    except Exception:
+        return False
 
 
 def readiness_status(

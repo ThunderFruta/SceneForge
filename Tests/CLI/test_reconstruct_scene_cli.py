@@ -175,3 +175,29 @@ def test_reconstruct_real_provider_uses_auto_device_after_model_preflight(tmp_pa
     assert result.returncode == 2
     assert "--device is required" not in result.stderr
     assert (output_dir / "run_status.json").is_file()
+
+
+def test_reconstruct_groundingdino_sam3_open_vocab_root_not_ready_fails_before_output(tmp_path: Path) -> None:
+    reference_blend = tmp_path / "reference.blend"
+    reference_blend.write_bytes(b"not a real blend")
+    output_dir = tmp_path / "Latest"
+
+    result = run_cli(
+        "reconstruct-scene",
+        "--reference-blend",
+        str(reference_blend),
+        "--detector-backend",
+        "groundingdino-sam3",
+        "--open-vocab-root",
+        str(tmp_path / "OpenVocabulary"),
+        "--edge-backend",
+        "simple",
+        "--mesh-backend",
+        "none",
+        "--output",
+        str(output_dir),
+    )
+
+    assert result.returncode == 2
+    assert "Open-vocabulary integration is not ready for reconstruction" in result.stderr
+    assert not output_dir.exists()

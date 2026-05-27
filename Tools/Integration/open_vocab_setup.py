@@ -183,6 +183,7 @@ def build_setup_script(layout: OpenVocabLayout) -> str:
         f"  git clone {shlex.quote(SAM3_REPO_URL)} SAM3/repo",
         "fi",
         '"$SCENEFORGE_PYTHON" -m pip install --no-build-isolation -e SAM3/repo',
+        '"$SCENEFORGE_PYTHON" -m pip install "huggingface-hub>=0.34,<1.0"',
         "",
         "# SAM3 checkpoints are access-gated. After approval, authenticate with:",
         "#   hf auth login",

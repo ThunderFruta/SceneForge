@@ -129,3 +129,23 @@ Models/
 
 The `hf/` directory is a local Hugging Face cache or checkpoint directory. Keep it
 out of git with the rest of model artifacts.
+
+## Primary reconstruction path
+
+After readiness passes, the preferred full-scene integration path is:
+
+```bash
+python3 run.py reconstruct-scene \
+  --reference-blend Assets/Samples/shapes.blend \
+  --detector-backend groundingdino-sam3 \
+  --open-vocab-root Models/OpenVocabulary \
+  --text-prompt-preset scene-primitives-v1 \
+  --edge-backend simple \
+  --wireframe-backend none \
+  --mesh-backend none \
+  --output Output/Latest
+```
+
+`--open-vocab-root` expands to the GroundingDINO repo/config/checkpoint and SAM3 repo/cache paths. Reconstruction runs must fail before rendering or output mutation when the readiness audit is not `ready_for_smoke_test`. Detections remain proposal-only: GroundingDINO/SAM3 labels are detector evidence, not primitive-label authority.
+
+Open-vocabulary detection writes proposal quality metadata in `detections.json` and `proposal_quality.json`, including object count, rectangle fallback count, duplicate overlap count, tiny/empty masks, labels seen, prompt preset, prompt text, thresholds, SAM mask mode, readiness status, and local source paths.

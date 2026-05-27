@@ -80,10 +80,12 @@ def test_readiness_reports_sam3_auth_required_when_sources_ready_without_token(t
     fill_fake_repos(root)
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+    monkeypatch.setenv("SCENEFORGE_DISABLE_HF_TOKEN_CACHE", "1")
 
     report = build_report(root_dir=root)
 
     assert report["status"] == "sam3_auth_required"
     assert report["ready_for_smoke_test"] is False
     assert report["sam3_access"]["status"] == "auth_or_cache_missing"
+    assert report["sam3_access"]["token_cache_present"] is False
     assert report["next_steps"][0].startswith("Authenticate for gated SAM3 access")

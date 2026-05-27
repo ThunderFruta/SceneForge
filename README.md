@@ -121,7 +121,7 @@ Models/Wireframe/HAWP/         # HAWP repo and hawpv*.pth checkpoints
 Models/Depth/DepthAnythingV3/  # downloaded future depth checkpoint, not used in V1
 ```
 
-Open-vocabulary segmentation integration is prepared for local GroundingDINO and SAM3 repos. First create the local layout and reviewed setup script without running network operations:
+Open-vocabulary segmentation is the primary real proposal path once the local GroundingDINO and SAM3 readiness audit passes. First create the local layout and reviewed setup script without running network operations:
 
 ```bash
 .venv/bin/python run.py prepare-open-vocab-layout --root Models/OpenVocabulary
@@ -174,17 +174,30 @@ Or run the underlying command directly:
 .venv/bin/python run.py detect-shapes \
   --backend groundingdino-sam3 \
   --image Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png \
-  --groundingdino-repo-dir Models/OpenVocabulary/GroundingDINO/repo \
-  --groundingdino-config Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py \
-  --groundingdino-checkpoint Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth \
-  --sam3-repo-dir Models/OpenVocabulary/SAM3/repo \
-  --sam3-model-dir Models/OpenVocabulary/SAM3/hf \
-  --text-prompt "chair . table . box . sphere . cylinder . cone . plane . foreground object ." \
+  --open-vocab-root Models/OpenVocabulary \
+  --text-prompt-preset scene-primitives-v1 \
   --output Output/Latest/detect \
   --device auto
 ```
 
 GroundingDINO and SAM3 outputs are weak proposal evidence only. SceneForge still chooses final primitive labels during enrichment and geometric fitting.
+
+Run the primary real reconstruction proposal path after readiness passes:
+
+```bash
+.venv/bin/python run.py reconstruct-scene \
+  --reference-blend Assets/Samples/shapes.blend \
+  --detector-backend groundingdino-sam3 \
+  --open-vocab-root Models/OpenVocabulary \
+  --text-prompt-preset scene-primitives-v1 \
+  --edge-backend simple \
+  --wireframe-backend none \
+  --mesh-backend none \
+  --output Output/Latest \
+  --device auto
+```
+
+This path writes `detect/proposal_quality.json` beside `detections.json` and records open-vocabulary prompt/readiness/source metadata in detection and run-status reports.
 
 Use real providers only when those local adapters and weights exist:
 
