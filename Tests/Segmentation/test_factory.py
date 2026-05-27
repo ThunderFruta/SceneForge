@@ -163,6 +163,8 @@ def test_factory_builds_sam3_runtime_without_importing_external_repo(tmp_path: P
 def test_factory_builds_groundingdino_sam3_runtime_without_importing_external_repos(tmp_path: Path) -> None:
     import sys
 
+    sys.modules.pop("groundingdino.util.inference", None)
+    sys.modules.pop("sam3.model_builder", None)
     gdino_repo = tmp_path / "GroundingDINO"
     gdino_repo.mkdir()
     gdino_config = tmp_path / "GroundingDINO_SwinT_OGC.py"

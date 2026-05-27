@@ -65,6 +65,8 @@ class ReconstructDetectionBackendConfig:
     text_prompt: str = "object . plane . foreground object ."
     box_threshold: float = 0.35
     text_threshold: float = 0.25
+    text_prompt_preset: str | None = None
+    open_vocab_metadata: dict | None = None
     groundingdino_repo_dir: str | None = None
     groundingdino_config: str | None = None
     groundingdino_checkpoint: str | None = None

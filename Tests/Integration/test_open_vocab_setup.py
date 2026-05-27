@@ -29,6 +29,7 @@ def test_prepare_layout_creates_manifest_and_setup_script(tmp_path: Path) -> Non
     assert ".venv/bin/python" in text
     assert "nvidia-cuda-nvcc" in text
     assert "huggingface-hub>=0.34,<1.0" in text
+    assert "output_dtype = linear.weight.dtype" in text
     assert "CUDA_HOME" in text
     assert "libcudart.so" in text
     assert "ms_deform_attn_cuda.cu" in text

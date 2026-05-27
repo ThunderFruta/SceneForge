@@ -47,6 +47,7 @@ def configure_scene(args: argparse.Namespace) -> bpy.types.Object:
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
     scene.render.resolution_percentage = 100
+    scene.view_layers[0].use_pass_z = True
     scene.view_settings.view_transform = "Standard"
     scene.view_settings.look = "None"
     camera.data.sensor_fit = "HORIZONTAL"
@@ -84,7 +85,11 @@ def render_depth(path: Path, near_depth: float, far_depth: float) -> None:
     output.format.file_format = "PNG"
     output.format.color_mode = "BW"
     output.format.color_depth = "8"
-    tree.links.new(layers.outputs["Depth"], mapper.inputs[0])
+    depth_output = layers.outputs.get("Depth") or layers.outputs.get("Z")
+    if depth_output is None:
+        available = ", ".join(item.name for item in layers.outputs)
+        raise RuntimeError(f"Render layer depth pass is unavailable; outputs: {available}")
+    tree.links.new(depth_output, mapper.inputs[0])
     tree.links.new(mapper.outputs[0], output.inputs[0])
 
     scene.frame_set(1)
