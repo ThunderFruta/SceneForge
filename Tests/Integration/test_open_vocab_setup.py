@@ -25,6 +25,14 @@ def test_prepare_layout_creates_manifest_and_setup_script(tmp_path: Path) -> Non
     assert GROUNDINGDINO_CHECKPOINT_URL in text
     assert SAM3_REPO_URL in text
     assert "hf auth login" in text
+    assert "SCENEFORGE_PYTHON" in text
+    assert ".venv/bin/python" in text
+    assert "nvidia-cuda-nvcc" in text
+    assert "CUDA_HOME" in text
+    assert "libcudart.so" in text
+    assert "ms_deform_attn_cuda.cu" in text
+    assert "value.scalar_type()" in text
+    assert "--no-build-isolation" in text
     assert manifest["paths"]["groundingdino_checkpoint"].endswith("groundingdino_swint_ogc.pth")
     assert manifest["workflow"][0].startswith("Run setup_open_vocab_sources")
     assert manifest["paths"]["smoke_image_path"].endswith("open_vocab_smoke_objects.png")

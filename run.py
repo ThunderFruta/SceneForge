@@ -254,7 +254,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--text-prompt", default="object . plane . foreground object .")
+    from Tools.Integration.open_vocab_runtime import prompt_preset_names
+
+    parser.add_argument("--open-vocab-root")
+    parser.add_argument("--text-prompt-preset", choices=prompt_preset_names(), default="scene-primitives-v1")
+    parser.add_argument("--text-prompt")
     parser.add_argument("--box-threshold", type=float, default=0.35)
     parser.add_argument("--text-threshold", type=float, default=0.25)
     parser.add_argument("--groundingdino-repo-dir")
@@ -262,6 +266,50 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--groundingdino-checkpoint")
     parser.add_argument("--sam3-repo-dir")
     parser.add_argument("--sam3-model-dir")
+
+
+def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_readiness: bool) -> None:
+    from Tools.Integration.open_vocab_runtime import resolve_open_vocab_options
+
+    options = resolve_open_vocab_options(
+        backend=getattr(args, "backend", getattr(args, "detector_backend", "")),
+        open_vocab_root=getattr(args, "open_vocab_root", None),
+        text_prompt=getattr(args, "text_prompt", None),
+        text_prompt_preset=getattr(args, "text_prompt_preset", None),
+        groundingdino_repo_dir=getattr(args, "groundingdino_repo_dir", None),
+        groundingdino_config=getattr(args, "groundingdino_config", None),
+        groundingdino_checkpoint=getattr(args, "groundingdino_checkpoint", None),
+        sam3_repo_dir=getattr(args, "sam3_repo_dir", None),
+        sam3_model_dir=getattr(args, "sam3_model_dir", None),
+    )
+    args.text_prompt = options["text_prompt"]
+    args.text_prompt_preset = options["text_prompt_preset"]
+    for key, value in options["paths"].items():
+        if value is not None:
+            setattr(args, key, value)
+    metadata = dict(options["metadata"])
+    if options["enabled"] and enforce_readiness:
+        if getattr(args, "open_vocab_root", None):
+            from Tools.Integration.open_vocab_readiness import build_report
+
+            report = build_report(
+                root_dir=args.open_vocab_root,
+                backend=getattr(args, "backend", getattr(args, "detector_backend", "groundingdino-sam3")),
+                text_prompt=args.text_prompt,
+                run_import_probe=True,
+            )
+            metadata["readiness_status"] = report["status"]
+            metadata["ready_for_smoke_test"] = bool(report["ready_for_smoke_test"])
+            metadata["sam3_access"] = report.get("sam3_access")
+            if not report["ready_for_smoke_test"]:
+                raise CliError(
+                    "Open-vocabulary integration is not ready for reconstruction: "
+                    f"{report['status']}. Run audit-open-vocab-readiness for details."
+                )
+        else:
+            metadata["readiness_status"] = "not_checked_explicit_paths"
+            metadata["ready_for_smoke_test"] = None
+    args.open_vocab_metadata = metadata if options["enabled"] else None
 
 
 def add_provider_args(parser: argparse.ArgumentParser) -> None:
@@ -394,6 +442,7 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
     from Segmentation.factory import DetectShapesBackendConfig, build_detect_shapes_runtime
     from ShapeDetection.pipeline import run_shape_detection
 
+    _resolve_open_vocabulary_runtime_args(args, enforce_readiness=bool(getattr(args, "open_vocab_root", None)))
     runtime = build_detect_shapes_runtime(
         DetectShapesBackendConfig(
             backend=args.backend,
@@ -410,6 +459,8 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
             text_prompt=args.text_prompt,
             box_threshold=args.box_threshold,
             text_threshold=args.text_threshold,
+            text_prompt_preset=args.text_prompt_preset,
+            open_vocab_metadata=getattr(args, "open_vocab_metadata", None),
             groundingdino_repo_dir=args.groundingdino_repo_dir,
             groundingdino_config=args.groundingdino_config,
             groundingdino_checkpoint=args.groundingdino_checkpoint,
@@ -489,20 +540,26 @@ def cmd_reconstruct_scene(args: argparse.Namespace) -> int:
     _preflight_reconstruct(args)
     build_evidence_providers(args)
     _prepare_latest_output(args, output_dir)
-    _write_run_status(output_dir, "running", stage="prepare")
+    _write_run_status(output_dir, "running", stage="prepare", open_vocab=getattr(args, "open_vocab_metadata", None))
     try:
         render_info = _run_reconstruct_render(args, output_dir)
-        _write_run_status(output_dir, "running", stage="detect", render=render_info)
+        _write_run_status(output_dir, "running", stage="detect", render=render_info, open_vocab=getattr(args, "open_vocab_metadata", None))
         _run_reconstruct_detect(args, output_dir, render_info)
-        _write_run_status(output_dir, "running", stage="enrich", render=render_info)
+        _write_run_status(output_dir, "running", stage="enrich", render=render_info, open_vocab=getattr(args, "open_vocab_metadata", None))
         _run_reconstruct_enrich(args, output_dir, render_info)
-        _write_run_status(output_dir, "running", stage="fit", render=render_info)
+        _write_run_status(output_dir, "running", stage="fit", render=render_info, open_vocab=getattr(args, "open_vocab_metadata", None))
         _run_reconstruct_fit(args, output_dir, fov_degrees=float(render_info.get("fov_degrees", args.fov_degrees)))
         if args.require_quality_gate:
             _require_fit_quality_gate(output_dir / "fit" / "primitive_fits.json")
-        _write_run_status(output_dir, "complete", stage="complete", render=render_info)
+        _write_run_status(output_dir, "complete", stage="complete", render=render_info, open_vocab=getattr(args, "open_vocab_metadata", None))
     except Exception as exc:
-        _write_run_status(output_dir, "failed", stage="failed", error=str(exc))
+        _write_run_status(
+            output_dir,
+            "failed",
+            stage="failed",
+            error=str(exc),
+            open_vocab=getattr(args, "open_vocab_metadata", None),
+        )
         raise
     print(f"Wrote {output_dir / 'run_status.json'}")
     return 0
@@ -680,6 +737,10 @@ def build_wireframe_provider(backend: str, model_dir: str | None, device: str | 
 
 def _preflight_reconstruct(args: argparse.Namespace) -> None:
     _require_file(args.reference_blend, "--reference-blend")
+    _resolve_open_vocabulary_runtime_args(
+        args,
+        enforce_readiness=args.detector_backend in {"sam3", "groundingdino-sam3"},
+    )
     if args.detector_backend in {"rgb-yolo", "rgbd-yolo", "real"} and not args.detector_model:
         _require_file(args.detector_weights, "--detector-weights")
     if args.detector_backend == "sam3":
@@ -764,6 +825,8 @@ def _run_reconstruct_detect(args: argparse.Namespace, output_dir: Path, render_i
             text_prompt=args.text_prompt,
             box_threshold=args.box_threshold,
             text_threshold=args.text_threshold,
+            text_prompt_preset=args.text_prompt_preset,
+            open_vocab_metadata=getattr(args, "open_vocab_metadata", None),
             groundingdino_repo_dir=args.groundingdino_repo_dir,
             groundingdino_config=args.groundingdino_config,
             groundingdino_checkpoint=args.groundingdino_checkpoint,

@@ -13,6 +13,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `run.py audit-open-vocab-readiness` and `Tools/Integration/open_vocab_readiness.py` to combine setup, path preflight, import probe, next steps, and smoke-test command reporting.
 - Added deterministic open-vocabulary smoke-test assets under `Assets/Fixtures/OpenVocabulary/` and updated generated smoke-test commands to use them.
 - Added `run.py run-open-vocab-smoke` and `Tools/Integration/open_vocab_smoke.py` to guard and run the first GroundingDINO/SAM3 `detect-shapes` smoke test after readiness passes.
+- Hardened the GroundingDINO/SAM3 setup path with local `.venv` CUDA/NVCC handling, a reproducible GroundingDINO PyTorch API patch, and explicit SAM3 Hugging Face auth/cache readiness reporting.
 
 ## 2026-05-24
 

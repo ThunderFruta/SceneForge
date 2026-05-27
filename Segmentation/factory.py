@@ -39,6 +39,10 @@ class DetectShapesBackendConfig:
     text_prompt: str = "object . plane . foreground object ."
     box_threshold: float = 0.35
     text_threshold: float = 0.25
+    text_prompt_preset: str | None = None
+    open_vocab_metadata: dict | None = None
+    text_prompt_preset: str | None = None
+    open_vocab_metadata: dict | None = None
     groundingdino_repo_dir: str | None = None
     groundingdino_config: str | None = None
     groundingdino_checkpoint: str | None = None
@@ -187,6 +191,8 @@ def build_reconstruct_detection_runtime(
             text_prompt=config.text_prompt,
             box_threshold=config.box_threshold,
             text_threshold=config.text_threshold,
+            text_prompt_preset=config.text_prompt_preset,
+            open_vocab_metadata=config.open_vocab_metadata,
             sam3_repo_dir=config.sam3_repo_dir,
             sam3_model_dir=config.sam3_model_dir,
         )
@@ -208,6 +214,8 @@ def build_reconstruct_detection_runtime(
             text_prompt=config.text_prompt,
             box_threshold=config.box_threshold,
             text_threshold=config.text_threshold,
+            text_prompt_preset=config.text_prompt_preset,
+            open_vocab_metadata=config.open_vocab_metadata,
             groundingdino_repo_dir=config.groundingdino_repo_dir,
             groundingdino_config=config.groundingdino_config,
             groundingdino_checkpoint=config.groundingdino_checkpoint,
@@ -293,8 +301,9 @@ def learned_depth_edge_runtime(
     )
 
 
-def open_vocabulary_runtime(segmenter: object) -> DetectionRuntime:
+def open_vocabulary_runtime(segmenter: object, config: DetectShapesBackendConfig) -> DetectionRuntime:
     backend_info = segmenter.backend_info
+    open_vocab_metadata = dict(config.open_vocab_metadata or {})
     model_info = {
         "detector_backend": backend_info.name,
         "detector_architecture": backend_info.architecture,
@@ -304,6 +313,18 @@ def open_vocabulary_runtime(segmenter: object) -> DetectionRuntime:
         "primitive_label_policy": backend_info.primitive_label_policy,
         "legacy_yolo": backend_info.legacy,
         "text_prompt": getattr(segmenter, "text_prompt", None),
+        "text_prompt_preset": config.text_prompt_preset,
+        "open_vocab_metadata": open_vocab_metadata,
+        "open_vocab_sources": {
+            "groundingdino_repo_dir": config.groundingdino_repo_dir,
+            "groundingdino_config": config.groundingdino_config,
+            "groundingdino_checkpoint": config.groundingdino_checkpoint,
+            "sam3_repo_dir": config.sam3_repo_dir,
+            "sam3_model_dir": config.sam3_model_dir,
+        },
+        "groundingdino_box_threshold": config.box_threshold,
+        "groundingdino_text_threshold": config.text_threshold,
+        "sam_mask_mode": "box_prompt_with_rectangle_fallback" if backend_info.name.startswith("groundingdino") else "text_prompt",
     }
     return DetectionRuntime(
         segmenter=segmenter,
@@ -322,7 +343,7 @@ def sam3_runtime(config: DetectShapesBackendConfig, *, require_dir: RequireDir) 
         score_threshold=config.confidence,
         device=resolve_torch_device(config.device),
     )
-    return open_vocabulary_runtime(segmenter)
+    return open_vocabulary_runtime(segmenter, config)
 
 
 def groundingdino_sam3_runtime(
@@ -345,7 +366,7 @@ def groundingdino_sam3_runtime(
         score_threshold=config.confidence,
         device=resolve_torch_device(config.device),
     )
-    return open_vocabulary_runtime(segmenter)
+    return open_vocabulary_runtime(segmenter, config)
 
 
 def legacy_rgb_yolo_runtime(

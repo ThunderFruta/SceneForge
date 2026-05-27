@@ -36,6 +36,7 @@ def run_smoke_test(
 ) -> dict:
     readiness = build_readiness_report(root_dir=root_dir, backend=backend, text_prompt=text_prompt, run_import_probe=True)
     command = build_command(root_dir=root_dir, backend=backend, text_prompt=text_prompt)
+    command[0] = sys.executable
     report = {
         "schema_version": SCHEMA_VERSION,
         "backend": backend,

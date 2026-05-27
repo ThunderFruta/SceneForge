@@ -56,10 +56,11 @@ def test_readiness_reports_layout_not_prepared(tmp_path: Path) -> None:
     assert report["next_steps"][0].startswith("Run prepare-open-vocab-layout")
 
 
-def test_readiness_reports_ready_for_smoke_test_with_fake_repos(tmp_path: Path) -> None:
+def test_readiness_reports_ready_for_smoke_test_with_fake_repos(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "OpenVocabulary"
     prepare_layout(root)
     fill_fake_repos(root)
+    monkeypatch.setenv("HF_TOKEN", "fake-token")
 
     report = build_report(root_dir=root)
 
@@ -67,6 +68,22 @@ def test_readiness_reports_ready_for_smoke_test_with_fake_repos(tmp_path: Path) 
     assert report["ready_for_smoke_test"] is True
     assert report["preflight"]["ready"] is True
     assert report["import_probe"]["ready"] is True
+    assert report["sam3_access"]["ready"] is True
     assert report["first_smoke_test_command"][0:3] == ["python3", "run.py", "detect-shapes"]
     assert report["smoke_image_exists"] is True
     assert "Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png" in report["first_smoke_test_command"]
+
+
+def test_readiness_reports_sam3_auth_required_when_sources_ready_without_token(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "OpenVocabulary"
+    prepare_layout(root)
+    fill_fake_repos(root)
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_HUB_TOKEN", raising=False)
+
+    report = build_report(root_dir=root)
+
+    assert report["status"] == "sam3_auth_required"
+    assert report["ready_for_smoke_test"] is False
+    assert report["sam3_access"]["status"] == "auth_or_cache_missing"
+    assert report["next_steps"][0].startswith("Authenticate for gated SAM3 access")

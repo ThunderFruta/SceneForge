@@ -9,6 +9,7 @@ class SegmentDetection:
     mask_polygon: list[tuple[float, float]]
     detector_label: str
     detector_confidence: float
+    proposal_source: str = "unknown"
 
     def normalized(self, image_width: int, image_height: int) -> "SegmentDetection":
         left, top, right, bottom = self.bbox_xyxy
@@ -30,4 +31,5 @@ class SegmentDetection:
             mask_polygon=clamped_polygon,
             detector_label=self.detector_label,
             detector_confidence=max(0.0, min(1.0, self.detector_confidence)),
+            proposal_source=self.proposal_source,
         )

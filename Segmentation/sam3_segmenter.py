@@ -56,7 +56,13 @@ class Sam3Segmenter:
         processor = self._load_processor()
         state = processor.set_image(image.convert("RGB"))
         output = processor.set_text_prompt(state=state, prompt=self.text_prompt)
-        return detections_from_sam3_output(output, image.size, fallback_label=self.text_prompt, min_score=self.score_threshold)
+        return detections_from_sam3_output(
+            output,
+            image.size,
+            fallback_label=self.text_prompt,
+            min_score=self.score_threshold,
+            proposal_source="sam3_text_prompt",
+        )
 
     def detect_boxes(
         self,
@@ -72,9 +78,15 @@ class Sam3Segmenter:
             self._reset_prompts(processor, state)
             output = self._try_box_prompt(processor, state, box)
             if output is None:
-                detections.append(detection_from_box(box, label, score, image.size))
+                detections.append(detection_from_box(box, label, score, image.size, proposal_source="groundingdino_box_fallback"))
                 continue
-            refined = detections_from_sam3_output(output, image.size, fallback_label=label, min_score=0.0)
+            refined = detections_from_sam3_output(
+                output,
+                image.size,
+                fallback_label=label,
+                min_score=0.0,
+                proposal_source="sam3_box_prompt",
+            )
             if refined:
                 best = max(refined, key=lambda item: item.detector_confidence)
                 detections.append(
@@ -83,10 +95,11 @@ class Sam3Segmenter:
                         mask_polygon=best.mask_polygon,
                         detector_label=label or best.detector_label,
                         detector_confidence=max(float(score), best.detector_confidence),
+                        proposal_source=best.proposal_source,
                     )
                 )
             else:
-                detections.append(detection_from_box(box, label, score, image.size))
+                detections.append(detection_from_box(box, label, score, image.size, proposal_source="groundingdino_box_fallback"))
         return detections
 
     @staticmethod
@@ -172,6 +185,7 @@ def detections_from_sam3_output(
     *,
     fallback_label: str,
     min_score: float,
+    proposal_source: str = "sam3_output",
 ) -> list[SegmentDetection]:
     masks = _output_value(output, "masks")
     boxes = _output_value(output, "boxes")
@@ -207,6 +221,7 @@ def detections_from_sam3_output(
                 mask_polygon=polygon,
                 detector_label=label,
                 detector_confidence=score,
+                proposal_source=proposal_source,
             ).normalized(*image_size)
         )
     return detections
@@ -217,6 +232,7 @@ def detection_from_box(
     label: str,
     score: float,
     image_size: tuple[int, int],
+    proposal_source: str = "box_fallback",
 ) -> SegmentDetection:
     bbox = normalize_box_xyxy(box, image_size)
     return SegmentDetection(
@@ -224,6 +240,7 @@ def detection_from_box(
         mask_polygon=rectangle_polygon(bbox),
         detector_label=label or "object",
         detector_confidence=float(score),
+        proposal_source=proposal_source,
     ).normalized(*image_size)
 
 

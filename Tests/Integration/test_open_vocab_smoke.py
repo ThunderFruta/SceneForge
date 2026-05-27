@@ -85,5 +85,6 @@ def test_smoke_test_runs_command_when_ready(tmp_path: Path) -> None:
 
     assert report["status"] == "passed"
     assert report["returncode"] == 0
-    assert captured["command"][0:3] == ["python3", "run.py", "detect-shapes"]
+    assert captured["command"][1:3] == ["run.py", "detect-shapes"]
+    assert captured["command"][0].endswith("python") or "python" in captured["command"][0]
     assert "Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png" in captured["command"]

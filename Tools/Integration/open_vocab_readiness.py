@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from Tools.Integration.open_vocab_import_probe import build_report as build_import_probe_report
@@ -40,8 +41,11 @@ def build_report(
             groundingdino_repo_dir=layout.groundingdino_repo_dir,
             sam3_repo_dir=layout.sam3_repo_dir,
         )
+    sam3_access = build_sam3_access_report(layout) if backend in {"sam3", "groundingdino-sam3"} else None
     ready_for_import_probe = bool(preflight["ready"])
-    ready_for_smoke_test = bool(preflight["ready"] and (import_probe is None or import_probe["ready"]))
+    imports_ready = bool(import_probe is None or import_probe["ready"])
+    sam3_access_ready = bool(sam3_access is None or sam3_access["ready"])
+    ready_for_smoke_test = bool(preflight["ready"] and imports_ready and sam3_access_ready)
     return {
         "schema_version": SCHEMA_VERSION,
         "backend": backend,
@@ -51,6 +55,7 @@ def build_report(
             setup_script_exists=setup_script_exists,
             preflight_ready=bool(preflight["ready"]),
             import_probe_ready=None if import_probe is None else bool(import_probe["ready"]),
+            sam3_access_ready=None if sam3_access is None else bool(sam3_access["ready"]),
         ),
         "ready_for_import_probe": ready_for_import_probe,
         "ready_for_smoke_test": ready_for_smoke_test,
@@ -71,13 +76,38 @@ def build_report(
         },
         "preflight": preflight,
         "import_probe": import_probe,
+        "sam3_access": sam3_access,
         "first_smoke_test_command": smoke_test_command(layout),
         "next_steps": next_steps(
             manifest_exists=manifest_exists,
             setup_script_exists=setup_script_exists,
             preflight_ready=bool(preflight["ready"]),
             import_probe_ready=None if import_probe is None else bool(import_probe["ready"]),
+            sam3_access_ready=None if sam3_access is None else bool(sam3_access["ready"]),
         ),
+    }
+
+
+def build_sam3_access_report(layout: OpenVocabLayout) -> dict:
+    token_names = ["HF_TOKEN", "HUGGINGFACE_HUB_TOKEN"]
+    token_env_present = any(os.environ.get(name) for name in token_names)
+    cache_config_exists = any(layout.sam3_model_dir.rglob("config.json")) if layout.sam3_model_dir.exists() else False
+    ready = bool(token_env_present or cache_config_exists)
+    if token_env_present:
+        status = "token_env_present"
+    elif cache_config_exists:
+        status = "cached_config_present"
+    else:
+        status = "auth_or_cache_missing"
+    return {
+        "ready": ready,
+        "status": status,
+        "repo_id": "facebook/sam3",
+        "model_dir": str(layout.sam3_model_dir),
+        "token_env_names": token_names,
+        "token_env_present": token_env_present,
+        "cache_config_exists": cache_config_exists,
+        "detail": "SAM3 is gated on Hugging Face; authenticate or pre-populate the local cache before smoke tests.",
     }
 
 
@@ -87,7 +117,10 @@ def readiness_status(
     setup_script_exists: bool,
     preflight_ready: bool,
     import_probe_ready: bool | None,
+    sam3_access_ready: bool | None,
 ) -> str:
+    if preflight_ready and (import_probe_ready is True or import_probe_ready is None) and sam3_access_ready is False:
+        return "sam3_auth_required"
     if preflight_ready and (import_probe_ready is True or import_probe_ready is None):
         return "ready_for_smoke_test"
     if preflight_ready and import_probe_ready is False:
@@ -103,7 +136,10 @@ def next_steps(
     setup_script_exists: bool,
     preflight_ready: bool,
     import_probe_ready: bool | None,
+    sam3_access_ready: bool | None,
 ) -> list[str]:
+    if preflight_ready and (import_probe_ready is True or import_probe_ready is None) and sam3_access_ready is False:
+        return ["Authenticate for gated SAM3 access with hf auth login or set HF_TOKEN/HUGGINGFACE_HUB_TOKEN, then rerun audit-open-vocab-readiness."]
     if preflight_ready and (import_probe_ready is True or import_probe_ready is None):
         return ["Run the first detect-shapes smoke test with --backend groundingdino-sam3."]
     if preflight_ready and import_probe_ready is False:
@@ -128,6 +164,9 @@ def print_summary(report: dict) -> None:
     import_probe = report.get("import_probe")
     if import_probe is not None:
         print(f"import probe: {'ready' if import_probe['ready'] else 'not_ready'}")
+    sam3_access = report.get("sam3_access")
+    if sam3_access is not None:
+        print(f"sam3 access: {'ready' if sam3_access['ready'] else 'not_ready'}")
     for step in report["next_steps"]:
         print(f"next: {step}")
 
