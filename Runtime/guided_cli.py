@@ -148,6 +148,8 @@ def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[st
     ]
     ram_backend, ram_args = open_vocab_backend_with_ram_fallback()
     args[args.index("--detector-backend") + 1] = ram_backend
+    if ram_backend == "ram-groundingdino-sam3":
+        args = remove_option_with_value(args, "--text-prompt-preset")
     args.extend(ram_args)
     return args
 
@@ -189,6 +191,8 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ]
         backend, ram_args = open_vocab_backend_with_ram_fallback()
         args[args.index("--backend") + 1] = backend
+        if backend == "ram-groundingdino-sam3":
+            args = remove_option_with_value(args, "--text-prompt-preset")
         args.extend(ram_args)
         return _run_scene_args(args, execute)
     if selected == 1:
@@ -249,15 +253,24 @@ def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int
 def print_recipes() -> None:
     backend, ram_args = open_vocab_backend_with_ram_fallback()
     detector_backend = "ram-groundingdino-sam3" if backend == "ram-groundingdino-sam3" else "groundingdino-sam3"
+    detect_prompt_args = [] if backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
+    reconstruct_prompt_args = [] if detector_backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
     recipes = [
         [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
         [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
-        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
+        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
-        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args,
+        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args,
     ]
     for command in recipes:
         print(shell_join(command))
+
+
+def remove_option_with_value(args: list[str], option: str) -> list[str]:
+    if option not in args:
+        return args
+    index = args.index(option)
+    return args[:index] + args[index + 2 :]
 
 
 def open_vocab_backend_with_ram_fallback() -> tuple[str, list[str]]:

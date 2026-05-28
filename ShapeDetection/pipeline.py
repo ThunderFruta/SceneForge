@@ -42,6 +42,17 @@ def run_shape_detection(
     else:
         proposal_quality = None
 
+    runtime_debug: dict = {}
+    ram_tags = getattr(segmenter, "last_ram_tags", None)
+    if ram_tags is not None:
+        runtime_debug["ram_tags"] = list(ram_tags)
+    grounding_prompt = getattr(segmenter, "last_grounding_prompt", None)
+    if grounding_prompt is not None:
+        runtime_debug["grounding_prompt"] = grounding_prompt
+    ram_error = getattr(segmenter, "last_ram_error", None)
+    if ram_error:
+        runtime_debug["ram_error"] = ram_error
+
     objects: list[ObjectShapeDetection] = []
     for index, segment in enumerate(segments, start=1):
         prediction = classifier.classify(image, segment)
@@ -61,6 +72,8 @@ def run_shape_detection(
     model_info_with_time = dict(model_info)
     if proposal_quality is not None:
         model_info_with_time["proposal_quality"] = proposal_quality
+    if runtime_debug:
+        model_info_with_time["runtime_debug"] = runtime_debug
     model_info_with_time["fusion_contract"] = load_source_fusion_contract(resolved_image_path, image.width, image.height)
     model_info_with_time["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
     report = DetectionReport(

@@ -9,7 +9,7 @@ from typing import Any
 
 from Tools.Integration.open_vocab_setup import OpenVocabLayout
 
-SCENE_PRIMITIVES_V1_PROMPT = "object . foreground object . chair . table . sofa . bed . lamp . couch . cabinet . plant . person . box . sphere . cylinder . cone ."
+SCENE_PRIMITIVES_V1_PROMPT = "object . foreground object . chair . table . sofa . bed . lamp . couch . cabinet . plant . flower . flowers . vase . flower pot . person . box . sphere . cylinder . cone ."
 PROMPT_PRESETS = {
     "scene-primitives-v1": SCENE_PRIMITIVES_V1_PROMPT,
 }
@@ -239,12 +239,18 @@ def resolve_open_vocab_options(
     refresh_text_prompt: bool = False,
     text_prompt_refresh_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    resolved_prompt, prompt_source, preset_name = resolve_text_prompt(
-        text_prompt,
-        text_prompt_preset,
-        refresh_text_prompt=refresh_text_prompt,
-        text_prompt_refresh_path=text_prompt_refresh_path,
-    )
+    if backend == "ram-groundingdino-sam3":
+        resolved_prompt = ""
+        prompt_source = "ram_tags"
+        preset_name = None
+        refresh_text_prompt = False
+    else:
+        resolved_prompt, prompt_source, preset_name = resolve_text_prompt(
+            text_prompt,
+            text_prompt_preset,
+            refresh_text_prompt=refresh_text_prompt,
+            text_prompt_refresh_path=text_prompt_refresh_path,
+        )
     root = Path(open_vocab_root) if open_vocab_root else None
     layout = OpenVocabLayout(root) if root else None
     paths = {

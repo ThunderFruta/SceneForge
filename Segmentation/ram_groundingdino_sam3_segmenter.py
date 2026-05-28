@@ -70,7 +70,7 @@ class RamGroundingDinoSam3Segmenter:
         self.backend_info = SegmentationBackendInfo(
             name=self.backend,
             architecture="ram_tags_plus_groundingdino_boxes_plus_sam3_masks",
-            input_channels=("rgb", "ram_checkpoint", "text_prompt"),
+            input_channels=("rgb", "ram_checkpoint", "ram_tags"),
             primitive_labels_are_authoritative=False,
             legacy=False,
             model_path=str(self.ram_checkpoint),
@@ -78,21 +78,27 @@ class RamGroundingDinoSam3Segmenter:
             output_contract="open_vocab_box_guided_instance_masks",
             primitive_label_policy="geometry_fitting_downstream",
             notes=(
-                "RAM tags guide GroundingDINO box generation, then SAM3 refines"
-                " box proposals into masks."
+                "RAM image tags are converted directly into the GroundingDINO"
+                " vocabulary prompt, then SAM3 refines box proposals into masks."
             ),
         )
         self._ram_predictor = None
         self._ram_model_ready = False
+        self.last_ram_tags: list[str] = []
+        self.last_grounding_prompt: str | None = None
+        self.last_ram_error: str | None = None
 
     def detect(self, image: Image.Image) -> list[SegmentDetection]:
         ram_tags = self._ram_tags(image)
         if ram_tags:
-            boxes, labels, scores = self._groundingdino_boxes_for_prompt(image, _tags_to_prompt(ram_tags))
+            self.last_ram_tags = ram_tags
+            self.last_grounding_prompt = _tags_to_prompt(ram_tags)
+            boxes, labels, scores = self._groundingdino_boxes_for_prompt(image, self.last_grounding_prompt)
             proposal_source = "ram_groundingdino"
         else:
-            boxes, labels, scores = self._groundingdino_boxes(image)
-            proposal_source = "groundingdino_fallback"
+            self.last_ram_tags = []
+            self.last_grounding_prompt = None
+            return []
 
         if not boxes:
             return []
@@ -222,10 +228,12 @@ class RamGroundingDinoSam3Segmenter:
     def _build_ram_predictor_from_official_repo(self):
         try:
             import torch
+            _patch_transformers_for_ram_imports()
             from ram import get_transform, inference_ram
             from ram.models import ram as build_ram_model
 
-            torch_device = torch.device(self.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+            requested_device = self.device if self.device not in (None, "auto") else ("cuda" if torch.cuda.is_available() else "cpu")
+            torch_device = torch.device(requested_device)
             model = build_ram_model(pretrained=str(self.ram_checkpoint), image_size=384, vit="swin_l")
             model.eval()
             model = model.to(torch_device)
@@ -235,7 +243,8 @@ class RamGroundingDinoSam3Segmenter:
                 inference=inference_ram,
                 device=torch_device,
             )
-        except Exception:
+        except Exception as exc:
+            self.last_ram_error = f"official_repo: {type(exc).__name__}: {exc}"
             return None
 
     def _build_ram_predictor_from_ram(self):
@@ -243,7 +252,8 @@ class RamGroundingDinoSam3Segmenter:
             from ram import RAM
 
             return _RamModelAdapter(model=RAM(checkpoint=self.ram_checkpoint, device=self.device))
-        except Exception:
+        except Exception as exc:
+            self.last_ram_error = f"ram_api: {type(exc).__name__}: {exc}"
             return None
 
     def _build_ram_predictor_from_ram_inference(self):
@@ -251,7 +261,8 @@ class RamGroundingDinoSam3Segmenter:
             from ram_inference import RAMModel
 
             return _RamModelAdapter(model=RAMModel(checkpoint=self.ram_checkpoint, device=self.device))
-        except Exception:
+        except Exception as exc:
+            self.last_ram_error = f"ram_inference_api: {type(exc).__name__}: {exc}"
             return None
 
 
@@ -366,6 +377,32 @@ def _split_ram_tags(value: Any) -> list[str]:
 
 def _tags_to_prompt(tags: list[str]) -> str:
     return " . ".join(tags) + " ."
+
+
+def _patch_transformers_for_ram_imports() -> None:
+    try:
+        import torch
+        import transformers.modeling_utils as modeling_utils
+        from transformers.pytorch_utils import apply_chunking_to_forward, prune_linear_layer
+    except Exception:
+        return
+
+    if not hasattr(modeling_utils, "apply_chunking_to_forward"):
+        modeling_utils.apply_chunking_to_forward = apply_chunking_to_forward
+    if not hasattr(modeling_utils, "prune_linear_layer"):
+        modeling_utils.prune_linear_layer = prune_linear_layer
+    if not hasattr(modeling_utils, "find_pruneable_heads_and_indices"):
+        def find_pruneable_heads_and_indices(heads, n_heads, head_size, already_pruned_heads):
+            mask = torch.ones(n_heads, head_size)
+            heads = set(heads) - already_pruned_heads
+            for head in heads:
+                head = head - sum(1 if pruned_head < head else 0 for pruned_head in already_pruned_heads)
+                mask[head] = 0
+            mask = mask.view(-1).contiguous().eq(1)
+            index = torch.arange(len(mask))[mask].long()
+            return heads, index
+
+        modeling_utils.find_pruneable_heads_and_indices = find_pruneable_heads_and_indices
 
 
 def _to_xyxy_tuple(box: Any, image_size: tuple[int, int]) -> tuple[float, float, float, float]:

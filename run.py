@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
     preflight.add_argument("--ram-repo-dir")
     preflight.add_argument("--ram-checkpoint")
-    preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
+    preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . flower . flowers . vase . flower pot . person . foreground object .")
     preflight.add_argument("--output", default="Output/Latest/open_vocab_preflight.json")
     preflight.set_defaults(func=cmd_check_open_vocab_integration)
 
@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     readiness.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
     readiness.add_argument("--ram-repo-dir")
     readiness.add_argument("--ram-checkpoint")
-    readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
+    readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . flower . flowers . vase . flower pot . person . foreground object .")
     readiness.add_argument("--skip-import-probe", action="store_true")
     readiness.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
     readiness.set_defaults(func=cmd_audit_open_vocab_readiness)
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
     smoke.add_argument("--ram-repo-dir")
     smoke.add_argument("--ram-checkpoint")
-    smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
+    smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . flower . flowers . vase . flower pot . person . foreground object .")
     smoke.add_argument("--output", default="Output/Latest/open_vocab_smoke.json")
     smoke.set_defaults(func=cmd_run_open_vocab_smoke)
 
