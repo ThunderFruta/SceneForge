@@ -2,25 +2,35 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageStat
 
 from ShapeDetection.report import ObjectShapeDetection
 
 
-PRIMITIVE_COLORS = {
-    "sphere": (42, 157, 143),
-    "cylinder": (38, 70, 83),
-    "cone": (230, 57, 70),
-    "box": (244, 162, 97),
-    "plane": (69, 123, 157),
-    "unknown": (108, 117, 125),
-}
+INSTANCE_COLORS = [
+    (0, 95, 204),
+    (176, 0, 32),
+    (0, 107, 63),
+    (138, 28, 124),
+    (0, 109, 119),
+    (112, 66, 20),
+    (75, 46, 131),
+    (0, 48, 73),
+    (255, 190, 11),
+    (0, 245, 212),
+    (251, 86, 7),
+    (131, 255, 0),
+    (255, 0, 110),
+    (58, 134, 255),
+    (255, 214, 10),
+    (6, 214, 160),
+]
 
 
 DEFAULT_MASK_ALPHA = 8
-DEFAULT_OUTLINE_ALPHA = 160
-DEFAULT_OUTLINE_WIDTH = 1
-DEFAULT_LABEL_BG_ALPHA = 130
+DEFAULT_OUTLINE_ALPHA = 235
+DEFAULT_OUTLINE_WIDTH = 2
+DEFAULT_LABEL_BG_ALPHA = 220
 
 
 def _clamp_alpha(value: int) -> int:
@@ -44,9 +54,11 @@ def write_overlay(
         fill_alpha = _clamp_alpha(mask_alpha)
         edge_alpha = _clamp_alpha(outline_alpha)
         label_alpha = _clamp_alpha(label_background_alpha)
+        used_colors: set[tuple[int, int, int]] = set()
         for item in objects:
-            display_label, display_confidence, color_label = _display_values(item)
-            color = PRIMITIVE_COLORS.get(color_label, PRIMITIVE_COLORS["unknown"])
+            display_label, display_confidence, _color_label = _display_values(item)
+            color = _contrast_color(output, item, used_colors)
+            used_colors.add(color)
             outline = (*color, edge_alpha)
             fill = (*color, fill_alpha)
             if len(item.mask_polygon) >= 3:
@@ -70,6 +82,49 @@ def _display_values(item: ObjectShapeDetection) -> tuple[str, float, str]:
     return item.primitive_label, item.primitive_confidence, item.primitive_label
 
 
+def _contrast_color(
+    image: Image.Image,
+    item: ObjectShapeDetection,
+    used_colors: set[tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    background_luminance = _bbox_luminance(image, item.bbox_xyxy)
+    ranked = sorted(
+        INSTANCE_COLORS,
+        key=lambda color: (
+            color in used_colors,
+            -_contrast_ratio(_relative_luminance(color), background_luminance),
+            INSTANCE_COLORS.index(color),
+        ),
+    )
+    return ranked[0]
+
+
+def _bbox_luminance(image: Image.Image, bbox_xyxy: tuple[float, float, float, float]) -> float:
+    width, height = image.size
+    left, top, right, bottom = bbox_xyxy
+    box = (
+        max(0, min(width, int(round(left)))),
+        max(0, min(height, int(round(top)))),
+        max(0, min(width, int(round(right)))),
+        max(0, min(height, int(round(bottom)))),
+    )
+    if box[2] <= box[0] or box[3] <= box[1]:
+        return 1.0
+    mean = ImageStat.Stat(image.crop(box).convert("L")).mean[0] / 255.0
+    return max(0.0, min(1.0, mean))
+
+
+def _relative_luminance(color: tuple[int, int, int]) -> float:
+    red, green, blue = (channel / 255.0 for channel in color)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast_ratio(first: float, second: float) -> float:
+    lighter = max(first, second)
+    darker = min(first, second)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 def _draw_label(
     draw: ImageDraw.ImageDraw,
     bbox_xyxy: tuple[float, float, float, float],
@@ -90,4 +145,5 @@ def _draw_label(
         (x, y, x + text_width + 8, y + text_height + 6),
         fill=(*color, background_alpha),
     )
-    draw.text((x + 4, y + 3), label, fill=(255, 255, 255, 255), font=font)
+    text_fill = (0, 0, 0, 255) if _relative_luminance(color) > 0.58 else (255, 255, 255, 255)
+    draw.text((x + 4, y + 3), label, fill=text_fill, font=font)

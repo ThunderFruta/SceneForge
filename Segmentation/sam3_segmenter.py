@@ -204,6 +204,7 @@ def detections_from_sam3_output(
         box = _item(boxes, index, None)
         if mask is not None:
             mask_array = _mask_array(mask)
+            mask_array = mask_for_image_size(mask_array, image_size)
             bbox = box_xyxy_from_mask(mask_array, image_size)
             if bbox is None and box is not None:
                 bbox = normalize_box_xyxy(box, image_size)
@@ -252,6 +253,14 @@ def _mask_array(mask: Any) -> np.ndarray:
     return values.astype(np.float32) > 0.5
 
 
+def mask_for_image_size(mask: np.ndarray, image_size: tuple[int, int]) -> np.ndarray:
+    width, height = image_size
+    if mask.shape == (height, width):
+        return mask
+    resized = Image.fromarray(mask.astype(np.uint8) * 255).resize((width, height), Image.Resampling.NEAREST)
+    return np.asarray(resized) > 0
+
+
 def box_xyxy_from_mask(mask: np.ndarray, image_size: tuple[int, int]) -> tuple[float, float, float, float] | None:
     if mask.size == 0 or not bool(mask.any()):
         return None
@@ -264,8 +273,43 @@ def polygon_from_mask_bbox(
     bbox: tuple[float, float, float, float] | None,
     image_size: tuple[int, int],
 ) -> list[tuple[float, float]]:
-    del mask, image_size
-    return rectangle_polygon(bbox) if bbox else []
+    if bbox is None or mask.size == 0 or not bool(mask.any()):
+        return []
+    try:
+        from skimage import measure
+    except ImportError:
+        return rectangle_polygon(bbox)
+
+    contours = measure.find_contours(mask.astype(np.uint8), 0.5)
+    if not contours:
+        return rectangle_polygon(bbox)
+    contour = max(contours, key=len)
+    if len(contour) < 3:
+        return rectangle_polygon(bbox)
+
+    points = [(float(col), float(row)) for row, col in contour]
+    points = simplify_polygon(points, tolerance=max(image_size) * 0.0025)
+    if len(points) < 3:
+        return rectangle_polygon(bbox)
+    return points[:128]
+
+
+def simplify_polygon(points: list[tuple[float, float]], tolerance: float) -> list[tuple[float, float]]:
+    try:
+        from shapely.geometry import Polygon
+    except ImportError:
+        return points
+    polygon = Polygon(points)
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+    if polygon.is_empty:
+        return points
+    simplified = polygon.simplify(tolerance, preserve_topology=True)
+    if simplified.geom_type == "MultiPolygon":
+        simplified = max(simplified.geoms, key=lambda item: item.area)
+    if simplified.geom_type != "Polygon":
+        return points
+    return [(float(x), float(y)) for x, y in list(simplified.exterior.coords)[:-1]]
 
 
 def normalize_box_xyxy(box: Any, image_size: tuple[int, int]) -> tuple[float, float, float, float]:

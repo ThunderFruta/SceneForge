@@ -113,6 +113,8 @@ def compositor_tree(scene: bpy.types.Scene):
 def render_depth(path: Path, near_depth: float, far_depth: float) -> None:
     scene = bpy.context.scene
     path.parent.mkdir(parents=True, exist_ok=True)
+    for stale_output in path.parent.glob(f"{path.stem}*.png"):
+        stale_output.unlink(missing_ok=True)
     tree = compositor_tree(scene)
     for node in list(tree.nodes):
         tree.nodes.remove(node)
