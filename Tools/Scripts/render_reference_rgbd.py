@@ -8,7 +8,10 @@ from datetime import datetime, timezone
 from math import degrees
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,11 +67,21 @@ def render_rgb(path: Path) -> None:
     bpy.ops.render.render(write_still=True)
 
 
+def compositor_tree(scene: bpy.types.Scene):
+    if hasattr(scene, "node_tree"):
+        scene.use_nodes = True
+        return scene.node_tree
+    tree = getattr(scene, "compositing_node_group", None)
+    if tree is None:
+        tree = bpy.data.node_groups.new("SceneForgeCompositor", "CompositorNodeTree")
+        scene.compositing_node_group = tree
+    return tree
+
+
 def render_depth(path: Path, near_depth: float, far_depth: float) -> None:
     scene = bpy.context.scene
     path.parent.mkdir(parents=True, exist_ok=True)
-    scene.use_nodes = True
-    tree = scene.node_tree
+    tree = compositor_tree(scene)
     for node in list(tree.nodes):
         tree.nodes.remove(node)
 
@@ -135,4 +148,22 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_blender_tool_main
+
+        raise SystemExit(
+            guided_blender_tool_main(
+                Path(__file__),
+                "Render RGB/depth/camera outputs from a .blend file.",
+                [
+                    "--image-output",
+                    "Output/Latest/render/image.png",
+                    "--depth-output",
+                    "Output/Latest/render/depth.png",
+                    "--camera-output",
+                    "Output/Latest/render/camera.json",
+                ],
+                blend_path="Assets/Samples/shapes.blend",
+            )
+        )
     raise SystemExit(main())

@@ -306,4 +306,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_tool_main
+
+        raise SystemExit(guided_tool_main(Path(__file__), 'Prepare local GroundingDINO/SAM3 layout and setup manifest.', [], main))
     raise SystemExit(main())

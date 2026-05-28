@@ -15,6 +15,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `run.py run-open-vocab-smoke` and `Tools/Integration/open_vocab_smoke.py` to guard and run the first GroundingDINO/SAM3 `detect-shapes` smoke test after readiness passes.
 - Hardened the GroundingDINO/SAM3 setup path with local `.venv` CUDA/NVCC handling, a reproducible GroundingDINO PyTorch API patch, and explicit SAM3 Hugging Face auth/cache readiness reporting.
 - Promoted GroundingDINO/SAM3 toward the primary real reconstruction proposal path with `--open-vocab-root`, `scene-primitives-v1` prompt presets, readiness-gated reconstruction, open-vocabulary run metadata, and proposal-quality reporting.
+- Added guided no-argument mode for public SceneForge entrypoints: `run.py` now opens an interactive DINO/SAM-first workflow wizard, integration/tool scripts print equivalent commands before running defaults, and Blender helper scripts can build the required `blender --background ... --python ... -- ...` command without the user knowing the separator syntax.
 
 ## 2026-05-24
 

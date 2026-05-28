@@ -224,7 +224,7 @@ if include_report:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Render one or more preview views and export a viewer-friendly glTF from "
@@ -293,7 +293,7 @@ def parse_args() -> argparse.Namespace:
         default=25.0,
         help="Orbit camera elevation in degrees.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _derive_previews(args: argparse.Namespace, stem: str, preview_dir: Path) -> list[Path]:
@@ -317,8 +317,8 @@ def _derive_previews(args: argparse.Namespace, stem: str, preview_dir: Path) -> 
     return outputs
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     blend_path = args.blend.resolve()
     if not blend_path.exists():
         raise SystemExit(f"Blend file not found: {blend_path}")
@@ -407,4 +407,19 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_tool_main
+
+        def _run(argv: list[str]) -> int:
+            main(argv)
+            return 0
+
+        raise SystemExit(
+            guided_tool_main(
+                Path(__file__),
+                "Inspect a SceneForge .blend output with preview renders.",
+                ["--blend", "Output/Latest/fitted_scene.blend", "--views", "front,iso", "--no-gltf"],
+                _run,
+            )
+        )
     main()

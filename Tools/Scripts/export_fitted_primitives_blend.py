@@ -6,7 +6,10 @@ import math
 import sys
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 from mathutils import Matrix, Vector
 
 
@@ -325,6 +328,16 @@ def export_scene(fits_path: Path, output_path: Path, layout: str, reference_blen
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_blender_tool_main
+
+        raise SystemExit(
+            guided_blender_tool_main(
+                Path(__file__),
+                "Export fitted primitive JSON to a Blender scene.",
+                ["--fits", "Output/Latest/fit/primitive_fits.json", "--output", "Output/Latest/fitted_scene.blend"],
+            )
+        )
     args = parse_args()
     export_scene(
         Path(args.fits),

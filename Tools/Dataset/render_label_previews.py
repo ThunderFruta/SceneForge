@@ -194,5 +194,16 @@ def render_dataset(dataset_root: Path, output_subdir: str) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_tool_main
+
+        def _run(argv: list[str]) -> int:
+            parsed = parse_args()
+            render_dataset(parsed)
+            return 0
+
+        raise SystemExit(guided_tool_main(Path(__file__), "Render labeled dataset preview images.", [], _run))
     args = parse_args()
     render_dataset(Path(args.dataset), args.output_subdir)

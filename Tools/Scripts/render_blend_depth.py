@@ -7,7 +7,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,12 +61,23 @@ def visible_scene_depth_range() -> tuple[float, float]:
     return near, far
 
 
+def compositor_tree(scene: bpy.types.Scene):
+    if hasattr(scene, "node_tree"):
+        scene.use_nodes = True
+        return scene.node_tree
+    tree = getattr(scene, "compositing_node_group", None)
+    if tree is None:
+        tree = bpy.data.node_groups.new("SceneForgeCompositor", "CompositorNodeTree")
+        scene.compositing_node_group = tree
+    return tree
+
+
 def configure_depth_compositor(output_dir: Path, near_depth: float, far_depth: float) -> None:
     scene = bpy.context.scene
     scene.view_layers[0].use_pass_z = True
-    scene.use_nodes = True
-    tree = scene.node_tree
-    tree.nodes.clear()
+    tree = compositor_tree(scene)
+    for node in list(tree.nodes):
+        tree.nodes.remove(node)
 
     render_layers = tree.nodes.new(type="CompositorNodeRLayers")
     map_range = tree.nodes.new(type="CompositorNodeMapRange")
@@ -80,7 +94,11 @@ def configure_depth_compositor(output_dir: Path, near_depth: float, far_depth: f
     file_output.format.color_mode = "BW"
     file_output.format.color_depth = "8"
 
-    tree.links.new(render_layers.outputs["Depth"], map_range.inputs["Value"])
+    depth_output = render_layers.outputs.get("Depth") or render_layers.outputs.get("Z")
+    if depth_output is None:
+        available = ", ".join(item.name for item in render_layers.outputs)
+        raise RuntimeError(f"Render layer depth pass is unavailable; outputs: {available}")
+    tree.links.new(depth_output, map_range.inputs["Value"])
     tree.links.new(map_range.outputs["Value"], file_output.inputs[0])
 
 

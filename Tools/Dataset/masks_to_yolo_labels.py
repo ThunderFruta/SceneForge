@@ -131,6 +131,17 @@ def convert_dataset(
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_tool_main
+
+        def _run(argv: list[str]) -> int:
+            parsed = parse_args()
+            convert_dataset(parsed)
+            return 0
+
+        raise SystemExit(guided_tool_main(Path(__file__), "Convert rendered masks to YOLO labels.", [], _run))
     args = parse_args()
     convert_dataset(
         dataset_root=Path(args.dataset),

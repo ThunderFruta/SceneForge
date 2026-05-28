@@ -16,7 +16,9 @@ def default_options(width: int, height: int) -> dict[str, Any]:
     return {
         "width": int(width),
         "height": int(height),
-        "detector_backend": "depth-edge-object",
+        "detector_backend": "groundingdino-sam3",
+        "open_vocab_root": "Models/OpenVocabulary",
+        "text_prompt_preset": "scene-primitives-v1",
         "detector_model": "",
         "detector_weights": "",
         "edge_backend": "simple",
@@ -41,7 +43,7 @@ def build_reconstruct_command(*, reference_blend: Path, output_dir: Path, option
         "--output",
         str(output_dir),
         "--detector-backend",
-        str(options.get("detector_backend", "depth-edge-object")),
+        str(options.get("detector_backend", "groundingdino-sam3")),
         "--edge-backend",
         str(options.get("edge_backend", "simple")),
         "--mesh-backend",
@@ -58,7 +60,12 @@ def build_reconstruct_command(*, reference_blend: Path, output_dir: Path, option
         str(options.get("blender", "blender")),
         "--final-layout",
         str(options.get("final_layout", "camera")),
+        "--force",
     ]
+    if options.get("open_vocab_root"):
+        command.extend(["--open-vocab-root", str(options["open_vocab_root"])])
+    if options.get("text_prompt_preset"):
+        command.extend(["--text-prompt-preset", str(options["text_prompt_preset"])])
     optional_flags = (
         ("detector_model", "--detector-model"),
         ("detector_weights", "--detector-weights"),
@@ -74,14 +81,16 @@ def build_reconstruct_command(*, reference_blend: Path, output_dir: Path, option
 
 
 def main() -> int:
+    from Runtime.guided_cli import run_after_confirmation
+
     options = default_options(640, 640)
     command = build_reconstruct_command(
         reference_blend=default_blend_path(),
         output_dir=Path("Output/Latest/generated"),
         options=options,
     )
-    print(" ".join(command))
-    return 0
+    print("SceneForge guided generator")
+    return run_after_confirmation(command)
 
 
 if __name__ == "__main__":

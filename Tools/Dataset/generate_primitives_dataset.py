@@ -11,7 +11,10 @@ import tempfile
 from math import radians
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector
 
@@ -970,4 +973,17 @@ def generate_dataset(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_blender_tool_main
+
+        raise SystemExit(
+            guided_blender_tool_main(
+                Path(__file__),
+                'Generate synthetic primitive RGBD dataset.',
+                [],
+                blend_path=None,
+            )
+        )
     generate_dataset(parse_args())

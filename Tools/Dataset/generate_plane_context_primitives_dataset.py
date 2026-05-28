@@ -8,7 +8,10 @@ import shutil
 import sys
 from pathlib import Path
 
-import bpy
+try:
+    import bpy
+except ModuleNotFoundError:
+    bpy = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from Tools.Dataset.generate_no_plane_primitives_dataset import (  # noqa: E402
@@ -305,4 +308,17 @@ def generate_dataset(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) == 1:
+        from Runtime.guided_cli import guided_blender_tool_main
+
+        raise SystemExit(
+            guided_blender_tool_main(
+                Path(__file__),
+                'Generate plane-context primitive RGBD dataset.',
+                ['--output', 'Datasets/PrimitiveShapesPlaneContext'],
+                blend_path=None,
+            )
+        )
     generate_dataset(parse_args())

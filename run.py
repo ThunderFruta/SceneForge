@@ -1043,6 +1043,10 @@ def _require_fit_quality_gate(report_path: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv == [] or (argv is None and len(sys.argv) == 1):
+        from Runtime.guided_cli import guided_scene_main
+
+        return guided_scene_main(main)
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
