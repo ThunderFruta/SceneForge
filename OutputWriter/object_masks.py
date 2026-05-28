@@ -25,17 +25,25 @@ def write_object_masks(
         object_dir = root / object_folder_name(item)
         object_dir.mkdir(parents=True, exist_ok=True)
         box = crop_box(item, image.width, image.height)
+        context_box = expanded_crop_box(box, image.width, image.height)
         mask = polygon_to_mask(item.mask_polygon, image.width, image.height)
         full_mask = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
         rgb_crop = image.crop(box)
         mask_crop = full_mask.crop(box)
         masked_crop = rgb_crop.convert("RGBA")
         masked_crop.putalpha(mask_crop)
+        context_crop = image.crop(context_box)
+        context_mask = full_mask.crop(context_box)
+        context_masked_crop = context_crop.convert("RGBA")
+        context_masked_crop.putalpha(context_mask)
 
         full_mask.save(object_dir / "full_mask.png")
         rgb_crop.save(object_dir / "rgb_crop.png")
         mask_crop.save(object_dir / "mask.png")
         masked_crop.save(object_dir / "masked_crop.png")
+        context_crop.save(object_dir / "context_crop.png")
+        context_mask.save(object_dir / "context_mask.png")
+        context_masked_crop.save(object_dir / "context_masked_crop.png")
         (object_dir / "metadata.json").write_text(
             json.dumps(
                 {
@@ -47,6 +55,7 @@ def write_object_masks(
                     "primitive_label_source": item.primitive_label_source,
                     "bbox_xyxy": [round(value, 3) for value in item.bbox_xyxy],
                     "crop_box_xyxy": list(box),
+                    "context_box_xyxy": list(context_box),
                     "image_width": image.width,
                     "image_height": image.height,
                     "mask_polygon_points": len(item.mask_polygon),
@@ -78,3 +87,23 @@ def crop_box(detection: ObjectShapeDetection, width: int, height: int) -> tuple[
     x1 = max(x0 + 1, min(width, int(np.ceil(right))))
     y1 = max(y0 + 1, min(height, int(np.ceil(bottom))))
     return x0, y0, x1, y1
+
+
+def expanded_crop_box(
+    box: tuple[int, int, int, int],
+    width: int,
+    height: int,
+    *,
+    padding_ratio: float = 0.55,
+) -> tuple[int, int, int, int]:
+    x0, y0, x1, y1 = box
+    box_width = max(1, x1 - x0)
+    box_height = max(1, y1 - y0)
+    pad_x = int(np.ceil(box_width * padding_ratio))
+    pad_y = int(np.ceil(box_height * padding_ratio))
+    return (
+        max(0, x0 - pad_x),
+        max(0, y0 - pad_y),
+        min(width, x1 + pad_x),
+        min(height, y1 + pad_y),
+    )

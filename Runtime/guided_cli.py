@@ -199,7 +199,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     ]
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
     if selected == 0:
-        image = ask_text("Image path", root / "Assets" / "Fixtures" / "OpenVocabulary" / "open_vocab_smoke_objects.png", required=True)
+        image = ask_text("Image path", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
         if is_blend_path(image):
             print("That path is a .blend file, so guided mode will run reconstruction instead of image detection.")
             output = ask_text("Output directory", "Output/Latest", required=True)

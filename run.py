@@ -323,7 +323,7 @@ def add_completion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--completion-device", default="auto")
     parser.add_argument("--completion-steps", type=int, default=24)
     parser.add_argument("--completion-guidance-scale", type=float, default=6.5)
-    parser.add_argument("--completion-strength", type=float, default=0.92)
+    parser.add_argument("--completion-strength", type=float, default=0.55)
     parser.add_argument("--completion-canvas-size", type=int, default=1024)
     parser.add_argument("--completion-seed", type=int, default=20260528)
     parser.add_argument("--completion-max-objects", type=int, default=16)
