@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from Input.Image.image_loader import load_rgb_image
+from OutputWriter.object_masks import write_object_masks
 from OutputWriter.overlay import write_overlay
 from OutputWriter.report_writer import write_report
 from SceneGeometry.coordinate_contract import camera_fusion_contract, load_fusion_contract_from_camera_metadata
@@ -93,7 +94,14 @@ def run_shape_detection(
             encoding="utf-8",
         )
     write_overlay(image, objects, output_path / "overlay.png")
+    write_object_masks(image, objects, object_masks_output_dir(output_path))
     return report
+
+
+def object_masks_output_dir(output_path: Path) -> Path:
+    if output_path.name == "detect":
+        return output_path.parent / "objects"
+    return output_path / "objects"
 
 
 def load_source_fusion_contract(image_path: Path, width: int, height: int) -> dict:
