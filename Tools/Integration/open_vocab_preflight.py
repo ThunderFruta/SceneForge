@@ -39,14 +39,16 @@ def build_report(
     groundingdino_checkpoint: str | Path | None,
     sam3_repo_dir: str | Path | None,
     sam3_model_dir: str | Path | None,
+    ram_repo_dir: str | Path | None = None,
+    ram_checkpoint: str | Path | None = None,
     text_prompt: str = DEFAULT_TEXT_PROMPT,
 ) -> dict:
     checks: list[PathCheck] = []
-    if backend not in {"sam3", "groundingdino-sam3"}:
+    if backend not in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"}:
         raise ValueError(f"Unsupported open-vocabulary backend: {backend}")
 
     checks.extend(sam3_checks(sam3_repo_dir=sam3_repo_dir, sam3_model_dir=sam3_model_dir))
-    if backend == "groundingdino-sam3":
+    if backend in {"groundingdino-sam3", "ram-groundingdino-sam3"}:
         checks.extend(
             groundingdino_checks(
                 groundingdino_repo_dir=groundingdino_repo_dir,
@@ -54,6 +56,8 @@ def build_report(
                 groundingdino_checkpoint=groundingdino_checkpoint,
             )
         )
+    if backend == "ram-groundingdino-sam3":
+        checks.extend(ram_checks(ram_repo_dir=ram_repo_dir, ram_checkpoint=ram_checkpoint))
 
     ready = all(check.ok for check in checks if check.required)
     return {
@@ -69,6 +73,8 @@ def build_report(
             groundingdino_checkpoint=groundingdino_checkpoint,
             sam3_repo_dir=sam3_repo_dir,
             sam3_model_dir=sam3_model_dir,
+            ram_repo_dir=ram_repo_dir,
+            ram_checkpoint=ram_checkpoint,
             text_prompt=text_prompt,
         ),
     }
@@ -101,6 +107,19 @@ def groundingdino_checks(
         check_file("groundingdino_inference_api", repo / "groundingdino" / "util" / "inference.py", required=True),
         check_file("groundingdino_config", path_or_empty(groundingdino_config), required=True),
         check_file("groundingdino_checkpoint", path_or_empty(groundingdino_checkpoint), required=True),
+    ]
+
+
+def ram_checks(
+    *,
+    ram_repo_dir: str | Path | None,
+    ram_checkpoint: str | Path | None,
+) -> list[PathCheck]:
+    repo = path_or_empty(ram_repo_dir)
+    checkpoint = path_or_empty(ram_checkpoint)
+    return [
+        check_dir("ram_repo_dir", repo, required=True),
+        check_file("ram_checkpoint", checkpoint, required=True),
     ]
 
 
@@ -140,6 +159,8 @@ def build_next_command(
     groundingdino_checkpoint: str | Path | None,
     sam3_repo_dir: str | Path | None,
     sam3_model_dir: str | Path | None,
+    ram_repo_dir: str | Path | None,
+    ram_checkpoint: str | Path | None,
     text_prompt: str,
 ) -> list[str]:
     command = [
@@ -159,7 +180,7 @@ def build_next_command(
         "--output",
         "Output/Latest/detect",
     ]
-    if backend == "groundingdino-sam3":
+    if backend in {"groundingdino-sam3", "ram-groundingdino-sam3"}:
         command[command.index("--sam3-repo-dir"):command.index("--output")] = [
             "--groundingdino-repo-dir",
             str(path_or_empty(groundingdino_repo_dir)),
@@ -172,6 +193,13 @@ def build_next_command(
             "--sam3-model-dir",
             str(path_or_empty(sam3_model_dir)),
         ]
+        if backend == "ram-groundingdino-sam3":
+            command.extend([
+                "--ram-repo-dir",
+                str(path_or_empty(ram_repo_dir)),
+                "--ram-checkpoint",
+                str(path_or_empty(ram_checkpoint)),
+            ])
     return command
 
 
@@ -202,7 +230,7 @@ def shell_join(parts: Iterable[str]) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Preflight local GroundingDINO/SAM3 integration paths.")
-    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3", "ram-groundingdino-sam3"), default="groundingdino-sam3")
     parser.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
     parser.add_argument(
         "--groundingdino-config",
@@ -214,6 +242,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
     parser.add_argument("--sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
+    parser.add_argument("--ram-repo-dir")
+    parser.add_argument("--ram-checkpoint")
     parser.add_argument("--text-prompt", default=DEFAULT_TEXT_PROMPT)
     parser.add_argument("--output")
     return parser
@@ -228,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
         groundingdino_checkpoint=args.groundingdino_checkpoint,
         sam3_repo_dir=args.sam3_repo_dir,
         sam3_model_dir=args.sam3_model_dir,
+        ram_repo_dir=args.ram_repo_dir,
+        ram_checkpoint=args.ram_checkpoint,
         text_prompt=args.text_prompt,
     )
     write_report(report, args.output)

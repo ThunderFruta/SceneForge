@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -121,7 +122,7 @@ def is_image_path(path: str | Path) -> bool:
 
 
 def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[str]:
-    return [
+    args = [
         "reconstruct-scene",
         "--reference-blend", str(blend),
         "--detector-backend", "groundingdino-sam3",
@@ -133,6 +134,10 @@ def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[st
         "--output", str(output),
         "--device", "auto",
     ]
+    ram_backend, ram_args = open_vocab_backend_with_ram_fallback()
+    args[args.index("--detector-backend") + 1] = ram_backend
+    args.extend(ram_args)
+    return args
 
 
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
@@ -170,6 +175,9 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             "--output", output,
             "--device", "auto",
         ]
+        backend, ram_args = open_vocab_backend_with_ram_fallback()
+        args[args.index("--backend") + 1] = backend
+        args.extend(ram_args)
         return _run_scene_args(args, execute)
     if selected == 1:
         blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
@@ -201,10 +209,17 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ], execute)
     if selected == 3:
         root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        return _run_scene_args(["audit-open-vocab-readiness", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
+        backend, ram_args = open_vocab_backend_with_ram_fallback()
+        args = ["audit-open-vocab-readiness", "--root", root_dir, "--backend", backend]
+        args.extend(ram_args)
+        return _run_scene_args(args, execute)
     if selected == 4:
         root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        return _run_scene_args(["run-open-vocab-smoke", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
+        args = ["run-open-vocab-smoke", "--root", root_dir, "--backend", "groundingdino-sam3"]
+        backend, ram_args = open_vocab_backend_with_ram_fallback()
+        args[4] = backend
+        args.extend(ram_args)
+        return _run_scene_args(args, execute)
     if selected == 5:
         blend = ask_text("Blend to inspect", "Output/Latest/fitted_scene.blend", required=True)
         return run_after_confirmation([sys.executable, "Tools/Scripts/view_blend.py", "--blend", blend, "--views", "front,iso", "--no-gltf"])
@@ -220,12 +235,53 @@ def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int
 
 
 def print_recipes() -> None:
+    backend, ram_args = open_vocab_backend_with_ram_fallback()
+    detector_backend = "ram-groundingdino-sam3" if backend == "ram-groundingdino-sam3" else "groundingdino-sam3"
     recipes = [
-        [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", "groundingdino-sam3"],
-        [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", "groundingdino-sam3"],
-        [sys.executable, "run.py", "detect-shapes", "--backend", "groundingdino-sam3", "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--output", "Output/Latest/detect", "--device", "auto"],
+        [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
+        [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
+        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
-        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", "groundingdino-sam3", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"],
+        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args,
     ]
     for command in recipes:
         print(shell_join(command))
+
+
+def open_vocab_backend_with_ram_fallback() -> tuple[str, list[str]]:
+    ram_repo, ram_checkpoint = _resolve_ram_locations()
+    if ram_repo and ram_checkpoint:
+        return "ram-groundingdino-sam3", [
+            "--ram-repo-dir", str(ram_repo),
+            "--ram-checkpoint", str(ram_checkpoint),
+        ]
+    if os.environ.get("SCENEFORGE_DISABLE_RAM", "0") == "1":
+        return "groundingdino-sam3", []
+    print("Warning: RAM paths not found; falling back to groundingdino-sam3.")
+    return "groundingdino-sam3", []
+
+
+def _resolve_ram_locations() -> tuple[Path | None, Path | None]:
+    env_repo = os.environ.get("SCENEFORGE_RAM_REPO_DIR")
+    env_checkpoint = os.environ.get("SCENEFORGE_RAM_CHECKPOINT")
+    if env_repo and env_checkpoint:
+        candidate_repo = Path(env_repo)
+        candidate_checkpoint = Path(env_checkpoint)
+        if candidate_repo.is_dir() and candidate_checkpoint.is_file():
+            return candidate_repo, candidate_checkpoint
+
+    repo_candidates = (
+        Path("Models/RAM"),
+        Path("Models/OpenVocabulary/RAM"),
+    )
+    for base in repo_candidates:
+        ram_repo_dir = base / "repo"
+        if not ram_repo_dir.is_dir():
+            continue
+        weights_dir = base / "weights"
+        ram_checkpoints = sorted(weights_dir.glob("*.pth")) if weights_dir.is_dir() else []
+        if not ram_checkpoints:
+            ram_checkpoints = sorted(base.glob("*.pth"))
+        if ram_checkpoints:
+            return ram_repo_dir, ram_checkpoints[0]
+    return None, None

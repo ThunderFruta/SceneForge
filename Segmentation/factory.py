@@ -41,8 +41,8 @@ class DetectShapesBackendConfig:
     text_threshold: float = 0.25
     text_prompt_preset: str | None = None
     open_vocab_metadata: dict | None = None
-    text_prompt_preset: str | None = None
-    open_vocab_metadata: dict | None = None
+    ram_repo_dir: str | None = None
+    ram_checkpoint: str | None = None
     groundingdino_repo_dir: str | None = None
     groundingdino_config: str | None = None
     groundingdino_checkpoint: str | None = None
@@ -67,6 +67,8 @@ class ReconstructDetectionBackendConfig:
     text_threshold: float = 0.25
     text_prompt_preset: str | None = None
     open_vocab_metadata: dict | None = None
+    ram_repo_dir: str | None = None
+    ram_checkpoint: str | None = None
     groundingdino_repo_dir: str | None = None
     groundingdino_config: str | None = None
     groundingdino_checkpoint: str | None = None
@@ -116,6 +118,9 @@ def build_detect_shapes_runtime(
 
     if config.backend == "groundingdino-sam3":
         return groundingdino_sam3_runtime(config, require_file=require_file, require_dir=require_dir)
+
+    if config.backend == "ram-groundingdino-sam3":
+        return ram_groundingdino_sam3_runtime(config, require_file=require_file, require_dir=require_dir)
 
     if config.backend in {"real", "rgb-yolo"}:
         return legacy_rgb_yolo_runtime(config, require_file=require_file, require_dir=require_dir)
@@ -221,10 +226,44 @@ def build_reconstruct_detection_runtime(
             groundingdino_repo_dir=config.groundingdino_repo_dir,
             groundingdino_config=config.groundingdino_config,
             groundingdino_checkpoint=config.groundingdino_checkpoint,
+            ram_repo_dir=config.ram_repo_dir,
+            ram_checkpoint=config.ram_checkpoint,
             sam3_repo_dir=config.sam3_repo_dir,
             sam3_model_dir=config.sam3_model_dir,
         )
         return groundingdino_sam3_runtime(
+            detect_config,
+            require_file=require_file,
+            require_dir=lambda value, label: Path(value) if Path(value or "").is_dir() else require_file(value, label).parent,
+        )
+
+    if config.detector_backend == "ram-groundingdino-sam3":
+        detect_config = DetectShapesBackendConfig(
+            backend=config.detector_backend,
+            depth=str(depth_path),
+            edge_map=None,
+            detector_model=config.detector_model,
+            detector_weights=config.detector_weights,
+            clip_model_dir=None,
+            device=config.device,
+            primitive_source=config.primitive_source,
+            confidence=config.detector_confidence,
+            overlap_iou_threshold=config.detector_overlap_iou_threshold,
+            rgbd_channel_weights=config.rgbd_channel_weights,
+            text_prompt=config.text_prompt,
+            box_threshold=config.box_threshold,
+            text_threshold=config.text_threshold,
+            text_prompt_preset=config.text_prompt_preset,
+            open_vocab_metadata=config.open_vocab_metadata,
+            groundingdino_repo_dir=config.groundingdino_repo_dir,
+            groundingdino_config=config.groundingdino_config,
+            groundingdino_checkpoint=config.groundingdino_checkpoint,
+            ram_repo_dir=config.ram_repo_dir,
+            ram_checkpoint=config.ram_checkpoint,
+            sam3_repo_dir=config.sam3_repo_dir,
+            sam3_model_dir=config.sam3_model_dir,
+        )
+        return ram_groundingdino_sam3_runtime(
             detect_config,
             require_file=require_file,
             require_dir=lambda value, label: Path(value) if Path(value or "").is_dir() else require_file(value, label).parent,
@@ -321,12 +360,14 @@ def open_vocabulary_runtime(segmenter: object, config: DetectShapesBackendConfig
             "groundingdino_repo_dir": config.groundingdino_repo_dir,
             "groundingdino_config": config.groundingdino_config,
             "groundingdino_checkpoint": config.groundingdino_checkpoint,
+            "ram_repo_dir": config.ram_repo_dir,
+            "ram_checkpoint": config.ram_checkpoint,
             "sam3_repo_dir": config.sam3_repo_dir,
             "sam3_model_dir": config.sam3_model_dir,
         },
         "groundingdino_box_threshold": config.box_threshold,
         "groundingdino_text_threshold": config.text_threshold,
-        "sam_mask_mode": "box_prompt_with_rectangle_fallback" if backend_info.name.startswith("groundingdino") else "text_prompt",
+        "sam_mask_mode": "box_prompt_with_rectangle_fallback" if "groundingdino" in backend_info.name else "text_prompt",
     }
     return DetectionRuntime(
         segmenter=segmenter,
@@ -357,6 +398,31 @@ def groundingdino_sam3_runtime(
     from Segmentation.groundingdino_sam3_segmenter import GroundingDinoSam3Segmenter
 
     segmenter = GroundingDinoSam3Segmenter(
+        groundingdino_repo_dir=require_dir(config.groundingdino_repo_dir, "--groundingdino-repo-dir"),
+        groundingdino_config=require_file(config.groundingdino_config, "--groundingdino-config"),
+        groundingdino_checkpoint=require_file(config.groundingdino_checkpoint, "--groundingdino-checkpoint"),
+        sam3_repo_dir=require_dir(config.sam3_repo_dir, "--sam3-repo-dir"),
+        sam3_model_dir=require_dir(config.sam3_model_dir, "--sam3-model-dir"),
+        text_prompt=config.text_prompt,
+        box_threshold=config.box_threshold,
+        text_threshold=config.text_threshold,
+        score_threshold=config.confidence,
+        device=resolve_torch_device(config.device),
+    )
+    return open_vocabulary_runtime(segmenter, config)
+
+
+def ram_groundingdino_sam3_runtime(
+    config: DetectShapesBackendConfig,
+    *,
+    require_file: RequireFile,
+    require_dir: RequireDir,
+) -> DetectionRuntime:
+    from Segmentation.ram_groundingdino_sam3_segmenter import RamGroundingDinoSam3Segmenter
+
+    segmenter = RamGroundingDinoSam3Segmenter(
+        ram_repo_dir=require_dir(config.ram_repo_dir, "--ram-repo-dir"),
+        ram_checkpoint=require_file(config.ram_checkpoint, "--ram-checkpoint"),
         groundingdino_repo_dir=require_dir(config.groundingdino_repo_dir, "--groundingdino-repo-dir"),
         groundingdino_config=require_file(config.groundingdino_config, "--groundingdino-config"),
         groundingdino_checkpoint=require_file(config.groundingdino_checkpoint, "--groundingdino-checkpoint"),

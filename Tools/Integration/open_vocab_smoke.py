@@ -16,13 +16,25 @@ SCHEMA_VERSION = 1
 CompletedProcessFactory = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
-def build_command(*, root_dir: str | Path, backend: str = "groundingdino-sam3", text_prompt: str = DEFAULT_TEXT_PROMPT) -> list[str]:
+def build_command(
+    *,
+    root_dir: str | Path,
+    backend: str = "groundingdino-sam3",
+    ram_repo_dir: str | Path | None = None,
+    ram_checkpoint: str | Path | None = None,
+    text_prompt: str = DEFAULT_TEXT_PROMPT,
+) -> list[str]:
     layout = OpenVocabLayout(Path(root_dir))
     command = smoke_test_command(layout)
     if backend != "groundingdino-sam3":
         command[command.index("--backend") + 1] = backend
     if text_prompt != DEFAULT_TEXT_PROMPT:
         command[command.index("--text-prompt") + 1] = text_prompt
+    if backend == "ram-groundingdino-sam3":
+        if ram_repo_dir:
+            command.extend(["--ram-repo-dir", str(ram_repo_dir)])
+        if ram_checkpoint:
+            command.extend(["--ram-checkpoint", str(ram_checkpoint)])
     return command
 
 
@@ -30,12 +42,27 @@ def run_smoke_test(
     *,
     root_dir: str | Path,
     backend: str = "groundingdino-sam3",
+    ram_repo_dir: str | Path | None = None,
+    ram_checkpoint: str | Path | None = None,
     text_prompt: str = DEFAULT_TEXT_PROMPT,
     output: str | Path = "Output/Latest/open_vocab_smoke.json",
     runner: CompletedProcessFactory | None = None,
 ) -> dict:
-    readiness = build_readiness_report(root_dir=root_dir, backend=backend, text_prompt=text_prompt, run_import_probe=True)
-    command = build_command(root_dir=root_dir, backend=backend, text_prompt=text_prompt)
+    readiness = build_readiness_report(
+        root_dir=root_dir,
+        backend=backend,
+        text_prompt=text_prompt,
+        ram_repo_dir=ram_repo_dir,
+        ram_checkpoint=ram_checkpoint,
+        run_import_probe=True,
+    )
+    command = build_command(
+        root_dir=root_dir,
+        backend=backend,
+        ram_repo_dir=ram_repo_dir,
+        ram_checkpoint=ram_checkpoint,
+        text_prompt=text_prompt,
+    )
     command[0] = sys.executable
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -102,7 +129,9 @@ def print_summary(report: dict) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the first guarded GroundingDINO/SAM3 detect-shapes smoke test.")
     parser.add_argument("--root", default="Models/OpenVocabulary")
-    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3", "ram-groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--ram-repo-dir")
+    parser.add_argument("--ram-checkpoint")
     parser.add_argument("--text-prompt", default=DEFAULT_TEXT_PROMPT)
     parser.add_argument("--output", default="Output/Latest/open_vocab_smoke.json")
     return parser
@@ -113,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     report = run_smoke_test(
         root_dir=args.root,
         backend=args.backend,
+        ram_repo_dir=args.ram_repo_dir,
+        ram_checkpoint=args.ram_checkpoint,
         text_prompt=args.text_prompt,
         output=args.output,
     )

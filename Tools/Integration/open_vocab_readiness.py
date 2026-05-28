@@ -18,6 +18,8 @@ def build_report(
     root_dir: str | Path,
     backend: str = "groundingdino-sam3",
     text_prompt: str = DEFAULT_TEXT_PROMPT,
+    ram_repo_dir: str | Path | None = None,
+    ram_checkpoint: str | Path | None = None,
     run_import_probe: bool = True,
 ) -> dict:
     layout = OpenVocabLayout(Path(root_dir))
@@ -32,6 +34,8 @@ def build_report(
         groundingdino_checkpoint=layout.groundingdino_checkpoint,
         sam3_repo_dir=layout.sam3_repo_dir,
         sam3_model_dir=layout.sam3_model_dir,
+        ram_repo_dir=ram_repo_dir,
+        ram_checkpoint=ram_checkpoint,
         text_prompt=text_prompt,
     )
     import_probe = None
@@ -41,7 +45,7 @@ def build_report(
             groundingdino_repo_dir=layout.groundingdino_repo_dir,
             sam3_repo_dir=layout.sam3_repo_dir,
         )
-    sam3_access = build_sam3_access_report(layout) if backend in {"sam3", "groundingdino-sam3"} else None
+    sam3_access = build_sam3_access_report(layout) if backend in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"} else None
     ready_for_import_probe = bool(preflight["ready"])
     imports_ready = bool(import_probe is None or import_probe["ready"])
     sam3_access_ready = bool(sam3_access is None or sam3_access["ready"])
@@ -84,6 +88,7 @@ def build_report(
             preflight_ready=bool(preflight["ready"]),
             import_probe_ready=None if import_probe is None else bool(import_probe["ready"]),
             sam3_access_ready=None if sam3_access is None else bool(sam3_access["ready"]),
+            backend=backend,
         ),
     }
 
@@ -158,11 +163,12 @@ def next_steps(
     preflight_ready: bool,
     import_probe_ready: bool | None,
     sam3_access_ready: bool | None,
+    backend: str,
 ) -> list[str]:
     if preflight_ready and (import_probe_ready is True or import_probe_ready is None) and sam3_access_ready is False:
         return ["Authenticate for gated SAM3 access with hf auth login or set HF_TOKEN/HUGGINGFACE_HUB_TOKEN, then rerun audit-open-vocab-readiness."]
     if preflight_ready and (import_probe_ready is True or import_probe_ready is None):
-        return ["Run the first detect-shapes smoke test with --backend groundingdino-sam3."]
+        return [f"Run the first detect-shapes smoke test with --backend {backend}."]
     if preflight_ready and import_probe_ready is False:
         return ["Fix Python environment/import errors from import_probe.checks, then rerun probe-open-vocab-imports."]
     if manifest_exists and setup_script_exists:
@@ -195,7 +201,9 @@ def print_summary(report: dict) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit local readiness for the first GroundingDINO/SAM3 integration smoke test.")
     parser.add_argument("--root", default="Models/OpenVocabulary")
-    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3", "ram-groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--ram-repo-dir")
+    parser.add_argument("--ram-checkpoint")
     parser.add_argument("--text-prompt", default=DEFAULT_TEXT_PROMPT)
     parser.add_argument("--skip-import-probe", action="store_true")
     parser.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
@@ -208,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
         root_dir=args.root,
         backend=args.backend,
         text_prompt=args.text_prompt,
+        ram_repo_dir=args.ram_repo_dir,
+        ram_checkpoint=args.ram_checkpoint,
         run_import_probe=not args.skip_import_probe,
     )
     write_report(report, args.output)

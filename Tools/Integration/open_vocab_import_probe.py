@@ -40,13 +40,16 @@ def build_report(
     backend: str,
     groundingdino_repo_dir: str | Path | None,
     sam3_repo_dir: str | Path | None,
+    ram_repo_dir: str | Path | None = None,
 ) -> dict:
-    if backend not in {"sam3", "groundingdino-sam3"}:
+    if backend not in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"}:
         raise ValueError(f"Unsupported open-vocabulary backend: {backend}")
 
     checks: list[ImportCheck] = []
     checks.extend(sam3_import_checks(Path(sam3_repo_dir or "")))
     if backend == "groundingdino-sam3":
+        checks.extend(groundingdino_import_checks(Path(groundingdino_repo_dir or "")))
+    if backend == "ram-groundingdino-sam3":
         checks.extend(groundingdino_import_checks(Path(groundingdino_repo_dir or "")))
 
     ready = all(check.ok for check in checks)
@@ -193,9 +196,11 @@ def print_summary(report: dict) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Probe local GroundingDINO/SAM3 imports without loading checkpoints or running inference.")
-    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    parser.add_argument("--backend", choices=("sam3", "groundingdino-sam3", "ram-groundingdino-sam3"), default="groundingdino-sam3")
     parser.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
     parser.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
+    parser.add_argument("--ram-repo-dir")
+    parser.add_argument("--ram-checkpoint")
     parser.add_argument("--output")
     return parser
 
@@ -206,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         backend=args.backend,
         groundingdino_repo_dir=args.groundingdino_repo_dir,
         sam3_repo_dir=args.sam3_repo_dir,
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
     )
     write_report(report, args.output)
     print_summary(report)

@@ -13,7 +13,7 @@ SCENE_PRIMITIVES_V1_PROMPT = "object . foreground object . chair . table . sofa 
 PROMPT_PRESETS = {
     "scene-primitives-v1": SCENE_PRIMITIVES_V1_PROMPT,
 }
-OPEN_VOCAB_BACKENDS = {"sam3", "groundingdino-sam3"}
+OPEN_VOCAB_BACKENDS = {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"}
 DEFAULT_QWEN_VOCAB_PATH = Path("Output/Latest/qwen_object_vocab.json")
 DEFAULT_QWEN_MAX_OBJECTS = 24
 QWEN_MIN_VALID_TERMS = 4
@@ -234,6 +234,8 @@ def resolve_open_vocab_options(
     groundingdino_checkpoint: str | None,
     sam3_repo_dir: str | None,
     sam3_model_dir: str | None,
+    ram_repo_dir: str | None = None,
+    ram_checkpoint: str | None = None,
     refresh_text_prompt: bool = False,
     text_prompt_refresh_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -251,6 +253,8 @@ def resolve_open_vocab_options(
         "groundingdino_checkpoint": groundingdino_checkpoint,
         "sam3_repo_dir": sam3_repo_dir,
         "sam3_model_dir": sam3_model_dir,
+        "ram_repo_dir": ram_repo_dir,
+        "ram_checkpoint": ram_checkpoint,
     }
     if layout is not None:
         paths = {
@@ -259,6 +263,8 @@ def resolve_open_vocab_options(
             "groundingdino_checkpoint": groundingdino_checkpoint or str(layout.groundingdino_checkpoint),
             "sam3_repo_dir": sam3_repo_dir or str(layout.sam3_repo_dir),
             "sam3_model_dir": sam3_model_dir or str(layout.sam3_model_dir),
+            "ram_repo_dir": ram_repo_dir,
+            "ram_checkpoint": ram_checkpoint,
         }
     enabled = backend in OPEN_VOCAB_BACKENDS
     metadata = {

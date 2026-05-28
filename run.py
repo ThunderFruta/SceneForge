@@ -14,7 +14,17 @@ from PrimitiveFitting.pipeline import run_primitive_fitting
 
 
 ROOT = Path(__file__).resolve().parent
-PUBLIC_DETECTOR_BACKENDS = ("depth-edge", "depth-edge-object", "sam3", "groundingdino-sam3", "rgb-yolo", "rgbd-yolo", "real")
+PUBLIC_DETECTOR_BACKENDS = (
+    "depth-edge",
+    "depth-edge-object",
+    "sam3",
+    "groundingdino-sam3",
+    "ram-groundingdino-sam3",
+    "rgb-yolo",
+    "rgbd-yolo",
+    "real",
+)
+OPEN_VOCAB_BACKENDS = ("sam3", "groundingdino-sam3", "ram-groundingdino-sam3")
 PUBLIC_EDGE_BACKENDS = ("none", "simple", "dexined")
 PUBLIC_MESH_BACKENDS = ("none", "triposr")
 PUBLIC_WIREFRAME_BACKENDS = ("none", "hawp")
@@ -42,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
     preflight = subparsers.add_parser("check-open-vocab-integration", help="Preflight local GroundingDINO/SAM3 repo and model paths.")
-    preflight.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    preflight.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
     preflight.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
     preflight.add_argument(
         "--groundingdino-config",
@@ -54,15 +64,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preflight.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
     preflight.add_argument("--sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
+    preflight.add_argument("--ram-repo-dir")
+    preflight.add_argument("--ram-checkpoint")
     preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     preflight.add_argument("--output", default="Output/Latest/open_vocab_preflight.json")
     preflight.set_defaults(func=cmd_check_open_vocab_integration)
 
 
     import_probe = subparsers.add_parser("probe-open-vocab-imports", help="Probe local GroundingDINO/SAM3 imports without loading checkpoints.")
-    import_probe.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    import_probe.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
     import_probe.add_argument("--groundingdino-repo-dir", default="Models/OpenVocabulary/GroundingDINO/repo")
     import_probe.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
+    import_probe.add_argument("--ram-repo-dir")
+    import_probe.add_argument("--ram-checkpoint")
     import_probe.add_argument("--output", default="Output/Latest/open_vocab_import_probe.json")
     import_probe.set_defaults(func=cmd_probe_open_vocab_imports)
 
@@ -76,7 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     readiness = subparsers.add_parser("audit-open-vocab-readiness", help="Run non-inference readiness checks for GroundingDINO/SAM3 integration.")
     readiness.add_argument("--root", default="Models/OpenVocabulary")
-    readiness.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    readiness.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
+    readiness.add_argument("--ram-repo-dir")
+    readiness.add_argument("--ram-checkpoint")
     readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     readiness.add_argument("--skip-import-probe", action="store_true")
     readiness.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
@@ -85,7 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     smoke = subparsers.add_parser("run-open-vocab-smoke", help="Run guarded GroundingDINO/SAM3 detect-shapes smoke test.")
     smoke.add_argument("--root", default="Models/OpenVocabulary")
-    smoke.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
+    smoke.add_argument("--backend", choices=OPEN_VOCAB_BACKENDS, default="groundingdino-sam3")
+    smoke.add_argument("--ram-repo-dir")
+    smoke.add_argument("--ram-checkpoint")
     smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     smoke.add_argument("--output", default="Output/Latest/open_vocab_smoke.json")
     smoke.set_defaults(func=cmd_run_open_vocab_smoke)
@@ -291,6 +309,8 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--groundingdino-repo-dir")
     parser.add_argument("--groundingdino-config")
     parser.add_argument("--groundingdino-checkpoint")
+    parser.add_argument("--ram-repo-dir")
+    parser.add_argument("--ram-checkpoint")
     parser.add_argument("--sam3-repo-dir")
     parser.add_argument("--sam3-model-dir")
 
@@ -308,6 +328,8 @@ def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_r
         groundingdino_repo_dir=getattr(args, "groundingdino_repo_dir", None),
         groundingdino_config=getattr(args, "groundingdino_config", None),
         groundingdino_checkpoint=getattr(args, "groundingdino_checkpoint", None),
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
         sam3_repo_dir=getattr(args, "sam3_repo_dir", None),
         sam3_model_dir=getattr(args, "sam3_model_dir", None),
     )
@@ -400,6 +422,8 @@ def cmd_check_open_vocab_integration(args: argparse.Namespace) -> int:
         groundingdino_checkpoint=args.groundingdino_checkpoint,
         sam3_repo_dir=args.sam3_repo_dir,
         sam3_model_dir=args.sam3_model_dir,
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
         text_prompt=args.text_prompt,
     )
     write_report(report, args.output)
@@ -416,6 +440,8 @@ def cmd_probe_open_vocab_imports(args: argparse.Namespace) -> int:
         backend=args.backend,
         groundingdino_repo_dir=args.groundingdino_repo_dir,
         sam3_repo_dir=args.sam3_repo_dir,
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
     )
     write_report(report, args.output)
     print_summary(report)
@@ -443,6 +469,8 @@ def cmd_audit_open_vocab_readiness(args: argparse.Namespace) -> int:
         root_dir=args.root,
         backend=args.backend,
         text_prompt=args.text_prompt,
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
         run_import_probe=not args.skip_import_probe,
     )
     write_report(report, args.output)
@@ -458,6 +486,8 @@ def cmd_run_open_vocab_smoke(args: argparse.Namespace) -> int:
     report = run_smoke_test(
         root_dir=args.root,
         backend=args.backend,
+        ram_repo_dir=getattr(args, "ram_repo_dir", None),
+        ram_checkpoint=getattr(args, "ram_checkpoint", None),
         text_prompt=args.text_prompt,
         output=args.output,
     )
@@ -531,6 +561,8 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
             groundingdino_repo_dir=args.groundingdino_repo_dir,
             groundingdino_config=args.groundingdino_config,
             groundingdino_checkpoint=args.groundingdino_checkpoint,
+            ram_repo_dir=args.ram_repo_dir,
+            ram_checkpoint=args.ram_checkpoint,
             sam3_repo_dir=args.sam3_repo_dir,
             sam3_model_dir=args.sam3_model_dir,
         ),
@@ -806,7 +838,7 @@ def _preflight_reconstruct(args: argparse.Namespace) -> None:
     _require_file(args.reference_blend, "--reference-blend")
     _resolve_open_vocabulary_runtime_args(
         args,
-        enforce_readiness=args.detector_backend in {"sam3", "groundingdino-sam3"},
+        enforce_readiness=args.detector_backend in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"},
     )
     if args.detector_backend in {"rgb-yolo", "rgbd-yolo", "real"} and not args.detector_model:
         _require_file(args.detector_weights, "--detector-weights")
@@ -814,6 +846,14 @@ def _preflight_reconstruct(args: argparse.Namespace) -> None:
         _require_dir(args.sam3_repo_dir, "--sam3-repo-dir")
         _require_dir(args.sam3_model_dir, "--sam3-model-dir")
     if args.detector_backend == "groundingdino-sam3":
+        _require_dir(args.groundingdino_repo_dir, "--groundingdino-repo-dir")
+        _require_file(args.groundingdino_config, "--groundingdino-config")
+        _require_file(args.groundingdino_checkpoint, "--groundingdino-checkpoint")
+        _require_dir(args.sam3_repo_dir, "--sam3-repo-dir")
+        _require_dir(args.sam3_model_dir, "--sam3-model-dir")
+    if args.detector_backend == "ram-groundingdino-sam3":
+        _require_dir(args.ram_repo_dir, "--ram-repo-dir")
+        _require_file(args.ram_checkpoint, "--ram-checkpoint")
         _require_dir(args.groundingdino_repo_dir, "--groundingdino-repo-dir")
         _require_file(args.groundingdino_config, "--groundingdino-config")
         _require_file(args.groundingdino_checkpoint, "--groundingdino-checkpoint")
@@ -907,6 +947,8 @@ def _run_reconstruct_detect(args: argparse.Namespace, output_dir: Path, render_i
             groundingdino_repo_dir=args.groundingdino_repo_dir,
             groundingdino_config=args.groundingdino_config,
             groundingdino_checkpoint=args.groundingdino_checkpoint,
+            ram_repo_dir=args.ram_repo_dir,
+            ram_checkpoint=args.ram_checkpoint,
             sam3_repo_dir=args.sam3_repo_dir,
             sam3_model_dir=args.sam3_model_dir,
         ),
