@@ -41,7 +41,9 @@ def build_report(
     groundingdino_repo_dir: str | Path | None,
     sam3_repo_dir: str | Path | None,
     ram_repo_dir: str | Path | None = None,
+    ram_checkpoint: str | Path | None = None,
 ) -> dict:
+    del ram_checkpoint
     if backend not in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"}:
         raise ValueError(f"Unsupported open-vocabulary backend: {backend}")
 

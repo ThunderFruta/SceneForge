@@ -16,11 +16,23 @@ def shell_join(parts: Sequence[str | Path]) -> str:
     return " ".join(shlex.quote(str(part)) for part in parts)
 
 
+def normalize_prompt_value(value: str) -> str:
+    if not value:
+        return value
+    try:
+        parts = shlex.split(value)
+    except ValueError:
+        return value
+    if len(parts) == 1:
+        return parts[0]
+    return value
+
+
 def ask_text(label: str, default: str | Path | None = None, *, required: bool = False) -> str:
     suffix = f" [{default}]" if default not in (None, "") else ""
     while True:
         try:
-            value = input(f"{label}{suffix}: ").strip()
+            value = normalize_prompt_value(input(f"{label}{suffix}: ").strip())
         except EOFError:
             value = ""
         if not value and default not in (None, ""):

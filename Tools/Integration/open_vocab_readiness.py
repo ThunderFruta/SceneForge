@@ -44,6 +44,8 @@ def build_report(
             backend=backend,
             groundingdino_repo_dir=layout.groundingdino_repo_dir,
             sam3_repo_dir=layout.sam3_repo_dir,
+            ram_repo_dir=ram_repo_dir,
+            ram_checkpoint=ram_checkpoint,
         )
     sam3_access = build_sam3_access_report(layout) if backend in {"sam3", "groundingdino-sam3", "ram-groundingdino-sam3"} else None
     ready_for_import_probe = bool(preflight["ready"])

@@ -347,6 +347,8 @@ def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_r
                 root_dir=args.open_vocab_root,
                 backend=getattr(args, "backend", getattr(args, "detector_backend", "groundingdino-sam3")),
                 text_prompt=args.text_prompt,
+                ram_repo_dir=getattr(args, "ram_repo_dir", None),
+                ram_checkpoint=getattr(args, "ram_checkpoint", None),
                 run_import_probe=True,
             )
             metadata["readiness_status"] = report["status"]

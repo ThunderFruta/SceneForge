@@ -23,7 +23,7 @@ class RamProposal:
 
 
 class RamGroundingDinoSam3Segmenter:
-    """RAM-like proposals -> GroundingDINO label refinement -> SAM3 box segmentation."""
+    """RAM tag proposals -> GroundingDINO boxes -> SAM3 box segmentation."""
 
     backend = "ram-groundingdino-sam3-open-vocabulary"
 
@@ -69,7 +69,7 @@ class RamGroundingDinoSam3Segmenter:
         self.sam3 = self.groundingdino.sam3
         self.backend_info = SegmentationBackendInfo(
             name=self.backend,
-            architecture="ram_boxes_plus_groundingdino_plus_sam3_masks",
+            architecture="ram_tags_plus_groundingdino_boxes_plus_sam3_masks",
             input_channels=("rgb", "ram_checkpoint", "text_prompt"),
             primitive_labels_are_authoritative=False,
             legacy=False,
@@ -78,7 +78,7 @@ class RamGroundingDinoSam3Segmenter:
             output_contract="open_vocab_box_guided_instance_masks",
             primitive_label_policy="geometry_fitting_downstream",
             notes=(
-                "RAM proposals guide GroundingDINO box generation, then SAM3 refines"
+                "RAM tags guide GroundingDINO box generation, then SAM3 refines"
                 " box proposals into masks."
             ),
         )
@@ -86,34 +86,30 @@ class RamGroundingDinoSam3Segmenter:
         self._ram_model_ready = False
 
     def detect(self, image: Image.Image) -> list[SegmentDetection]:
-        proposals = self._ram_proposals(image)
-        if not proposals:
-            proposals = [
-                RamProposal(box, label, score)
-                for box, label, score in self._groundingdino_boxes(image)
-                if score >= self.score_threshold
-            ]
-            if not proposals:
-                return []
-            fallback_source = "groundingdino_fallback"
+        ram_tags = self._ram_tags(image)
+        if ram_tags:
+            boxes, labels, scores = self._groundingdino_boxes_for_prompt(image, _tags_to_prompt(ram_tags))
+            proposal_source = "ram_groundingdino"
         else:
-            fallback_source = "ram"
+            boxes, labels, scores = self._groundingdino_boxes(image)
+            proposal_source = "groundingdino_fallback"
 
-        boxes, labels, scores = self._align_grounding_to_ram(image, proposals)
+        if not boxes:
+            return []
         refined = self.sam3.detect_boxes(image, boxes, labels, scores)
         if refined:
-            return [self._with_proposal_source(item, self._proposed_source(item, fallback_source)) for item in refined]
+            return [self._with_proposal_source(item, self._proposed_source(item, proposal_source)) for item in refined]
 
         return [
             detection_from_box(
-                box=proposal.box_xyxy,
-                label=proposal.label,
-                score=proposal.score,
+                box=box,
+                label=label,
+                score=score,
                 image_size=image.size,
-                proposal_source=f"{fallback_source}_sam3_fallback",
+                proposal_source=f"{proposal_source}_sam3_fallback",
             )
-            for proposal in proposals
-            if proposal.score >= self.score_threshold
+            for box, label, score in zip(boxes, labels, scores)
+            if score >= self.score_threshold
         ]
 
     def _proposed_source(self, detection: SegmentDetection, fallback_source: str) -> str:
@@ -183,6 +179,24 @@ class RamGroundingDinoSam3Segmenter:
     def _groundingdino_boxes(self, image: Image.Image) -> tuple[list[tuple[float, float, float, float]], list[str], list[float]]:
         return self.groundingdino._groundingdino_boxes(image)
 
+    def _groundingdino_boxes_for_prompt(
+        self,
+        image: Image.Image,
+        text_prompt: str,
+    ) -> tuple[list[tuple[float, float, float, float]], list[str], list[float]]:
+        previous_prompt = self.groundingdino.text_prompt
+        try:
+            self.groundingdino.text_prompt = text_prompt
+            return self._groundingdino_boxes(image)
+        finally:
+            self.groundingdino.text_prompt = previous_prompt
+
+    def _ram_tags(self, image: Image.Image) -> list[str]:
+        predictor = self._load_ram_predictor()
+        if predictor is None or not hasattr(predictor, "predict_tags"):
+            return []
+        return predictor.predict_tags(image)
+
     def _load_ram_predictor(self):
         if self._ram_model_ready:
             return self._ram_predictor
@@ -191,6 +205,7 @@ class RamGroundingDinoSam3Segmenter:
             sys.path.insert(0, str(self.ram_repo_dir))
 
         for attempt in (
+            self._build_ram_predictor_from_official_repo,
             self._build_ram_predictor_from_ram,
             self._build_ram_predictor_from_ram_inference,
         ):
@@ -203,6 +218,25 @@ class RamGroundingDinoSam3Segmenter:
         self._ram_model_ready = True
         self._ram_predictor = None
         return None
+
+    def _build_ram_predictor_from_official_repo(self):
+        try:
+            import torch
+            from ram import get_transform, inference_ram
+            from ram.models import ram as build_ram_model
+
+            torch_device = torch.device(self.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+            model = build_ram_model(pretrained=str(self.ram_checkpoint), image_size=384, vit="swin_l")
+            model.eval()
+            model = model.to(torch_device)
+            return _OfficialRamTagAdapter(
+                model=model,
+                transform=get_transform(image_size=384),
+                inference=inference_ram,
+                device=torch_device,
+            )
+        except Exception:
+            return None
 
     def _build_ram_predictor_from_ram(self):
         try:
@@ -222,6 +256,19 @@ class RamGroundingDinoSam3Segmenter:
 
 
 @dataclass
+class _OfficialRamTagAdapter:
+    model: Any
+    transform: Any
+    inference: Any
+    device: Any
+
+    def predict_tags(self, image: Image.Image) -> list[str]:
+        tensor = self.transform(image.convert("RGB")).unsqueeze(0).to(self.device)
+        tags, _ = self.inference(tensor, self.model)
+        return _split_ram_tags(tags)
+
+
+@dataclass
 class _RamModelAdapter:
     model: Any
 
@@ -235,7 +282,12 @@ class _RamModelAdapter:
         triplet = _extract_triplet_outputs(outputs)
         if triplet is not None:
             boxes, labels, scores = triplet
-            return list(_normalize_triplet_boxes(boxes, labels, scores))
+            normalized = list(_normalize_triplet_boxes(boxes, labels, scores))
+            return (
+                [item[0] for item in normalized],
+                [item[1] for item in normalized],
+                [item[2] for item in normalized],
+            )
 
         if not isinstance(outputs, (list, tuple)):
             return [], [], []
@@ -254,6 +306,23 @@ class _RamModelAdapter:
             scores.append(float(_get_value(output, "score", 0.0)))
         return boxes, labels, scores
 
+    def predict_tags(self, image: Image.Image) -> list[str]:
+        if not hasattr(self.model, "predict"):
+            return []
+        outputs = self.model.predict(image)
+        if isinstance(outputs, str):
+            return _split_ram_tags(outputs)
+        if isinstance(outputs, dict):
+            for key in ("tags", "labels", "objects"):
+                value = outputs.get(key)
+                if isinstance(value, str):
+                    return _split_ram_tags(value)
+                if isinstance(value, (list, tuple)):
+                    return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(outputs, (list, tuple)) and outputs and all(isinstance(item, str) for item in outputs):
+            return [str(item).strip() for item in outputs if str(item).strip()]
+        return []
+
 
 def _extract_triplet_outputs(outputs: Any) -> tuple[Any, Any, Any] | None:
     if not isinstance(outputs, (tuple, list)) or len(outputs) != 3:
@@ -267,7 +336,7 @@ def _normalize_triplet_boxes(
     boxes: Any,
     labels: Any,
     scores: Any,
-) -> tuple[tuple[float, float, float, float], str, float]:
+):
     box_rows = np.asarray(boxes).reshape(-1, 4)
     label_rows = np.asarray(labels)
     score_rows = np.asarray(scores).reshape(-1)
@@ -277,6 +346,26 @@ def _normalize_triplet_boxes(
         label = str(label_rows[index]) if hasattr(label_rows, "__len__") else str(label_rows)
         score = float(score_rows[index])
         yield (box, label, score)
+
+
+def _split_ram_tags(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        terms = [str(item) for item in value]
+    else:
+        terms = str(value).replace(",", "|").split("|")
+    tags: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        text = " ".join(str(term).strip().lower().split())
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        tags.append(text)
+    return tags
+
+
+def _tags_to_prompt(tags: list[str]) -> str:
+    return " . ".join(tags) + " ."
 
 
 def _to_xyxy_tuple(box: Any, image_size: tuple[int, int]) -> tuple[float, float, float, float]:
@@ -368,4 +457,3 @@ def _deduplicate_boxes(
     if not filtered_boxes:
         return [], [], []
     return filtered_boxes, filtered_labels, filtered_scores
-

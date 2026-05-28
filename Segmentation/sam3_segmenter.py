@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
@@ -117,9 +118,13 @@ class Sam3Segmenter:
         if method is not None:
             try:
                 return method(box=xyxy_to_normalized_cxcywh(box, state), label=True, state=state)
+            except RuntimeError:
+                return None
             except TypeError:
                 try:
                     return method(xyxy_to_normalized_cxcywh(box, state), True, state)
+                except RuntimeError:
+                    return None
                 except TypeError:
                     pass
 
@@ -135,6 +140,8 @@ class Sam3Segmenter:
             ):
                 try:
                     return method(**kwargs)
+                except RuntimeError:
+                    return None
                 except TypeError:
                     continue
         return None
@@ -150,7 +157,9 @@ class Sam3Segmenter:
         from sam3.model_builder import build_sam3_image_model
         from sam3.model.sam3_image_processor import Sam3Processor
 
-        model = build_sam3_image_model()
+        model_device = self.device or "cuda"
+        with _sam3_cuda_literal_device_patch(model_device):
+            model = build_sam3_image_model(device=model_device)
         if self.device:
             try:
                 model.to(self.device)
@@ -161,6 +170,36 @@ class Sam3Segmenter:
         except TypeError:
             self._processor = Sam3Processor(model)
         return self._processor
+
+
+@contextmanager
+def _sam3_cuda_literal_device_patch(device: str):
+    if str(device).startswith("cuda"):
+        yield
+        return
+
+    import torch
+
+    original_zeros = torch.zeros
+    original_arange = torch.arange
+
+    def zeros_with_device_redirect(*args, **kwargs):
+        if kwargs.get("device") == "cuda":
+            kwargs["device"] = device
+        return original_zeros(*args, **kwargs)
+
+    def arange_with_device_redirect(*args, **kwargs):
+        if kwargs.get("device") == "cuda":
+            kwargs["device"] = device
+        return original_arange(*args, **kwargs)
+
+    torch.zeros = zeros_with_device_redirect
+    torch.arange = arange_with_device_redirect
+    try:
+        yield
+    finally:
+        torch.zeros = original_zeros
+        torch.arange = original_arange
 
 
 def xyxy_to_normalized_cxcywh(box: tuple[float, float, float, float], state: Any) -> list[float]:
