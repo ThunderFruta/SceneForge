@@ -438,8 +438,8 @@ if __name__ == "__main__":
             guided_blender_tool_main(
                 Path(__file__),
                 'Generate target RGBD data from a labeled .blend file.',
-                ['--reference-blend', 'Assets/Samples/shapes.blend'],
-                blend_path='Assets/Samples/shapes.blend',
+                ['--reference-blend', 'Assets/Samples/roomScene.blend'],
+                blend_path='Assets/Samples/roomScene.blend',
             )
         )
     generate_dataset(parse_args())

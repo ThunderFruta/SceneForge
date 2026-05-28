@@ -172,7 +172,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ]
         return _run_scene_args(args, execute)
     if selected == 1:
-        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "shapes.blend", required=True)
+        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
         if not is_blend_path(blend):
             print("Reconstruction needs a .blend file. Use option 1 for image files.")
             return 2
@@ -182,7 +182,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             args.append("--force")
         return _run_scene_args(args, execute)
     if selected == 2:
-        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "shapes.blend", required=True)
+        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
         if not is_blend_path(blend):
             print("PNG rendering needs a .blend file.")
             return 2
@@ -196,7 +196,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             "--output", output,
             "--width", width,
             "--height", height,
-            "--render-samples", "8",
+            "--render-samples", "1024",
             "--exposure", exposure,
         ], execute)
     if selected == 3:

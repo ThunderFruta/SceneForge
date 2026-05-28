@@ -97,9 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     render_png.add_argument("--blender", default="blender")
     render_png.add_argument("--width", type=int, default=1280)
     render_png.add_argument("--height", type=int, default=720)
-    render_png.add_argument("--render-samples", type=int, default=16)
+    render_png.add_argument("--render-samples", type=int, default=2048)
     render_png.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
-    render_png.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    render_png.add_argument("--render-engine", default="CYCLES", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    render_png.add_argument("--cycles-device-filter", default="4080")
     render_png.add_argument("--exposure", default="auto")
     render_png.add_argument("--gamma", type=float, default=1.0)
     render_png.set_defaults(func=cmd_render_blend_png)
@@ -172,7 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     reconstruct.add_argument("--height", type=int, default=640)
     reconstruct.add_argument("--render-samples", type=int, default=32)
     reconstruct.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
-    reconstruct.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    reconstruct.add_argument("--render-engine", default="CYCLES", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    reconstruct.add_argument("--cycles-device-filter", default="4080")
     reconstruct.add_argument("--exposure", default="auto")
     reconstruct.add_argument("--gamma", type=float, default=1.0)
     reconstruct.add_argument("--near-depth", type=float, default=1.0)
@@ -488,6 +490,8 @@ def cmd_render_blend_png(args: argparse.Namespace) -> int:
             str(args.render_quality),
             "--render-engine",
             str(args.render_engine),
+            "--cycles-device-filter",
+            str(args.cycles_device_filter),
             "--exposure",
             str(args.exposure),
             "--gamma",
@@ -856,6 +860,8 @@ def _run_reconstruct_render(args: argparse.Namespace, output_dir: Path) -> dict[
         str(args.render_quality),
         "--render-engine",
         str(args.render_engine),
+        "--cycles-device-filter",
+        str(args.cycles_device_filter),
         "--exposure",
         str(args.exposure),
         "--gamma",

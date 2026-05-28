@@ -11,6 +11,14 @@ from math import degrees
 from pathlib import Path
 
 try:
+    from render_progress import BlenderRenderProgressBar
+except ModuleNotFoundError:
+    script_dir = Path(__file__).resolve().parent
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+    from render_progress import BlenderRenderProgressBar
+
+try:
     import bpy
 except ModuleNotFoundError:
     bpy = None
@@ -29,12 +37,65 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=640)
     parser.add_argument("--render-samples", type=int, default=16)
     parser.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
-    parser.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    parser.add_argument("--render-engine", default="CYCLES", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    parser.add_argument("--cycles-device-filter", default="4080")
     parser.add_argument("--near-depth", type=float, default=1.0)
     parser.add_argument("--far-depth", type=float, default=8.0)
     parser.add_argument("--exposure", default="auto")
     parser.add_argument("--gamma", type=float, default=1.0)
     return parser.parse_args(script_args)
+
+
+def _configure_cycles_device(preferred_device_filter: str = "4080") -> None:
+    cycles_addon = bpy.context.preferences.addons.get("cycles") if bpy else None
+    if cycles_addon is None:
+        return
+    cycles_preferences = cycles_addon.preferences
+    scene = bpy.context.scene
+    preferred_device = str(preferred_device_filter or "").strip().lower()
+
+    # Choose a GPU backend first, with CUDA prioritized.
+    for compute_type in ("CUDA", "OPTIX", "HIP", "ONEAPI", "METAL"):
+        try:
+            if compute_type in [item[0] for item in cycles_preferences.get_device_types(bpy.context)]:
+                cycles_preferences.compute_device_type = compute_type
+                break
+        except Exception:
+            continue
+
+    if hasattr(cycles_preferences, "refresh_devices"):
+        cycles_preferences.refresh_devices()
+
+    gpu_devices = [
+        device
+        for device in getattr(cycles_preferences, "devices", [])
+        if str(device.type).upper() != "CPU"
+    ]
+    if not gpu_devices:
+        if hasattr(scene.cycles, "device"):
+            scene.cycles.device = "CPU"
+        return
+
+    preferred_matches = []
+    if preferred_device:
+        preferred_matches = [
+            device
+            for device in gpu_devices
+            if preferred_device in str(device.name).lower()
+        ]
+
+    if preferred_matches:
+        for device in gpu_devices:
+            device.use = device in preferred_matches
+        if not any(device.use for device in gpu_devices):
+            for device in gpu_devices:
+                device.use = True
+    else:
+        for device in gpu_devices:
+            device.use = True
+
+    if hasattr(scene.cycles, "device"):
+        scene.cycles.device = "GPU"
 
 def configure_render_quality(scene: bpy.types.Scene, sample_budget: int, render_quality: str = "balanced") -> None:
     quality = str(render_quality or "balanced").strip().lower()
@@ -79,6 +140,8 @@ def configure_scene(args: argparse.Namespace) -> bpy.types.Object:
 
     if args.render_engine != "auto":
         scene.render.engine = args.render_engine
+    if scene.render.engine == "CYCLES":
+        _configure_cycles_device(args.cycles_device_filter)
     configure_render_quality(scene, args.render_samples, args.render_quality)
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
@@ -93,6 +156,41 @@ def configure_scene(args: argparse.Namespace) -> bpy.types.Object:
     return camera
 
 
+def _is_cuda_misaligned_error(message: str) -> bool:
+    lowered = str(message).lower()
+    return "misaligned address in cuda queue" in lowered or "misaligned address" in lowered
+
+
+def _fallback_cycles_to_cpu() -> bool:
+    cycles_addon = bpy.context.preferences.addons.get("cycles") if bpy else None
+    if cycles_addon is None:
+        return False
+    cycles_preferences = cycles_addon.preferences
+    scene = bpy.context.scene
+
+    if hasattr(cycles_preferences, "compute_device_type"):
+        try:
+            cycles_preferences.compute_device_type = "NONE"
+        except Exception:
+            pass
+
+    devices = list(getattr(cycles_preferences, "devices", []))
+    if not devices:
+        if hasattr(scene.cycles, "device"):
+            scene.cycles.device = "CPU"
+        return True
+
+    for device in devices:
+        if str(device.type).upper() == "CPU":
+            device.use = True
+        else:
+            device.use = False
+
+    if hasattr(scene.cycles, "device"):
+        scene.cycles.device = "CPU"
+    return True
+
+
 def render_rgb(path: Path) -> None:
     scene = bpy.context.scene
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,7 +198,15 @@ def render_rgb(path: Path) -> None:
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGB"
     scene.render.filepath = str(path)
-    bpy.ops.render.render(write_still=True)
+    try:
+        bpy.ops.render.render(write_still=True)
+        return
+    except RuntimeError as exc:
+        if _is_cuda_misaligned_error(str(exc)) and _fallback_cycles_to_cpu():
+            print("CUDA render failed (misaligned address); retrying on CPU.")
+            bpy.ops.render.render(write_still=True)
+            return
+        raise
 
 
 def configure_output_file_node(node, path: Path):
@@ -160,7 +266,14 @@ def render_depth(path: Path, near_depth: float, far_depth: float) -> None:
             exr_path = temp_dir / "depth.exr"
             configure_depth_exr_compositor(exr_path)
             scene.frame_set(1)
-            bpy.ops.render.render(write_still=False)
+            try:
+                bpy.ops.render.render(write_still=False)
+            except RuntimeError as exc:
+                if _is_cuda_misaligned_error(str(exc)) and _fallback_cycles_to_cpu():
+                    print("CUDA depth render failed (misaligned address); retrying on CPU.")
+                    bpy.ops.render.render(write_still=False)
+                else:
+                    raise
             candidates = sorted(temp_dir.glob("depth*.exr"))
             if candidates and convert_depth_exr_to_png(candidates[-1], path, near_depth, far_depth, target_width, target_height):
                 return
@@ -303,8 +416,10 @@ def main() -> int:
     if args.near_depth <= 0 or args.far_depth <= args.near_depth:
         raise ValueError("--near-depth and --far-depth must satisfy 0 < near < far")
     camera = configure_scene(args)
-    render_rgb(Path(args.image_output))
-    render_depth(Path(args.depth_output), args.near_depth, args.far_depth)
+    with BlenderRenderProgressBar("Rendering image", total_samples=args.render_samples):
+        render_rgb(Path(args.image_output))
+    with BlenderRenderProgressBar("Rendering depth", total_samples=args.render_samples):
+        render_depth(Path(args.depth_output), args.near_depth, args.far_depth)
     write_camera_metadata(Path(args.camera_output), camera, args)
     return 0
 
@@ -325,7 +440,7 @@ if __name__ == "__main__":
                     "--camera-output",
                     "Output/Latest/render/camera.json",
                 ],
-                blend_path="Assets/Samples/shapes.blend",
+                blend_path="Assets/Samples/roomScene.blend",
             )
         )
     raise SystemExit(main())
