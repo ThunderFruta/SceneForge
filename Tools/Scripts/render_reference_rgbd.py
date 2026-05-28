@@ -16,6 +16,9 @@ except ModuleNotFoundError:
     bpy = None
 
 
+AUTO_EXPOSURE = -1.8
+
+
 def parse_args() -> argparse.Namespace:
     argv = sys.argv
     script_args = argv[argv.index("--") + 1 :] if "--" in argv else []
@@ -29,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-samples", type=int, default=16)
     parser.add_argument("--near-depth", type=float, default=1.0)
     parser.add_argument("--far-depth", type=float, default=8.0)
-    parser.add_argument("--exposure", type=float, default=0.0)
+    parser.add_argument("--exposure", default="auto")
     parser.add_argument("--gamma", type=float, default=1.0)
     return parser.parse_args(script_args)
 
@@ -57,7 +60,9 @@ def configure_scene(args: argparse.Namespace) -> bpy.types.Object:
     scene.view_layers[0].use_pass_z = True
     scene.view_settings.view_transform = "Standard"
     scene.view_settings.look = "None"
-    scene.view_settings.exposure = float(args.exposure)
+    
+    exposure = str(args.exposure).strip().lower()
+    scene.view_settings.exposure = AUTO_EXPOSURE if exposure == "auto" else float(args.exposure)
     if hasattr(scene.view_settings, "gamma"):
         scene.view_settings.gamma = float(args.gamma)
     camera.data.sensor_fit = "HORIZONTAL"

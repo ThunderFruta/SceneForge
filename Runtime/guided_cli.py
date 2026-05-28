@@ -141,6 +141,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     choices = [
         ("Detect objects from image", "DINO/SAM proposal masks to detections.json and overlay.png"),
         ("Reconstruct scene from .blend", "Render RGBD, detect with DINO/SAM, enrich, fit, and export fitted_scene.blend"),
+        ("Turn .blend into PNG", "Render the active Blender camera to one PNG without depth or detection"),
         ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
         ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
@@ -181,12 +182,30 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             args.append("--force")
         return _run_scene_args(args, execute)
     if selected == 2:
-        root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        return _run_scene_args(["audit-open-vocab-readiness", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
+        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "shapes.blend", required=True)
+        if not is_blend_path(blend):
+            print("PNG rendering needs a .blend file.")
+            return 2
+        output = ask_text("PNG output", "Output/Latest/render/image.png", required=True)
+        width = ask_text("Width", "1280", required=True)
+        height = ask_text("Height", "720", required=True)
+        exposure = ask_text("Exposure", "auto", required=True)
+        return _run_scene_args([
+            "render-blend-png",
+            "--reference-blend", blend,
+            "--output", output,
+            "--width", width,
+            "--height", height,
+            "--render-samples", "8",
+            "--exposure", exposure,
+        ], execute)
     if selected == 3:
         root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        return _run_scene_args(["run-open-vocab-smoke", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
+        return _run_scene_args(["audit-open-vocab-readiness", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
     if selected == 4:
+        root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
+        return _run_scene_args(["run-open-vocab-smoke", "--root", root_dir, "--backend", "groundingdino-sam3"], execute)
+    if selected == 5:
         blend = ask_text("Blend to inspect", "Output/Latest/fitted_scene.blend", required=True)
         return run_after_confirmation([sys.executable, "Tools/Scripts/view_blend.py", "--blend", blend, "--views", "front,iso", "--no-gltf"])
     print_recipes()
@@ -205,6 +224,7 @@ def print_recipes() -> None:
         [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", "groundingdino-sam3"],
         [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", "groundingdino-sam3"],
         [sys.executable, "run.py", "detect-shapes", "--backend", "groundingdino-sam3", "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--output", "Output/Latest/detect", "--device", "auto"],
+        [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
         [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", "groundingdino-sam3", "--open-vocab-root", "Models/OpenVocabulary", "--text-prompt-preset", "scene-primitives-v1", "--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"],
     ]
     for command in recipes:

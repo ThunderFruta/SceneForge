@@ -5,6 +5,60 @@ from typing import Iterable
 
 from Segmentation.types import SegmentDetection
 
+OPEN_VOCAB_BACKGROUND_LABELS = frozenset(
+    {
+        "floor",
+        "wall",
+        "ceiling",
+        "ground",
+        "background",
+        "plane",
+    }
+)
+
+
+def filter_open_vocab_segments(
+    detections: Iterable[SegmentDetection],
+    *,
+    image_width: int,
+    image_height: int,
+    background_labels: frozenset[str] | set[str] = OPEN_VOCAB_BACKGROUND_LABELS,
+    max_background_area_ratio: float = 0.20,
+    max_bbox_area_ratio: float = 0.96,
+    min_bbox_area_ratio: float = 0.0006,
+) -> tuple[list[SegmentDetection], dict[str, int]]:
+    items = list(detections)
+    if not items:
+        return [], {"input_count": 0, "output_count": 0}
+
+    filtered: list[SegmentDetection] = []
+    filtered_by_label = Counter()
+    image_area = max(1.0, float(image_width) * float(image_height))
+    normalized_background_labels = {str(label).strip().lower() for label in background_labels}
+
+    for detection in items:
+        area_ratio = bbox_area_ratio(detection.bbox_xyxy, image_area)
+        label = str(detection.detector_label).strip().lower()
+
+        if area_ratio > max_bbox_area_ratio:
+            filtered_by_label["max_bbox_area_ratio"] += 1
+            continue
+        if area_ratio < min_bbox_area_ratio:
+            filtered_by_label["min_bbox_area_ratio"] += 1
+            continue
+        if label in normalized_background_labels and area_ratio >= max_background_area_ratio:
+            filtered_by_label["background_label_large_area"] += 1
+            continue
+        filtered.append(detection)
+
+    total_filtered = sum(filtered_by_label.values())
+    return filtered, {
+        "input_count": len(items),
+        "output_count": len(filtered),
+        "filtered_count": total_filtered,
+        **{key: int(value) for key, value in filtered_by_label.items()},
+    }
+
 
 def is_open_vocab_model_info(model_info: dict) -> bool:
     backend = str(model_info.get("detector_backend", ""))
@@ -73,3 +127,10 @@ def bbox_iou(left: tuple[float, float, float, float], right: tuple[float, float,
     right_area = max(0.0, rx2 - rx1) * max(0.0, ry2 - ry1)
     union = left_area + right_area - intersection
     return intersection / union if union > 0.0 else 0.0
+
+
+def bbox_area_ratio(bbox: tuple[float, float, float, float], image_area: float) -> float:
+    left, top, right, bottom = bbox
+    width = max(0.0, right - left)
+    height = max(0.0, bottom - top)
+    return (width * height) / max(1.0, image_area)

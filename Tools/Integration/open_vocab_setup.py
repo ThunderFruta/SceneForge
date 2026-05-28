@@ -11,7 +11,7 @@ SCHEMA_VERSION = 1
 GROUNDINGDINO_REPO_URL = "https://github.com/IDEA-Research/GroundingDINO.git"
 GROUNDINGDINO_CHECKPOINT_URL = "https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth"
 SAM3_REPO_URL = "https://github.com/facebookresearch/sam3.git"
-DEFAULT_TEXT_PROMPT = "object . foreground object . plane . floor . wall . box . sphere . cylinder . cone . chair . table ."
+DEFAULT_TEXT_PROMPT = "object . foreground object . chair . table . sofa . bed . lamp . couch . cabinet . plant . person . box . sphere . cylinder . cone ."
 SMOKE_IMAGE_PATH = "Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png"
 SMOKE_PROMPT_PATH = "Assets/Fixtures/OpenVocabulary/open_vocab_smoke_prompt.txt"
 

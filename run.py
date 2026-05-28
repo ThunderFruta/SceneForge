@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preflight.add_argument("--sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
     preflight.add_argument("--sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
-    preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    preflight.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     preflight.add_argument("--output", default="Output/Latest/open_vocab_preflight.json")
     preflight.set_defaults(func=cmd_check_open_vocab_integration)
 
@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     readiness = subparsers.add_parser("audit-open-vocab-readiness", help="Run non-inference readiness checks for GroundingDINO/SAM3 integration.")
     readiness.add_argument("--root", default="Models/OpenVocabulary")
     readiness.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
-    readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    readiness.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     readiness.add_argument("--skip-import-probe", action="store_true")
     readiness.add_argument("--output", default="Output/Latest/open_vocab_readiness.json")
     readiness.set_defaults(func=cmd_audit_open_vocab_readiness)
@@ -86,9 +86,21 @@ def build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("run-open-vocab-smoke", help="Run guarded GroundingDINO/SAM3 detect-shapes smoke test.")
     smoke.add_argument("--root", default="Models/OpenVocabulary")
     smoke.add_argument("--backend", choices=("sam3", "groundingdino-sam3"), default="groundingdino-sam3")
-    smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . plane . foreground object .")
+    smoke.add_argument("--text-prompt", default="chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object .")
     smoke.add_argument("--output", default="Output/Latest/open_vocab_smoke.json")
     smoke.set_defaults(func=cmd_run_open_vocab_smoke)
+
+    render_png = subparsers.add_parser("render-blend-png", help="Render a .blend file to a PNG image only.")
+    render_png.add_argument("--reference-blend", required=True)
+    render_png.add_argument("--output", default="Output/Latest/render/image.png")
+    render_png.add_argument("--camera-name")
+    render_png.add_argument("--blender", default="blender")
+    render_png.add_argument("--width", type=int, default=1280)
+    render_png.add_argument("--height", type=int, default=720)
+    render_png.add_argument("--render-samples", type=int, default=8)
+    render_png.add_argument("--exposure", default="auto")
+    render_png.add_argument("--gamma", type=float, default=1.0)
+    render_png.set_defaults(func=cmd_render_blend_png)
 
     detect = subparsers.add_parser("detect-shapes", help="Write detections.json and overlay.png.")
     detect.add_argument("--image", required=True)
@@ -259,6 +271,13 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--open-vocab-root")
     parser.add_argument("--text-prompt-preset", choices=prompt_preset_names(), default="scene-primitives-v1")
     parser.add_argument("--text-prompt")
+    parser.add_argument(
+        "--refresh-text-prompt",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Refresh generated open-vocabulary term list before running (default: enabled)",
+    )
+    parser.add_argument("--text-prompt-refresh-path", default="Output/Latest/qwen_object_vocab.json")
     parser.add_argument("--box-threshold", type=float, default=0.35)
     parser.add_argument("--text-threshold", type=float, default=0.25)
     parser.add_argument("--groundingdino-repo-dir")
@@ -276,6 +295,8 @@ def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_r
         open_vocab_root=getattr(args, "open_vocab_root", None),
         text_prompt=getattr(args, "text_prompt", None),
         text_prompt_preset=getattr(args, "text_prompt_preset", None),
+        refresh_text_prompt=getattr(args, "refresh_text_prompt", True),
+        text_prompt_refresh_path=getattr(args, "text_prompt_refresh_path", None),
         groundingdino_repo_dir=getattr(args, "groundingdino_repo_dir", None),
         groundingdino_config=getattr(args, "groundingdino_config", None),
         groundingdino_checkpoint=getattr(args, "groundingdino_checkpoint", None),
@@ -435,6 +456,37 @@ def cmd_run_open_vocab_smoke(args: argparse.Namespace) -> int:
     print_summary(report)
     if report["status"] != "passed":
         raise CliError(f"Open-vocabulary smoke test did not pass; wrote {args.output}")
+    return 0
+
+
+def cmd_render_blend_png(args: argparse.Namespace) -> int:
+    blend_path = _require_file(args.reference_blend, "--reference-blend")
+    script_path = ROOT / "Tools" / "Scripts" / "render_blend_png.py"
+    if not script_path.is_file():
+        raise CliError(f"Render script does not exist: {script_path}")
+    command = _blender_script_command(
+        blender=args.blender,
+        blend=blend_path,
+        script=script_path,
+        script_args=[
+            "--output",
+            str(args.output),
+            "--width",
+            str(args.width),
+            "--height",
+            str(args.height),
+            "--render-samples",
+            str(args.render_samples),
+            "--exposure",
+            str(args.exposure),
+            "--gamma",
+            str(args.gamma),
+        ],
+    )
+    if args.camera_name:
+        command.extend(["--camera-name", args.camera_name])
+    _run_subprocess(command)
+    print(f"Wrote {Path(args.output)}")
     return 0
 
 

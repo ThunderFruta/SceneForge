@@ -8,7 +8,7 @@ from typing import Iterable
 
 
 SCHEMA_VERSION = 1
-DEFAULT_TEXT_PROMPT = "chair . table . box . sphere . cylinder . cone . plane . foreground object ."
+DEFAULT_TEXT_PROMPT = "chair . table . box . sphere . cylinder . cone . sofa . lamp . plant . person . foreground object ."
 
 
 @dataclass(frozen=True)
