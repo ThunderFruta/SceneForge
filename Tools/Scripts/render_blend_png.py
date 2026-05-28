@@ -18,11 +18,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera-name")
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
-    parser.add_argument("--render-samples", type=int, default=8)
+    parser.add_argument("--render-samples", type=int, default=16)
+    parser.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
+    parser.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
     parser.add_argument("--exposure", default="auto")
     parser.add_argument("--gamma", type=float, default=1.0)
     return parser.parse_args(script_args)
 
+def configure_render_quality(scene: bpy.types.Scene, sample_budget: int, render_quality: str = "balanced") -> None:
+    quality = str(render_quality or "balanced").strip().lower()
+    if quality == "fast":
+        taa_samples = max(4, int(sample_budget))
+    elif quality == "quality":
+        taa_samples = max(64, int(sample_budget))
+    else:
+        taa_samples = max(16, int(sample_budget))
+
+    if hasattr(scene, "eevee"):
+        scene.eevee.taa_render_samples = int(taa_samples)
+        for attr, value in ((
+            ("use_bloom", False),
+            ("use_ssr", False),
+            ("use_ssao", False),
+            ("use_gtao", False),
+            ("use_bokeh_jitter", False),
+            ("use_volumetric_shadows", False),
+        )):
+            if hasattr(scene.eevee, attr):
+                setattr(scene.eevee, attr, value)
+
+    if scene.render.engine == "CYCLES" and hasattr(scene.cycles, "samples"):
+        scene.cycles.samples = max(1, int(taa_samples))
+        if hasattr(scene.cycles, "use_denoising"):
+            scene.cycles.use_denoising = False
+
+    if hasattr(scene.render, "use_motion_blur"):
+        scene.render.use_motion_blur = False
 
 def configure_scene(args: argparse.Namespace):
     scene = bpy.context.scene
@@ -35,17 +66,12 @@ def configure_scene(args: argparse.Namespace):
     if camera is None:
         raise ValueError("The blend file has no active camera.")
 
-    try:
-        scene.render.engine = "BLENDER_EEVEE_NEXT"
-    except TypeError:
-        scene.render.engine = "BLENDER_EEVEE"
-    if hasattr(scene, "eevee"):
-        scene.eevee.taa_render_samples = args.render_samples
+    if args.render_engine != "auto":
+        scene.render.engine = args.render_engine
+    configure_render_quality(scene, args.render_samples, args.render_quality)
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
     scene.render.resolution_percentage = 100
-    scene.view_settings.view_transform = "Standard"
-    scene.view_settings.look = "None"
     exposure = str(args.exposure).strip().lower()
     if exposure != "auto":
         scene.view_settings.exposure = float(args.exposure)
@@ -91,7 +117,9 @@ if __name__ == "__main__":
                     "--height",
                     "720",
                     "--render-samples",
-                    "8",
+                    "16",
+                    "--render-quality",
+                    "balanced",
                     "--exposure",
                     "auto",
                 ],

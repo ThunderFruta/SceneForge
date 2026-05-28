@@ -97,7 +97,9 @@ def build_parser() -> argparse.ArgumentParser:
     render_png.add_argument("--blender", default="blender")
     render_png.add_argument("--width", type=int, default=1280)
     render_png.add_argument("--height", type=int, default=720)
-    render_png.add_argument("--render-samples", type=int, default=8)
+    render_png.add_argument("--render-samples", type=int, default=16)
+    render_png.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
+    render_png.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
     render_png.add_argument("--exposure", default="auto")
     render_png.add_argument("--gamma", type=float, default=1.0)
     render_png.set_defaults(func=cmd_render_blend_png)
@@ -168,7 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
     reconstruct.add_argument("--blender", default="blender")
     reconstruct.add_argument("--width", type=int, default=640)
     reconstruct.add_argument("--height", type=int, default=640)
-    reconstruct.add_argument("--render-samples", type=int, default=16)
+    reconstruct.add_argument("--render-samples", type=int, default=32)
+    reconstruct.add_argument("--render-quality", choices=("fast", "balanced", "quality"), default="balanced")
+    reconstruct.add_argument("--render-engine", default="auto", choices=("auto", "BLENDER_EEVEE", "BLENDER_EEVEE_NEXT", "CYCLES"))
+    reconstruct.add_argument("--exposure", default="auto")
+    reconstruct.add_argument("--gamma", type=float, default=1.0)
     reconstruct.add_argument("--near-depth", type=float, default=1.0)
     reconstruct.add_argument("--far-depth", type=float, default=8.0)
     reconstruct.add_argument("--fov-degrees", type=float, default=70.0)
@@ -459,6 +465,7 @@ def cmd_run_open_vocab_smoke(args: argparse.Namespace) -> int:
     return 0
 
 
+
 def cmd_render_blend_png(args: argparse.Namespace) -> int:
     blend_path = _require_file(args.reference_blend, "--reference-blend")
     script_path = ROOT / "Tools" / "Scripts" / "render_blend_png.py"
@@ -477,6 +484,10 @@ def cmd_render_blend_png(args: argparse.Namespace) -> int:
             str(args.height),
             "--render-samples",
             str(args.render_samples),
+            "--render-quality",
+            str(args.render_quality),
+            "--render-engine",
+            str(args.render_engine),
             "--exposure",
             str(args.exposure),
             "--gamma",
@@ -841,6 +852,14 @@ def _run_reconstruct_render(args: argparse.Namespace, output_dir: Path) -> dict[
         str(args.height),
         "--render-samples",
         str(args.render_samples),
+        "--render-quality",
+        str(args.render_quality),
+        "--render-engine",
+        str(args.render_engine),
+        "--exposure",
+        str(args.exposure),
+        "--gamma",
+        str(args.gamma),
         "--near-depth",
         str(args.near_depth),
         "--far-depth",
