@@ -154,12 +154,30 @@ def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[st
     return args
 
 
+def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
+    args = [
+        "detect-shapes",
+        "--backend", "groundingdino-sam3",
+        "--image", str(image),
+        "--open-vocab-root", "Models/OpenVocabulary",
+        "--text-prompt-preset", "scene-primitives-v1",
+        "--output", str(output),
+        "--device", "auto",
+    ]
+    backend, ram_args = open_vocab_backend_with_ram_fallback()
+    args[args.index("--backend") + 1] = backend
+    if backend == "ram-groundingdino-sam3":
+        args = remove_option_with_value(args, "--text-prompt-preset")
+    args.extend(ram_args)
+    return args
+
+
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     root = repo_root()
     default_choice = 1 if likely_open_vocab_ready() else 2
     choices = [
         ("Detect objects from image", "DINO/SAM proposal masks to detections.json and overlay.png"),
-        ("Reconstruct scene from .blend", "Render RGBD, detect with DINO/SAM, enrich, fit, and export fitted_scene.blend"),
+        ("Reconstruct scene from .blend or detect image", "Use .blend for full RGBD reconstruction; use image for RAM/DINO/SAM detection"),
         ("Turn .blend into PNG", "Render the active Blender camera to one PNG without depth or detection"),
         ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
@@ -180,28 +198,20 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             print("Image detection needs an image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
         output = ask_text("Output directory", "Output/Latest/detect", required=True)
-        args = [
-            "detect-shapes",
-            "--backend", "groundingdino-sam3",
-            "--image", image,
-            "--open-vocab-root", "Models/OpenVocabulary",
-            "--text-prompt-preset", "scene-primitives-v1",
-            "--output", output,
-            "--device", "auto",
-        ]
-        backend, ram_args = open_vocab_backend_with_ram_fallback()
-        args[args.index("--backend") + 1] = backend
-        if backend == "ram-groundingdino-sam3":
-            args = remove_option_with_value(args, "--text-prompt-preset")
-        args.extend(ram_args)
+        args = detect_args_for_image(image, output)
         return _run_scene_args(args, execute)
     if selected == 1:
-        blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
-        if not is_blend_path(blend):
-            print("Reconstruction needs a .blend file. Use option 1 for image files.")
+        source = ask_text("Reference .blend or image", root / "Assets" / "Samples" / "roomScene.blend", required=True)
+        if is_image_path(source):
+            print("Image input has no depth source, so guided mode will run RAM/DINO/SAM image detection.")
+            output = ask_text("Output directory", "Output/Latest/detect", required=True)
+            args = detect_args_for_image(source, output)
+            return _run_scene_args(args, execute)
+        if not is_blend_path(source):
+            print("Option 2 needs a .blend or image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
         output = ask_text("Output directory", "Output/Latest", required=True)
-        args = reconstruct_args_for_blend(blend, output)
+        args = reconstruct_args_for_blend(source, output)
         if Path(output).exists() and confirm(f"Use --force for existing output {output}", default=True):
             args.append("--force")
         return _run_scene_args(args, execute)

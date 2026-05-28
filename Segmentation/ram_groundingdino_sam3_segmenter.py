@@ -383,6 +383,7 @@ def _patch_transformers_for_ram_imports() -> None:
     try:
         import torch
         import transformers.modeling_utils as modeling_utils
+        from transformers.modeling_utils import PreTrainedModel
         from transformers.pytorch_utils import apply_chunking_to_forward, prune_linear_layer
     except Exception:
         return
@@ -391,6 +392,25 @@ def _patch_transformers_for_ram_imports() -> None:
         modeling_utils.apply_chunking_to_forward = apply_chunking_to_forward
     if not hasattr(modeling_utils, "prune_linear_layer"):
         modeling_utils.prune_linear_layer = prune_linear_layer
+    if not hasattr(PreTrainedModel, "all_tied_weights_keys"):
+        def get_all_tied_weights_keys(self):
+            value = getattr(self, "_sceneforge_all_tied_weights_keys", None)
+            return value if hasattr(value, "items") else {}
+
+        def set_all_tied_weights_keys(self, value):
+            self._sceneforge_all_tied_weights_keys = value if hasattr(value, "items") else {}
+
+        PreTrainedModel.all_tied_weights_keys = property(
+            get_all_tied_weights_keys,
+            set_all_tied_weights_keys,
+        )
+    if not hasattr(PreTrainedModel, "get_head_mask"):
+        def get_head_mask(self, head_mask, num_hidden_layers, is_attention_chunked=False):
+            if head_mask is None:
+                return [None] * num_hidden_layers
+            return head_mask
+
+        PreTrainedModel.get_head_mask = get_head_mask
     if not hasattr(modeling_utils, "find_pruneable_heads_and_indices"):
         def find_pruneable_heads_and_indices(heads, n_heads, head_size, already_pruned_heads):
             mask = torch.ones(n_heads, head_size)
