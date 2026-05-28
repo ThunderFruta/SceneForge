@@ -318,7 +318,7 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_completion_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--completion-backend", choices=("none", "sdxl-inpaint"), default="none")
+    parser.add_argument("--completion-backend", choices=("none", "sdxl-inpaint", "flux-fill"), default="none")
     parser.add_argument("--completion-model", default="Models/Completion/SDXLInpaint")
     parser.add_argument("--completion-device", default="auto")
     parser.add_argument("--completion-steps", type=int, default=24)

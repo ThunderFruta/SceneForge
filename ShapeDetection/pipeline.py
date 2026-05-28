@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,7 +29,7 @@ def run_shape_detection(
     completion_device: str | None = "auto",
     completion_steps: int = 24,
     completion_guidance_scale: float = 6.5,
-    completion_strength: float = 0.92,
+    completion_strength: float = 0.55,
     completion_canvas_size: int = 1024,
     completion_seed: int = 20260528,
     completion_max_objects: int = 16,
@@ -105,6 +106,7 @@ def run_shape_detection(
     write_overlay(image, objects, output_path / "overlay.png")
     objects_dir = object_masks_output_dir(output_path)
     write_object_masks(image, objects, objects_dir)
+    release_detection_runtime(segmenter, classifier)
     run_object_completion(
         objects_dir=objects_dir,
         backend=completion_backend,
@@ -118,6 +120,20 @@ def run_shape_detection(
         max_objects=completion_max_objects,
     )
     return report
+
+
+def release_detection_runtime(segmenter, classifier) -> None:
+    del segmenter
+    del classifier
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 def run_object_completion(
@@ -134,6 +150,26 @@ def run_object_completion(
     max_objects: int,
 ) -> None:
     if backend == "none":
+        return
+    if backend == "flux-fill":
+        if model_dir is None:
+            raise ValueError("--completion-model is required for --completion-backend flux-fill")
+        model_path = Path(model_dir)
+        if not model_path.is_dir():
+            raise ValueError(f"--completion-model does not exist or is not a directory: {model_path}")
+        from ObjectCompletion.flux_fill import run_flux_object_completion
+
+        run_flux_object_completion(
+            objects_dir=objects_dir,
+            model_dir=model_path,
+            device=device,
+            steps=steps,
+            guidance_scale=guidance_scale,
+            strength=strength,
+            canvas_size=canvas_size,
+            seed=seed,
+            max_objects=max_objects,
+        )
         return
     if backend != "sdxl-inpaint":
         raise ValueError(f"Unsupported object completion backend: {backend}")

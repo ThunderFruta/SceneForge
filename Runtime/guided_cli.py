@@ -175,6 +175,15 @@ def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
 
 
 def completion_args_if_available() -> list[str]:
+    flux_model_dir = repo_root() / "Models" / "Completion" / "FluxFill"
+    if flux_model_dir.is_dir():
+        return [
+            "--completion-backend", "flux-fill",
+            "--completion-model", "Models/Completion/FluxFill",
+            "--completion-device", "auto",
+            "--completion-guidance-scale", "30.0",
+            "--completion-steps", "28",
+        ]
     model_dir = repo_root() / "Models" / "Completion" / "SDXLInpaint"
     if not model_dir.is_dir():
         return []

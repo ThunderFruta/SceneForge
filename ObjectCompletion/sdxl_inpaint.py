@@ -288,10 +288,10 @@ def read_metadata(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def write_manifest(root: Path, records: list[dict[str, Any]], status: str) -> dict[str, Any]:
+def write_manifest(root: Path, records: list[dict[str, Any]], status: str, backend: str = "sdxl-inpaint") -> dict[str, Any]:
     root.mkdir(parents=True, exist_ok=True)
     manifest = {
-        "backend": "sdxl-inpaint",
+        "backend": backend,
         "status": status,
         "object_count": len(records),
         "objects": records,
