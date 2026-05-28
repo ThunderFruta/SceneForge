@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from math import degrees
 from pathlib import Path
@@ -113,43 +115,95 @@ def compositor_tree(scene: bpy.types.Scene):
 def render_depth(path: Path, near_depth: float, far_depth: float) -> None:
     scene = bpy.context.scene
     path.parent.mkdir(parents=True, exist_ok=True)
-    for stale_output in path.parent.glob(f"{path.stem}*.png"):
-        stale_output.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+    target_width = int(scene.render.resolution_x * scene.render.resolution_percentage / 100)
+    target_height = int(scene.render.resolution_y * scene.render.resolution_percentage / 100)
+    depth_width, depth_height = depth_render_size(target_width, target_height)
+    original_resolution = (scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage)
+    try:
+        scene.render.resolution_x = depth_width
+        scene.render.resolution_y = depth_height
+        scene.render.resolution_percentage = 100
+        if hasattr(scene, "eevee"):
+            scene.eevee.taa_render_samples = 1
+        with tempfile.TemporaryDirectory(prefix="sceneforge_depth_") as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            exr_path = temp_dir / "depth.exr"
+            configure_depth_exr_compositor(exr_path)
+            scene.frame_set(1)
+            bpy.ops.render.render(write_still=False)
+            candidates = sorted(temp_dir.glob("depth*.exr"))
+            if candidates and convert_depth_exr_to_png(candidates[-1], path, near_depth, far_depth, target_width, target_height):
+                return
+    finally:
+        scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = original_resolution
+    raise RuntimeError(
+        "Blender Z-pass depth render did not produce a convertible EXR. "
+        "Refusing to fall back to CPU raycast depth for this render."
+    )
+
+
+def depth_render_size(width: int, height: int, max_edge: int = 384) -> tuple[int, int]:
+    scale = min(1.0, float(max_edge) / float(max(width, height)))
+    return max(1, int(round(width * scale))), max(1, int(round(height * scale)))
+
+
+def configure_depth_exr_compositor(path: Path) -> None:
+    scene = bpy.context.scene
+    scene.view_layers[0].use_pass_z = True
     tree = compositor_tree(scene)
     for node in list(tree.nodes):
         tree.nodes.remove(node)
 
     layers = tree.nodes.new(type="CompositorNodeRLayers")
-    mapper, mapper_input_name, mapper_output_name = new_map_range_node(tree)
-    mapper.inputs["From Min"].default_value = near_depth
-    mapper.inputs["From Max"].default_value = far_depth
-    mapper.inputs["To Min"].default_value = 1.0
-    mapper.inputs["To Max"].default_value = 0.0
-    if hasattr(mapper, "use_clamp"):
-        mapper.use_clamp = True
-    if hasattr(mapper, "clamp"):
-        mapper.clamp = True
     output = tree.nodes.new(type="CompositorNodeOutputFile")
-    output_input = configure_output_file_node(output, path)
+    if hasattr(output, "directory"):
+        output.directory = str(path.parent)
+        output.file_name = path.stem
+        output.file_output_items.clear()
+        output.file_output_items.new("FLOAT", "Depth")
+        output_input = output.inputs.get("Depth") or output.inputs[0]
+    else:
+        output.base_path = str(path.parent)
+        output.file_slots[0].path = path.stem
+        output.format.file_format = "OPEN_EXR"
+        output_input = output.inputs[0]
+
     depth_output = layers.outputs.get("Depth") or layers.outputs.get("Z")
     if depth_output is None:
         available = ", ".join(item.name for item in layers.outputs)
         raise RuntimeError(f"Render layer depth pass is unavailable; outputs: {available}")
-    tree.links.new(depth_output, mapper.inputs[mapper_input_name])
-    tree.links.new(mapper.outputs[mapper_output_name], output_input)
-
-    scene.frame_set(1)
-    bpy.ops.render.render(write_still=False)
-    candidates = sorted(path.parent.glob(f"{path.stem}*.png"))
-    if not candidates:
-        write_raycast_depth(path, near_depth, far_depth)
-        return
-    latest = candidates[-1]
-    if latest.resolve() != path.resolve():
-        path.unlink(missing_ok=True)
-        shutil.move(str(latest), str(path))
+    tree.links.new(depth_output, output_input)
 
 
+def convert_depth_exr_to_png(exr_path: Path, output_path: Path, near_depth: float, far_depth: float, output_width: int, output_height: int) -> bool:
+    python_path = Path.cwd() / ".venv" / "bin" / "python"
+    if not python_path.is_file():
+        python_path = Path(sys.executable)
+    code = """
+import sys
+import numpy as np
+from PIL import Image
+import OpenEXR
+
+exr_path, output_path, near_depth, far_depth = sys.argv[1], sys.argv[2], float(sys.argv[3]), float(sys.argv[4])
+exr = OpenEXR.File(exr_path)
+channels = exr.parts[0].channels
+channel = channels.get('Depth.V') or channels.get('Depth') or next(iter(channels.values()))
+depth = np.asarray(channel.pixels, dtype=np.float32)
+depth = np.nan_to_num(depth, nan=far_depth, posinf=far_depth, neginf=far_depth)
+normalized = 1.0 - ((depth - near_depth) / (far_depth - near_depth))
+image = (np.clip(normalized, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+Image.fromarray(image, mode='L').resize((int(sys.argv[5]), int(sys.argv[6])), Image.Resampling.BILINEAR).save(output_path)
+"""
+    try:
+        subprocess.run(
+            [str(python_path), "-c", code, str(exr_path), str(output_path), str(near_depth), str(far_depth), str(output_width), str(output_height)],
+            check=True,
+        )
+        return output_path.is_file()
+    except (OSError, subprocess.CalledProcessError):
+        return False
 
 
 def write_raycast_depth(path: Path, near_depth: float, far_depth: float) -> None:

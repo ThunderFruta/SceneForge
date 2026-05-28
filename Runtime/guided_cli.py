@@ -109,6 +109,32 @@ def likely_open_vocab_ready(root: Path | None = None) -> bool:
     )
 
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+
+
+def is_blend_path(path: str | Path) -> bool:
+    return Path(path).suffix.lower() == ".blend"
+
+
+def is_image_path(path: str | Path) -> bool:
+    return Path(path).suffix.lower() in IMAGE_SUFFIXES
+
+
+def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[str]:
+    return [
+        "reconstruct-scene",
+        "--reference-blend", str(blend),
+        "--detector-backend", "groundingdino-sam3",
+        "--open-vocab-root", "Models/OpenVocabulary",
+        "--text-prompt-preset", "scene-primitives-v1",
+        "--edge-backend", "simple",
+        "--wireframe-backend", "none",
+        "--mesh-backend", "none",
+        "--output", str(output),
+        "--device", "auto",
+    ]
+
+
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     root = repo_root()
     default_choice = 1 if likely_open_vocab_ready() else 2
@@ -123,6 +149,16 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
     if selected == 0:
         image = ask_text("Image path", root / "Assets" / "Fixtures" / "OpenVocabulary" / "open_vocab_smoke_objects.png", required=True)
+        if is_blend_path(image):
+            print("That path is a .blend file, so guided mode will run reconstruction instead of image detection.")
+            output = ask_text("Output directory", "Output/Latest", required=True)
+            args = reconstruct_args_for_blend(image, output)
+            if Path(output).exists() and confirm(f"Use --force for existing output {output}", default=True):
+                args.append("--force")
+            return _run_scene_args(args, execute)
+        if not is_image_path(image):
+            print("Image detection needs an image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
+            return 2
         output = ask_text("Output directory", "Output/Latest/detect", required=True)
         args = [
             "detect-shapes",
@@ -136,19 +172,11 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         return _run_scene_args(args, execute)
     if selected == 1:
         blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "shapes.blend", required=True)
+        if not is_blend_path(blend):
+            print("Reconstruction needs a .blend file. Use option 1 for image files.")
+            return 2
         output = ask_text("Output directory", "Output/Latest", required=True)
-        args = [
-            "reconstruct-scene",
-            "--reference-blend", blend,
-            "--detector-backend", "groundingdino-sam3",
-            "--open-vocab-root", "Models/OpenVocabulary",
-            "--text-prompt-preset", "scene-primitives-v1",
-            "--edge-backend", "simple",
-            "--wireframe-backend", "none",
-            "--mesh-backend", "none",
-            "--output", output,
-            "--device", "auto",
-        ]
+        args = reconstruct_args_for_blend(blend, output)
         if Path(output).exists() and confirm(f"Use --force for existing output {output}", default=True):
             args.append("--force")
         return _run_scene_args(args, execute)

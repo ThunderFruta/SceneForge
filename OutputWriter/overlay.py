@@ -31,6 +31,7 @@ DEFAULT_MASK_ALPHA = 8
 DEFAULT_OUTLINE_ALPHA = 235
 DEFAULT_OUTLINE_WIDTH = 2
 DEFAULT_LABEL_BG_ALPHA = 220
+DEFAULT_BOX_ALPHA = 255
 
 
 def _clamp_alpha(value: int) -> int:
@@ -65,8 +66,7 @@ def write_overlay(
                 draw.polygon(item.mask_polygon, fill=fill, outline=outline)
                 points = item.mask_polygon + [item.mask_polygon[0]]
                 draw.line(points, fill=outline, width=max(1, int(outline_width)))
-            else:
-                draw.rectangle(item.bbox_xyxy, outline=outline, width=max(1, int(outline_width)))
+            _draw_detection_box(draw, item.bbox_xyxy, color, width=max(2, int(outline_width) + 1))
 
             label = f"{item.id:02d} {display_label} {display_confidence:.2f}"
             _draw_label(draw, item.bbox_xyxy, label, color, font, label_alpha)
@@ -123,6 +123,17 @@ def _contrast_ratio(first: float, second: float) -> float:
     lighter = max(first, second)
     darker = min(first, second)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def _draw_detection_box(
+    draw: ImageDraw.ImageDraw,
+    bbox_xyxy: tuple[float, float, float, float],
+    color: tuple[int, int, int],
+    width: int,
+) -> None:
+    halo = (255, 255, 255, 210) if _relative_luminance(color) < 0.45 else (0, 0, 0, 210)
+    draw.rectangle(bbox_xyxy, outline=halo, width=max(1, width + 2))
+    draw.rectangle(bbox_xyxy, outline=(*color, DEFAULT_BOX_ALPHA), width=max(1, width))
 
 
 def _draw_label(

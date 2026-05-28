@@ -20,3 +20,4 @@ shapely
 seaborn
 easydict
 kornia
+OpenEXR
