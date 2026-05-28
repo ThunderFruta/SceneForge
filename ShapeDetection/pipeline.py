@@ -23,6 +23,15 @@ def run_shape_detection(
     segmenter,
     classifier,
     model_info: dict,
+    completion_backend: str = "none",
+    completion_model: str | Path | None = None,
+    completion_device: str | None = "auto",
+    completion_steps: int = 24,
+    completion_guidance_scale: float = 6.5,
+    completion_strength: float = 0.92,
+    completion_canvas_size: int = 1024,
+    completion_seed: int = 20260528,
+    completion_max_objects: int = 16,
 ) -> DetectionReport:
     resolved_image_path = Path(image_path)
     image = load_rgb_image(resolved_image_path)
@@ -94,8 +103,58 @@ def run_shape_detection(
             encoding="utf-8",
         )
     write_overlay(image, objects, output_path / "overlay.png")
-    write_object_masks(image, objects, object_masks_output_dir(output_path))
+    objects_dir = object_masks_output_dir(output_path)
+    write_object_masks(image, objects, objects_dir)
+    run_object_completion(
+        objects_dir=objects_dir,
+        backend=completion_backend,
+        model_dir=completion_model,
+        device=completion_device,
+        steps=completion_steps,
+        guidance_scale=completion_guidance_scale,
+        strength=completion_strength,
+        canvas_size=completion_canvas_size,
+        seed=completion_seed,
+        max_objects=completion_max_objects,
+    )
     return report
+
+
+def run_object_completion(
+    *,
+    objects_dir: Path,
+    backend: str,
+    model_dir: str | Path | None,
+    device: str | None,
+    steps: int,
+    guidance_scale: float,
+    strength: float,
+    canvas_size: int,
+    seed: int,
+    max_objects: int,
+) -> None:
+    if backend == "none":
+        return
+    if backend != "sdxl-inpaint":
+        raise ValueError(f"Unsupported object completion backend: {backend}")
+    if model_dir is None:
+        raise ValueError("--completion-model is required for --completion-backend sdxl-inpaint")
+    model_path = Path(model_dir)
+    if not model_path.is_dir():
+        raise ValueError(f"--completion-model does not exist or is not a directory: {model_path}")
+    from ObjectCompletion.sdxl_inpaint import run_sdxl_object_completion
+
+    run_sdxl_object_completion(
+        objects_dir=objects_dir,
+        model_dir=model_path,
+        device=device,
+        steps=steps,
+        guidance_scale=guidance_scale,
+        strength=strength,
+        canvas_size=canvas_size,
+        seed=seed,
+        max_objects=max_objects,
+    )
 
 
 def object_masks_output_dir(output_path: Path) -> Path:

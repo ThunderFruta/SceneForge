@@ -151,6 +151,7 @@ def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[st
     if ram_backend == "ram-groundingdino-sam3":
         args = remove_option_with_value(args, "--text-prompt-preset")
     args.extend(ram_args)
+    args.extend(completion_args_if_available())
     return args
 
 
@@ -169,7 +170,19 @@ def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
     if backend == "ram-groundingdino-sam3":
         args = remove_option_with_value(args, "--text-prompt-preset")
     args.extend(ram_args)
+    args.extend(completion_args_if_available())
     return args
+
+
+def completion_args_if_available() -> list[str]:
+    model_dir = repo_root() / "Models" / "Completion" / "SDXLInpaint"
+    if not model_dir.is_dir():
+        return []
+    return [
+        "--completion-backend", "sdxl-inpaint",
+        "--completion-model", "Models/Completion/SDXLInpaint",
+        "--completion-device", "auto",
+    ]
 
 
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
@@ -265,12 +278,13 @@ def print_recipes() -> None:
     detector_backend = "ram-groundingdino-sam3" if backend == "ram-groundingdino-sam3" else "groundingdino-sam3"
     detect_prompt_args = [] if backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
     reconstruct_prompt_args = [] if detector_backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
+    completion_args = completion_args_if_available()
     recipes = [
         [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
         [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
-        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
+        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args + completion_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
-        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args,
+        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args + completion_args,
     ]
     for command in recipes:
         print(shell_join(command))

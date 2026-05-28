@@ -138,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     detect.add_argument("--overlap-iou-threshold", type=float, default=0.50)
     detect.add_argument("--rgbd-channel-weights", default="0.25,0.25,0.25,0.25")
     add_open_vocabulary_detector_args(detect)
+    add_completion_args(detect)
     detect.set_defaults(func=cmd_detect_shapes)
 
     enrich = subparsers.add_parser("enrich-objects", help="Fuse depth, edge, wireframe, and mesh evidence.")
@@ -183,6 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     reconstruct.add_argument("--detector-overlap-iou-threshold", type=float, default=0.50)
     reconstruct.add_argument("--rgbd-channel-weights", default="0.25,0.25,0.25,0.25")
     add_open_vocabulary_detector_args(reconstruct)
+    add_completion_args(reconstruct)
     add_provider_args(reconstruct)
     add_enrichment_tuning_args(reconstruct)
     reconstruct.add_argument("--final-layout", choices=("camera", "ground", "original-camera"), default="camera")
@@ -313,6 +315,18 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ram-checkpoint")
     parser.add_argument("--sam3-repo-dir")
     parser.add_argument("--sam3-model-dir")
+
+
+def add_completion_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--completion-backend", choices=("none", "sdxl-inpaint"), default="none")
+    parser.add_argument("--completion-model", default="Models/Completion/SDXLInpaint")
+    parser.add_argument("--completion-device", default="auto")
+    parser.add_argument("--completion-steps", type=int, default=24)
+    parser.add_argument("--completion-guidance-scale", type=float, default=6.5)
+    parser.add_argument("--completion-strength", type=float, default=0.92)
+    parser.add_argument("--completion-canvas-size", type=int, default=1024)
+    parser.add_argument("--completion-seed", type=int, default=20260528)
+    parser.add_argument("--completion-max-objects", type=int, default=16)
 
 
 def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_readiness: bool) -> None:
@@ -577,6 +591,15 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
         segmenter=runtime.segmenter,
         classifier=runtime.classifier,
         model_info=runtime.model_info,
+        completion_backend=args.completion_backend,
+        completion_model=args.completion_model,
+        completion_device=args.completion_device,
+        completion_steps=args.completion_steps,
+        completion_guidance_scale=args.completion_guidance_scale,
+        completion_strength=args.completion_strength,
+        completion_canvas_size=args.completion_canvas_size,
+        completion_seed=args.completion_seed,
+        completion_max_objects=args.completion_max_objects,
     )
     print(f"Wrote {Path(args.output) / 'detections.json'}")
     print(f"Wrote {Path(args.output) / 'overlay.png'}")
@@ -966,6 +989,15 @@ def _run_reconstruct_detect(args: argparse.Namespace, output_dir: Path, render_i
         segmenter=runtime.segmenter,
         classifier=runtime.classifier,
         model_info=runtime.model_info,
+        completion_backend=args.completion_backend,
+        completion_model=args.completion_model,
+        completion_device=args.completion_device,
+        completion_steps=args.completion_steps,
+        completion_guidance_scale=args.completion_guidance_scale,
+        completion_strength=args.completion_strength,
+        completion_canvas_size=args.completion_canvas_size,
+        completion_seed=args.completion_seed,
+        completion_max_objects=args.completion_max_objects,
     )
     _replace_stage_output(temp_dir, output_dir / "detect")
 

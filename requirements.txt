@@ -3,6 +3,9 @@ pillow
 opencv-python
 torch
 torchvision
+diffusers
+accelerate
+safetensors
 transformers==4.35.0
 ultralytics
 pytest

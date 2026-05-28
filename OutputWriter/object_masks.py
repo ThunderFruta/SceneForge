@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,8 @@ def write_object_masks(
     output_dir: str | Path,
 ) -> None:
     root = Path(output_dir)
+    if root.exists():
+        shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
     for item in sorted(objects, key=lambda object_item: object_item.id):
         object_dir = root / object_folder_name(item)
