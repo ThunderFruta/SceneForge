@@ -17,29 +17,47 @@ PRIMITIVE_COLORS = {
 }
 
 
+DEFAULT_MASK_ALPHA = 8
+DEFAULT_OUTLINE_ALPHA = 160
+DEFAULT_OUTLINE_WIDTH = 1
+DEFAULT_LABEL_BG_ALPHA = 130
+
+
+def _clamp_alpha(value: int) -> int:
+    return max(0, min(255, int(value)))
+
+
 def write_overlay(
     image: Image.Image,
     objects: list[ObjectShapeDetection],
     path: str | Path,
+    *,
+    mask_alpha: int = DEFAULT_MASK_ALPHA,
+    outline_alpha: int = DEFAULT_OUTLINE_ALPHA,
+    outline_width: int = DEFAULT_OUTLINE_WIDTH,
+    label_background_alpha: int = DEFAULT_LABEL_BG_ALPHA,
 ) -> None:
     output = image.copy().convert("RGB")
     if objects:
         draw = ImageDraw.Draw(output, "RGBA")
         font = ImageFont.load_default()
+        fill_alpha = _clamp_alpha(mask_alpha)
+        edge_alpha = _clamp_alpha(outline_alpha)
+        label_alpha = _clamp_alpha(label_background_alpha)
         for item in objects:
             display_label, display_confidence, color_label = _display_values(item)
             color = PRIMITIVE_COLORS.get(color_label, PRIMITIVE_COLORS["unknown"])
-            outline = (*color, 255)
-            fill = (*color, 64)
+            outline = (*color, edge_alpha)
+            fill = (*color, fill_alpha)
             if len(item.mask_polygon) >= 3:
                 draw.polygon(item.mask_polygon, fill=fill, outline=outline)
                 points = item.mask_polygon + [item.mask_polygon[0]]
-                draw.line(points, fill=outline, width=3)
+                draw.line(points, fill=outline, width=max(1, int(outline_width)))
             else:
-                draw.rectangle(item.bbox_xyxy, outline=outline, width=3)
+                draw.rectangle(item.bbox_xyxy, outline=outline, width=max(1, int(outline_width)))
 
             label = f"{item.id:02d} {display_label} {display_confidence:.2f}"
-            _draw_label(draw, item.bbox_xyxy, label, color, font)
+            _draw_label(draw, item.bbox_xyxy, label, color, font, label_alpha)
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +76,7 @@ def _draw_label(
     label: str,
     color: tuple[int, int, int],
     font: ImageFont.ImageFont,
+    background_alpha: int,
 ) -> None:
     left, top, _, _ = bbox_xyxy
     text_bbox = draw.textbbox((0, 0), label, font=font)
@@ -69,6 +88,6 @@ def _draw_label(
         y = max(0, int(round(top)) + 4)
     draw.rectangle(
         (x, y, x + text_width + 8, y + text_height + 6),
-        fill=(*color, 230),
+        fill=(*color, background_alpha),
     )
     draw.text((x + 4, y + 3), label, fill=(255, 255, 255, 255), font=font)
