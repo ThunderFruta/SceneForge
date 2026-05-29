@@ -11,8 +11,9 @@ from ObjectCompletion.sdxl_inpaint import (
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_PROMPT_TEMPLATE,
     build_inpaint_canvas,
-    object_only_alpha,
+    compose_completed_object,
     read_metadata,
+    save_completion_debug_artifacts,
     write_manifest,
 )
 
@@ -23,7 +24,7 @@ def run_flux_object_completion(
     *,
     device: str | None = "auto",
     steps: int = 28,
-    guidance_scale: float = 30.0,
+    guidance_scale: float = 6.0,
     strength: float = 1.0,
     canvas_size: int = 1024,
     seed: int = 20260528,
@@ -40,24 +41,56 @@ def run_flux_object_completion(
 
     pipe = None
     torch = None
+    current_device: str = str(device) if device is not None else "auto"
     records: list[dict[str, Any]] = []
+
+    def load_with(device_override: str, quantization_override: str):
+        _unload_flux_pipeline(pipe, torch)
+        _clear_cuda_memory(torch)
+        return load_pipeline(model_dir, device_override, quantization=quantization_override)
+
     try:
         _clear_cuda_memory()
-        pipe, torch, generator_device = load_pipeline(model_dir, device, quantization=quantization)
+        try:
+            pipe, torch, generator_device = load_pipeline(model_dir, device, quantization=quantization)
+        except RuntimeError as exc:
+            if _is_cuda_oom(exc) and str(device).strip().lower() in {"", "auto", "cuda", "cuda:0", "cuda:1", "cuda:2", "cuda:3"}:
+                print("FLUX GPU memory exceeded; retrying on CPU with non-quantized model load.")
+                pipe, torch, generator_device = load_with("cpu", "none")
+            else:
+                raise
+        except TypeError as exc:
+            if _is_quantized_offload_bug(exc) and str(device).strip().lower() in {"", "auto", "cuda", "cuda:0", "cuda:1", "cuda:2", "cuda:3"}:
+                print("FLUX quantized offload hook failed; retrying on CPU non-quantized.")
+                pipe, torch, generator_device = load_with("cpu", "none")
+            else:
+                raise
+        current_device = str(generator_device)
         generator = torch.Generator(device=generator_device).manual_seed(int(seed))
         for index, object_dir in enumerate(object_dirs[:max_objects], start=1):
-            records.append(
-                complete_object_dir(
-                    object_dir,
-                    pipe=pipe,
-                    generator=generator,
-                    steps=steps,
-                    guidance_scale=guidance_scale,
-                    strength=strength,
-                    canvas_size=canvas_size,
-                    index=index,
-                )
-            )
+            while True:
+                try:
+                    records.append(
+                        complete_object_dir(
+                            object_dir,
+                            pipe=pipe,
+                            generator=generator,
+                            steps=steps,
+                            guidance_scale=guidance_scale,
+                            strength=strength,
+                            canvas_size=canvas_size,
+                            index=index,
+                        )
+                    )
+                    break
+                except RuntimeError as exc:
+                    if _is_cuda_oom(exc) and current_device.startswith("cuda"):
+                        print("FLUX GPU memory exceeded; switching to CPU completion.")
+                        pipe, torch, generator_device = load_with("cpu", "none")
+                        generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+                        current_device = str(generator_device)
+                        continue
+                    raise
             _clear_cuda_memory(torch)
         return write_manifest(root, records, "complete", backend="flux-fill")
     finally:
@@ -82,6 +115,7 @@ def load_pipeline(model_dir: str | Path, device: str | None, *, quantization: st
     transformer = None
     text_encoder_2 = None
     _clear_cuda_memory(torch)
+    is_quantized = quantization in {"4bit", "8bit"}
     if quantization in {"4bit", "8bit"}:
         torch.backends.cuda.matmul.allow_tf32 = True
         diffusers_quantization_config = BitsAndBytesConfig(
@@ -115,12 +149,13 @@ def load_pipeline(model_dir: str | Path, device: str | None, *, quantization: st
             local_files_only=True,
         )
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    pipe_kwargs = {
-        "transformer": transformer,
-        "text_encoder_2": text_encoder_2,
+    pipe_kwargs: dict[str, Any] = {
         "torch_dtype": torch_dtype,
         "local_files_only": True,
     }
+    if is_quantized:
+        pipe_kwargs["transformer"] = transformer
+        pipe_kwargs["text_encoder_2"] = text_encoder_2
     try:
         pipe = FluxFillPipeline.from_pretrained(
             str(model_dir),
@@ -130,6 +165,8 @@ def load_pipeline(model_dir: str | Path, device: str | None, *, quantization: st
     except TypeError:
         pipe = FluxFillPipeline.from_pretrained(str(model_dir), **pipe_kwargs)
     if str(requested_device).startswith("cuda"):
+        if hasattr(pipe, "enable_sequential_cpu_offload") and quantization == "none":
+            pipe.enable_sequential_cpu_offload()
         if hasattr(pipe, "vae"):
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
@@ -152,6 +189,16 @@ def load_pipeline(model_dir: str | Path, device: str | None, *, quantization: st
         pipe = pipe.to("cpu")
         generator_device = "cpu"
     return pipe, torch, generator_device
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "out of memory" in message and "cuda" in message
+
+
+def _is_quantized_offload_bug(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return ("params4bit" in message and "_is_hf_initialized" in message) or "accelerate" in message
 
 
 def _clear_cuda_memory(torch: Any | None = None) -> None:
@@ -237,6 +284,8 @@ def complete_object_dir(
         canvas_size=canvas_size,
     )
 
+    save_completion_debug_artifacts(object_dir, image, mask, output_alpha, paste_box)
+
     result = pipe(
         prompt=prompt,
         image=image,
@@ -248,9 +297,12 @@ def complete_object_dir(
         generator=generator,
         max_sequence_length=512,
     ).images[0].convert("RGB")
-    completed_rgb = result.crop(paste_box).convert("RGB")
-    completed_object = completed_rgb.convert("RGBA")
-    completed_object.putalpha(object_only_alpha(completed_rgb, output_alpha))
+    completed_object, warning = compose_completed_object(
+        result=result,
+        paste_box=paste_box,
+        output_alpha=output_alpha,
+        source_rgba=masked_crop,
+    )
     completed_object.save(object_dir / "completed_crop.png")
 
     record = {
@@ -269,6 +321,8 @@ def complete_object_dir(
         "context_crop": "context_crop.png" if context_crop_path.is_file() else None,
         "order_index": index,
     }
+    if warning:
+        record["completion_warning"] = warning
     (object_dir / "completion_metadata.json").write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

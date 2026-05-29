@@ -187,7 +187,7 @@ def completion_args_if_available() -> list[str]:
             "--completion-model", "Models/Completion/FluxFill",
             "--completion-device", "auto",
             "--completion-quantization", "4bit",
-            "--completion-guidance-scale", "30.0",
+            "--completion-guidance-scale", "6.0",
             "--completion-steps", "28",
         ]
     print(f"Info: FLUX completion skipped; expected model at {flux_model_dir}.")
@@ -222,14 +222,14 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             return 2
         output = ask_text("Output directory", "Output/Latest/detect", required=True)
         args = detect_args_for_image(image, output)
-        return _run_detection_then_completion(args, output, execute)
+        return _run_detection_then_completion(args, output)
     if selected == 1:
         source = ask_text("Reference .blend or image", root / "Assets" / "Samples" / "roomScene.blend", required=True)
         if is_image_path(source):
             print("Image input has no depth source, so guided mode will run RAM/DINO/SAM image detection.")
             output = ask_text("Output directory", "Output/Latest/detect", required=True)
             args = detect_args_for_image(source, output)
-            return _run_detection_then_completion(args, output, execute)
+            return _run_detection_then_completion(args, output)
         if not is_blend_path(source):
             print("Option 2 needs a .blend or image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
@@ -290,11 +290,11 @@ def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int
     return int(execute(args))
 
 
-def _run_detection_then_completion(args: list[str], output: str | Path, execute: Callable[[list[str]], int]) -> int:
+def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
     print_command([sys.executable, "run.py", *args])
     if not confirm("Run now", default=True):
         return 0
-    status = int(execute(args))
+    status = _run_completion_process([sys.executable, "run.py", *args], banner="Running detection in an isolated process to release resources.")
     if status != 0:
         return status
     completion_args = completion_args_if_available()
@@ -328,10 +328,11 @@ def _run_completion_process(command: list[str], banner: str | None = None) -> in
 def lower_memory_completion_args(args: list[str]) -> list[str]:
     if "--completion-backend" not in args or "flux-fill" not in args:
         return args
-    lowered = replace_option_value(args, "--completion-quantization", "4bit")
+    lowered = replace_option_value(args, "--completion-device", "cpu")
     lowered = replace_option_value(lowered, "--completion-canvas-size", "768")
     lowered = replace_option_value(lowered, "--completion-steps", "16")
     lowered = replace_option_value(lowered, "--completion-max-objects", "1")
+    lowered = replace_option_value(lowered, "--completion-quantization", "none")
     return lowered
 
 
