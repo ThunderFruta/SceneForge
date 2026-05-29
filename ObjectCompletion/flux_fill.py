@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ def run_flux_object_completion(
     canvas_size: int = 1024,
     seed: int = 20260528,
     max_objects: int = 16,
+    quantization: str = "4bit",
 ) -> dict[str, Any]:
     root = Path(objects_dir)
     if not root.is_dir():
@@ -36,53 +38,175 @@ def run_flux_object_completion(
     if not object_dirs:
         return write_manifest(root, [], "no_objects", backend="flux-fill")
 
-    pipe, torch, generator_device = load_pipeline(model_dir, device)
-    generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+    pipe = None
+    torch = None
     records: list[dict[str, Any]] = []
-    for index, object_dir in enumerate(object_dirs[:max_objects], start=1):
-        records.append(
-            complete_object_dir(
-                object_dir,
-                pipe=pipe,
-                generator=generator,
-                steps=steps,
-                guidance_scale=guidance_scale,
-                strength=strength,
-                canvas_size=canvas_size,
-                index=index,
+    try:
+        _clear_cuda_memory()
+        pipe, torch, generator_device = load_pipeline(model_dir, device, quantization=quantization)
+        generator = torch.Generator(device=generator_device).manual_seed(int(seed))
+        for index, object_dir in enumerate(object_dirs[:max_objects], start=1):
+            records.append(
+                complete_object_dir(
+                    object_dir,
+                    pipe=pipe,
+                    generator=generator,
+                    steps=steps,
+                    guidance_scale=guidance_scale,
+                    strength=strength,
+                    canvas_size=canvas_size,
+                    index=index,
+                )
             )
-        )
-    return write_manifest(root, records, "complete", backend="flux-fill")
+            _clear_cuda_memory(torch)
+        return write_manifest(root, records, "complete", backend="flux-fill")
+    finally:
+        _unload_flux_pipeline(pipe, torch)
+        _clear_cuda_memory(torch)
 
 
-def load_pipeline(model_dir: str | Path, device: str | None):
+def load_pipeline(model_dir: str | Path, device: str | None, *, quantization: str = "4bit"):
     try:
         import torch
-        from diffusers import FluxFillPipeline
+        from diffusers import BitsAndBytesConfig, FluxFillPipeline, FluxTransformer2DModel
+        from transformers import BitsAndBytesConfig as TransformersBitsAndBytesConfig
+        from transformers import T5EncoderModel
     except Exception as exc:
         raise RuntimeError(
             "FLUX fill completion requires diffusers with FluxFillPipeline support."
         ) from exc
 
     requested_device = device if device not in (None, "auto") else ("cuda" if torch.cuda.is_available() else "cpu")
-    torch_dtype = torch.bfloat16 if str(requested_device).startswith("cuda") else torch.float32
-    pipe = FluxFillPipeline.from_pretrained(
-        str(model_dir),
-        torch_dtype=torch_dtype,
-        local_files_only=True,
-    )
+    torch_dtype = torch.float16 if str(requested_device).startswith("cuda") else torch.float32
+    quantization = quantization if str(requested_device).startswith("cuda") else "none"
+    transformer = None
+    text_encoder_2 = None
+    _clear_cuda_memory(torch)
+    if quantization in {"4bit", "8bit"}:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        diffusers_quantization_config = BitsAndBytesConfig(
+            load_in_4bit=quantization == "4bit",
+            load_in_8bit=quantization == "8bit",
+            bnb_4bit_compute_dtype=torch_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        transformers_quantization_config = TransformersBitsAndBytesConfig(
+            load_in_4bit=quantization == "4bit",
+            load_in_8bit=quantization == "8bit",
+            bnb_4bit_compute_dtype=torch_dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        transformer = FluxTransformer2DModel.from_pretrained(
+            str(model_dir),
+            subfolder="transformer",
+            torch_dtype=torch_dtype,
+            quantization_config=diffusers_quantization_config,
+            device_map={"": requested_device},
+            local_files_only=True,
+        )
+        text_encoder_2 = T5EncoderModel.from_pretrained(
+            str(model_dir),
+            subfolder="text_encoder_2",
+            torch_dtype=torch_dtype,
+            quantization_config=transformers_quantization_config,
+            device_map={"": requested_device},
+            local_files_only=True,
+        )
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    pipe_kwargs = {
+        "transformer": transformer,
+        "text_encoder_2": text_encoder_2,
+        "torch_dtype": torch_dtype,
+        "local_files_only": True,
+    }
+    try:
+        pipe = FluxFillPipeline.from_pretrained(
+            str(model_dir),
+            low_cpu_mem_usage=True,
+            **pipe_kwargs,
+        )
+    except TypeError:
+        pipe = FluxFillPipeline.from_pretrained(str(model_dir), **pipe_kwargs)
     if str(requested_device).startswith("cuda"):
         if hasattr(pipe, "vae"):
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
         if hasattr(pipe, "enable_attention_slicing"):
             pipe.enable_attention_slicing()
-        pipe = pipe.to(requested_device)
+        if hasattr(pipe, "enable_model_cpu_offload"):
+            try:
+                pipe.enable_model_cpu_offload()
+            except TypeError:
+                # Backward compatibility for older diffusers signatures.
+                pipe.enable_model_cpu_offload(requested_device)
+            except Exception:
+                move_unquantized_pipeline_parts_to_device(pipe, requested_device)
+        elif quantization == "none":
+            pipe = pipe.to(requested_device)
+        else:
+            move_unquantized_pipeline_parts_to_device(pipe, requested_device)
         generator_device = requested_device
     else:
         pipe = pipe.to("cpu")
         generator_device = "cpu"
     return pipe, torch, generator_device
+
+
+def _clear_cuda_memory(torch: Any | None = None) -> None:
+    import gc
+
+    gc.collect()
+    if torch is None:
+        try:
+            import torch as _torch
+        except Exception:
+            return
+        torch = _torch
+    if not hasattr(torch, "cuda") or not torch.cuda.is_available():
+        return
+    torch.cuda.empty_cache()
+    if hasattr(torch.cuda, "ipc_collect"):
+        torch.cuda.ipc_collect()
+
+
+def _unload_flux_pipeline(pipe, torch: Any | None) -> None:
+    if pipe is None:
+        return
+    try:
+        if hasattr(pipe, "to"):
+            pipe.to("cpu")
+    except Exception:
+        pass
+    for component_name in ("transformer", "text_encoder", "text_encoder_2", "vae", "scheduler"):
+        try:
+            component = getattr(pipe, component_name)
+        except Exception:
+            continue
+        if component is None:
+            continue
+        try:
+            if hasattr(component, "to"):
+                component.to("cpu")
+        except Exception:
+            pass
+    try:
+        if hasattr(pipe, "remove_controlnet") and hasattr(pipe, "controlnet"):
+            pipe.remove_controlnet()
+    except Exception:
+        pass
+    try:
+        del pipe
+    except Exception:
+        pass
+
+
+def move_unquantized_pipeline_parts_to_device(pipe, device: str) -> None:
+    for name in ("text_encoder", "vae"):
+        component = getattr(pipe, name, None)
+        if component is not None and hasattr(component, "to"):
+            component.to(device)
 
 
 def complete_object_dir(

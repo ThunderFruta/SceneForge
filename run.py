@@ -141,6 +141,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_completion_args(detect)
     detect.set_defaults(func=cmd_detect_shapes)
 
+    complete = subparsers.add_parser("complete-objects", help="Run object crop completion over an existing objects directory.")
+    complete.add_argument("--objects", default="Output/Latest/objects")
+    add_completion_args(complete)
+    complete.set_defaults(
+        completion_backend="flux-fill",
+        completion_model="Models/Completion/FluxFill",
+        completion_device="auto",
+        completion_steps=28,
+        completion_guidance_scale=30.0,
+        completion_quantization="4bit",
+    )
+    complete.set_defaults(func=cmd_complete_objects)
+
     enrich = subparsers.add_parser("enrich-objects", help="Fuse depth, edge, wireframe, and mesh evidence.")
     enrich.add_argument("--image", required=True)
     enrich.add_argument("--depth", required=True)
@@ -327,6 +340,7 @@ def add_completion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--completion-canvas-size", type=int, default=1024)
     parser.add_argument("--completion-seed", type=int, default=20260528)
     parser.add_argument("--completion-max-objects", type=int, default=16)
+    parser.add_argument("--completion-quantization", choices=("none", "8bit", "4bit"), default="4bit")
 
 
 def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_readiness: bool) -> None:
@@ -600,9 +614,30 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
         completion_canvas_size=args.completion_canvas_size,
         completion_seed=args.completion_seed,
         completion_max_objects=args.completion_max_objects,
+        completion_quantization=args.completion_quantization,
     )
     print(f"Wrote {Path(args.output) / 'detections.json'}")
     print(f"Wrote {Path(args.output) / 'overlay.png'}")
+    return 0
+
+
+def cmd_complete_objects(args: argparse.Namespace) -> int:
+    from ShapeDetection.pipeline import run_object_completion
+
+    run_object_completion(
+        objects_dir=Path(args.objects),
+        backend=args.completion_backend,
+        model_dir=args.completion_model,
+        device=args.completion_device,
+        steps=args.completion_steps,
+        guidance_scale=args.completion_guidance_scale,
+        strength=args.completion_strength,
+        canvas_size=args.completion_canvas_size,
+        seed=args.completion_seed,
+        max_objects=args.completion_max_objects,
+        quantization=args.completion_quantization,
+    )
+    print(f"Wrote {Path(args.objects) / 'completion_manifest.json'}")
     return 0
 
 
@@ -998,6 +1033,7 @@ def _run_reconstruct_detect(args: argparse.Namespace, output_dir: Path, render_i
         completion_canvas_size=args.completion_canvas_size,
         completion_seed=args.completion_seed,
         completion_max_objects=args.completion_max_objects,
+        completion_quantization=args.completion_quantization,
     )
     _replace_stage_output(temp_dir, output_dir / "detect")
 

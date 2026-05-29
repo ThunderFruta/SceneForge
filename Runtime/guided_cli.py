@@ -151,7 +151,6 @@ def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[st
     if ram_backend == "ram-groundingdino-sam3":
         args = remove_option_with_value(args, "--text-prompt-preset")
     args.extend(ram_args)
-    args.extend(completion_args_if_available())
     return args
 
 
@@ -170,28 +169,29 @@ def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
     if backend == "ram-groundingdino-sam3":
         args = remove_option_with_value(args, "--text-prompt-preset")
     args.extend(ram_args)
-    args.extend(completion_args_if_available())
     return args
 
 
 def completion_args_if_available() -> list[str]:
+    preferred_backend = os.environ.get("SCENEFORGE_COMPLETION_BACKEND", "flux-fill").strip().lower()
     flux_model_dir = repo_root() / "Models" / "Completion" / "FluxFill"
+    disabled_values = {"", "none", "0", "false", "off"}
+    if preferred_backend in disabled_values:
+        print("SceneForge guided completion is disabled by SCENEFORGE_COMPLETION_BACKEND.")
+        return []
+    if preferred_backend not in {"flux", "flux-fill"}:
+        print(f"Info: SCENEFORGE_COMPLETION_BACKEND={preferred_backend} is ignored; FLUX is enforced for guided mode.")
     if flux_model_dir.is_dir():
         return [
             "--completion-backend", "flux-fill",
             "--completion-model", "Models/Completion/FluxFill",
             "--completion-device", "auto",
+            "--completion-quantization", "4bit",
             "--completion-guidance-scale", "30.0",
             "--completion-steps", "28",
         ]
-    model_dir = repo_root() / "Models" / "Completion" / "SDXLInpaint"
-    if not model_dir.is_dir():
-        return []
-    return [
-        "--completion-backend", "sdxl-inpaint",
-        "--completion-model", "Models/Completion/SDXLInpaint",
-        "--completion-device", "auto",
-    ]
+    print(f"Info: FLUX completion skipped; expected model at {flux_model_dir}.")
+    return []
 
 
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
@@ -204,6 +204,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
         ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
+        ("Complete latest object crops", "Run FLUX completion over Output/Latest/objects"),
         ("Show command recipes", "Print common explicit commands and exit"),
     ]
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
@@ -221,14 +222,14 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             return 2
         output = ask_text("Output directory", "Output/Latest/detect", required=True)
         args = detect_args_for_image(image, output)
-        return _run_scene_args(args, execute)
+        return _run_detection_then_completion(args, output, execute)
     if selected == 1:
         source = ask_text("Reference .blend or image", root / "Assets" / "Samples" / "roomScene.blend", required=True)
         if is_image_path(source):
             print("Image input has no depth source, so guided mode will run RAM/DINO/SAM image detection.")
             output = ask_text("Output directory", "Output/Latest/detect", required=True)
             args = detect_args_for_image(source, output)
-            return _run_scene_args(args, execute)
+            return _run_detection_then_completion(args, output, execute)
         if not is_blend_path(source):
             print("Option 2 needs a .blend or image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
@@ -271,6 +272,13 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     if selected == 5:
         blend = ask_text("Blend to inspect", "Output/Latest/fitted_scene.blend", required=True)
         return run_after_confirmation([sys.executable, "Tools/Scripts/view_blend.py", "--blend", blend, "--views", "front,iso", "--no-gltf"])
+    if selected == 6:
+        objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
+        args = ["complete-objects", "--objects", objects]
+        completion_args = completion_args_if_available()
+        if completion_args:
+            args.extend(completion_args)
+        return _run_scene_args(args, execute)
     print_recipes()
     return 0
 
@@ -282,6 +290,64 @@ def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int
     return int(execute(args))
 
 
+def _run_detection_then_completion(args: list[str], output: str | Path, execute: Callable[[list[str]], int]) -> int:
+    print_command([sys.executable, "run.py", *args])
+    if not confirm("Run now", default=True):
+        return 0
+    status = int(execute(args))
+    if status != 0:
+        return status
+    completion_args = completion_args_if_available()
+    if not completion_args:
+        return 0
+    objects_dir = object_masks_dir_for_detect_output(Path(output))
+    print("Running object completion in a fresh process to release detector GPU memory.")
+    status = _run_completion_process(
+        [sys.executable, "run.py", "complete-objects", "--objects", str(objects_dir), *completion_args]
+    )
+    if status == 0:
+        return 0
+    fallback_args = lower_memory_completion_args(completion_args)
+    if fallback_args != completion_args:
+        status = _run_completion_process(
+            [sys.executable, "run.py", "complete-objects", "--objects", str(objects_dir), *fallback_args],
+            banner="Object completion failed; retrying with lower-memory settings.",
+        )
+    return status
+
+
+def _run_completion_process(command: list[str], banner: str | None = None) -> int:
+    print_command(command)
+    if banner:
+        print(banner)
+    env = os.environ.copy()
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    return subprocess.run([str(part) for part in command], cwd=repo_root(), check=False, env=env).returncode
+
+
+def lower_memory_completion_args(args: list[str]) -> list[str]:
+    if "--completion-backend" not in args or "flux-fill" not in args:
+        return args
+    lowered = replace_option_value(args, "--completion-quantization", "4bit")
+    lowered = replace_option_value(lowered, "--completion-canvas-size", "768")
+    lowered = replace_option_value(lowered, "--completion-steps", "16")
+    lowered = replace_option_value(lowered, "--completion-max-objects", "1")
+    return lowered
+
+
+def replace_option_value(args: list[str], option: str, value: str) -> list[str]:
+    if option in args:
+        index = args.index(option)
+        return args[:index + 1] + [value] + args[index + 2 :]
+    return [*args, option, value]
+
+
+def object_masks_dir_for_detect_output(output: Path) -> Path:
+    if output.name == "detect":
+        return output.parent / "objects"
+    return output / "objects"
+
+
 def print_recipes() -> None:
     backend, ram_args = open_vocab_backend_with_ram_fallback()
     detector_backend = "ram-groundingdino-sam3" if backend == "ram-groundingdino-sam3" else "groundingdino-sam3"
@@ -291,7 +357,8 @@ def print_recipes() -> None:
     recipes = [
         [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
         [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
-        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args + completion_args,
+        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
+        [sys.executable, "run.py", "complete-objects", "--objects", "Output/Latest/objects"] + completion_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
         [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args + completion_args,
     ]

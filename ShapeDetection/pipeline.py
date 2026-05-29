@@ -33,6 +33,7 @@ def run_shape_detection(
     completion_canvas_size: int = 1024,
     completion_seed: int = 20260528,
     completion_max_objects: int = 16,
+    completion_quantization: str = "4bit",
 ) -> DetectionReport:
     resolved_image_path = Path(image_path)
     image = load_rgb_image(resolved_image_path)
@@ -118,6 +119,7 @@ def run_shape_detection(
         canvas_size=completion_canvas_size,
         seed=completion_seed,
         max_objects=completion_max_objects,
+        quantization=completion_quantization,
     )
     return report
 
@@ -148,6 +150,7 @@ def run_object_completion(
     canvas_size: int,
     seed: int,
     max_objects: int,
+    quantization: str,
 ) -> None:
     if backend == "none":
         return
@@ -169,6 +172,7 @@ def run_object_completion(
             canvas_size=canvas_size,
             seed=seed,
             max_objects=max_objects,
+            quantization=quantization,
         )
         return
     if backend != "sdxl-inpaint":
