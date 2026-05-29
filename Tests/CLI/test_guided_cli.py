@@ -19,8 +19,7 @@ def run_cli(args: list[str], stdin: str = "") -> subprocess.CompletedProcess[str
 
 
 def test_run_py_no_args_can_show_recipes_without_heavy_imports() -> None:
-    result = run_cli(["run.py"], "6
-")
+    result = run_cli(["run.py"], "9\n")
 
     assert result.returncode == 0
     assert "SceneForge guided mode" in result.stdout
@@ -28,10 +27,7 @@ def test_run_py_no_args_can_show_recipes_without_heavy_imports() -> None:
 
 
 def test_run_py_guided_readiness_can_print_command_without_running() -> None:
-    result = run_cli(["run.py"], "3
-
-n
-")
+    result = run_cli(["run.py"], "4\n\nn\n")
 
     assert result.returncode == 0
     assert "audit-open-vocab-readiness" in result.stdout
@@ -46,8 +42,7 @@ def test_explicit_run_py_command_bypasses_guided_mode() -> None:
 
 
 def test_integration_tool_no_args_enters_guided_default() -> None:
-    result = run_cli(["Tools/Integration/open_vocab_readiness.py"], "n
-")
+    result = run_cli(["Tools/Integration/open_vocab_readiness.py"], "n\n")
 
     assert result.returncode == 0
     assert "Audit DINO/SAM readiness" in result.stdout
@@ -55,9 +50,8 @@ def test_integration_tool_no_args_enters_guided_default() -> None:
 
 
 def test_view_blend_no_args_prints_guided_default_without_running() -> None:
-    result = run_cli(["Tools/Scripts/view_blend.py"], "n
-")
+    result = run_cli(["Tools/Scripts/view_blend.py"], "n\n")
 
     assert result.returncode == 0
     assert "Inspect a SceneForge .blend output" in result.stdout
-    assert "--blend Output/Latest/fitted_scene.blend" in result.stdout
+    assert "fitted_scene.blend" not in result.stdout

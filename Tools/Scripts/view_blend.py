@@ -5,7 +5,12 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def build_blender_view_script(
@@ -418,7 +423,7 @@ if __name__ == "__main__":
             guided_tool_main(
                 Path(__file__),
                 "Inspect a SceneForge .blend output with preview renders.",
-                ["--blend", "Output/Latest/fitted_scene.blend", "--views", "front,iso", "--no-gltf"],
+                ["--blend", "path/to/output.blend", "--views", "front,iso", "--no-gltf"],
                 _run,
             )
         )

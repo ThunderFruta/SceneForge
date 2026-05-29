@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -33,3 +34,10 @@ class SegmentDetection:
             detector_confidence=max(0.0, min(1.0, self.detector_confidence)),
             proposal_source=self.proposal_source,
         )
+
+
+class EdgeProvider(Protocol):
+    backend: str
+
+    def detect_edges(self, image: Any) -> Any:
+        ...

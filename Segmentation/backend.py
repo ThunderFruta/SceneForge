@@ -43,32 +43,3 @@ class SegmentationBackend(Protocol):
     def detect(self, image: Image.Image) -> list[SegmentDetection]:
         raise NotImplementedError
 
-
-@dataclass(frozen=True)
-class LearnedSegmentationModelSpec:
-    """Contract for the post-YOLO learned proposal model.
-
-    The intended replacement detector consumes RGB/depth/camera-derived 3D point
-    features and emits class-agnostic instance masks only. Primitive type
-    selection remains downstream geometry/fusion work, not a detector class
-    decision.
-    """
-
-    architecture: str = "primitive_3d_point_embedding_v1"
-    input_channels: tuple[str, ...] = ("x", "y", "z", "r", "g", "b", "depth", "u", "v", "edge_strength")
-    output_contract: str = "class_agnostic_instance_masks"
-    primitive_label_policy: str = "geometry_fitting_downstream"
-
-    def to_backend_info(self, name: str, model_path: str | None = None) -> SegmentationBackendInfo:
-        return SegmentationBackendInfo(
-            name=name,
-            architecture=self.architecture,
-            input_channels=self.input_channels,
-            primitive_labels_are_authoritative=False,
-            legacy=False,
-            model_path=model_path,
-            proposal_only=True,
-            output_contract=self.output_contract,
-            primitive_label_policy=self.primitive_label_policy,
-            notes="Learned YOLO replacement; detector outputs class-agnostic masks, not primitive labels.",
-        )

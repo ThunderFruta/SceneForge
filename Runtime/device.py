@@ -4,9 +4,9 @@ from __future__ import annotations
 def resolve_torch_device(device: str | None) -> str | None:
     """Resolve a CLI device string to a torch-compatible device.
 
-    This is intentionally backend-neutral. YOLO, edge, mesh, wireframe, and
-    future depth/edge/3D models can all share the same CUDA/CPU selection
-    without making the reconstruction pipeline depend on YOLO naming.
+    This is intentionally backend-neutral so open-vocabulary detectors, object
+    reconstruction backends, and future VGGT/Hunyuan-style stages can share the
+    same CUDA/CPU selection.
     """
     if device is None:
         return None

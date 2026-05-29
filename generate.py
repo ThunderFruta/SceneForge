@@ -34,50 +34,21 @@ def default_options(width: int, height: int) -> dict[str, Any]:
 
 
 def build_reconstruct_command(*, reference_blend: Path, output_dir: Path, options: dict[str, Any]) -> list[str]:
-    command = [
+    return [
         sys.executable,
         "run.py",
-        "reconstruct-scene",
+        "render-blend-png",
         "--reference-blend",
         str(reference_blend),
         "--output",
-        str(output_dir),
-        "--detector-backend",
-        str(options.get("detector_backend", "groundingdino-sam3")),
-        "--edge-backend",
-        str(options.get("edge_backend", "simple")),
-        "--mesh-backend",
-        str(options.get("mesh_backend", "none")),
-        "--wireframe-backend",
-        str(options.get("wireframe_backend", "none")),
+        str(output_dir / "render" / "image.png"),
         "--width",
         str(options.get("width", 640)),
         "--height",
         str(options.get("height", 640)),
-        "--device",
-        str(options.get("device", "auto")),
         "--blender",
         str(options.get("blender", "blender")),
-        "--final-layout",
-        str(options.get("final_layout", "camera")),
-        "--force",
     ]
-    if options.get("open_vocab_root"):
-        command.extend(["--open-vocab-root", str(options["open_vocab_root"])])
-    if options.get("text_prompt_preset"):
-        command.extend(["--text-prompt-preset", str(options["text_prompt_preset"])])
-    optional_flags = (
-        ("detector_model", "--detector-model"),
-        ("detector_weights", "--detector-weights"),
-        ("edge_model_dir", "--edge-model-dir"),
-        ("mesh_model_dir", "--mesh-model-dir"),
-        ("wireframe_model_dir", "--wireframe-model-dir"),
-    )
-    for key, flag in optional_flags:
-        value = options.get(key)
-        if value:
-            command.extend([flag, str(value)])
-    return command
 
 
 def main() -> int:
@@ -89,7 +60,7 @@ def main() -> int:
         output_dir=Path("Output/Latest/generated"),
         options=options,
     )
-    print("SceneForge guided generator")
+    print("SceneForge guided generator: primitive-proxy reconstruction is retired; rendering a preview PNG instead.")
     return run_after_confirmation(command)
 
 

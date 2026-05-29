@@ -4,8 +4,12 @@ This file tracks notable project changes while SceneForge is still small.
 
 ## 2026-05-29
 
+- Removed retired primitive-proxy command stubs and their active CLI tests.
+- Moved the retired primitive-proxy implementation and tests into a local ignored archive, then removed archive paths from Git tracking.
+- Tightened active docs around the SAM3/object/Hunyuan plus empty-room VGGT direction.
 - Added `Docs/empty_room_vggt_background_design.md` to define the OpenAI empty-room inpaint, dual-VGGT background/object geometry, plane extraction, and object-to-plane snapping plan.
 - Added `Docs/plane_detection_design.md` to define the additive geometry-first path for large structural planes, including subtype metadata, optional `plane_detections.json`, future CLI flags, quality policy, and fit-contract compatibility.
+- Added `Docs/vggt_bounding_box_only_design.md` to define a smaller original-image VGGT path that fits per-object bounding boxes without empty-room generation, plane detection, or snapping.
 
 ## 2026-05-27
 
@@ -43,7 +47,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Added duplicate-overlap suppression for real YOLO detections to reduce lower-confidence class duplicates on the same object.
 - Added rendered instance mask output to the Blender dataset generator plus `Tools/Dataset/masks_to_yolo_labels.py` so future training can use visible object silhouettes instead of projected convex hull labels.
 - Generated `Datasets/PrimitiveShapesV2/` with 1000 images and mask-derived labels, then trained `Models/YOLO/sceneforge-primitives-yolo11m-seg-v2.pt`.
-- Added `run.py fit-primitives` to fit detected masks and aligned grayscale synthetic depth maps to rough 3D geometric primitives, writing `primitive_fits.json`, `fit_overlay.png`, and `fitted_scene.blend`.
+- Added the legacy primitive-fitting command to fit detected masks and aligned grayscale synthetic depth maps to rough 3D geometric primitives, writing `primitive_fits.json`, `fit_overlay.png`, and `fitted_scene.blend`.
 - Added `PrimitiveFitting/` with pinhole unprojection, mask point-cloud sampling, simple primitive fitters, geometric-only output, and Blender export.
 - Changed the default fitting and synthetic dataset camera FOV to 70 degrees.
 - Added optional fitted-scene Blender camera shift controls for small 2D framing adjustments.
@@ -58,46 +62,46 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `run.py compare-metrics` to compare original/generated metric view folders and write `Output/Latest/metrics/summary.json`.
 - Changed `fitted_scene.blend` to be the upright ground-style inspection scene; camera-space depth validation now uses a temporary internal `.blend`.
 - For `Output/Latest/fit` runs, moved the single saved `.blend` up to `Output/Latest/fitted_scene.blend` for easier access.
-- Added `fit-primitives --reference-blend` so the final scene can reuse an original `.blend` active camera framing.
-- Started the RGBD detector curriculum path: added stage presets, RGB/depth/RGBA dataset outputs, validation reports, YOLO26l 4-channel configs, RGBD YOLO detection wiring, and a `train-rgbd-yolo` CLI entrypoint.
+- Added the legacy primitive-fitting reference-blend option so the final scene can reuse an original `.blend` active camera framing.
+- Started the RGBD detector curriculum path: added stage presets, RGB/depth/RGBA dataset outputs, validation reports, YOLO26l 4-channel configs, RGBD YOLO detection wiring, and a legacy RGBD YOLO training entrypoint.
 - Updated RGBD curriculum datasets to use 70/20/10 train/val/test splits and a split-first layout such as `train/images`, `train/labels`, `train/depth`, and `train/rgbd`; RGBA training images continue to store normalized depth in alpha.
 - Added per-split `annotations/` preview images that draw YOLO polygons, bounding boxes, and indexed class labels for dataset auditing.
 - Added adaptive dataset generation with `--shards auto`, which starts near an estimated sweet spot and adjusts worker count between disjoint index chunks about every five minutes.
 - Added `--primitive-source none` so detector outputs can keep YOLO labels as weak evidence while leaving final primitive labels unassigned.
 - Added `ObjectEnrichment/`, `EdgeDetection/`, and `MeshReconstruction/` with CPU-safe fake providers, deterministic object evidence packs, an explicit geometry-classifier authority module, geometry scores, edge overlays, and advisory mesh candidate paths.
-- Added `run.py enrich-objects` and fake-provider `run.py reconstruct-scene` orchestration with `Output/Latest/run_status.json` and archive/replace output lifecycle.
-- Added `fit-primitives --enrichment` so primitive fitting uses geometry-selected labels and records detector-label, edge, wireframe, and mesh audit fields in `primitive_fits.json`.
+- Added legacy enrichment and fake-provider scene reconstruction orchestration with `Output/Latest/run_status.json` and archive/replace output lifecycle.
+- Added the legacy primitive-fitting enrichment option so primitive fitting uses geometry-selected labels and records detector-label, edge, wireframe, and mesh audit fields in `primitive_fits.json`.
 - Downloaded local open-source model assets for DexiNed, TripoSR, HAWP, and Depth Anything V3 SMALL under `Models/`.
 - Wired the DexiNed real edge provider through the downloaded OpenCV ONNX model.
 - Wired the TripoSR real mesh provider through the downloaded TripoSR checkpoint plus local DINO dependency, with a CPU marching-cubes fallback for environments where `torchmcubes` cannot build.
-- Added `run.py generate-target-rgbd-dataset` for rendering labeled RGBD training/adaptation data directly from `Assets/Samples/shapes.blend`.
-- Added `run.py eval-rgbd-yolo` for measuring a trained RGBD checkpoint on train/val/test splits, including the held-out `shapes.blend` target eval.
-- Earlier YOLO-mask-to-evidence pipeline contract: `detect-shapes` defaulted to unassigned primitive labels, `reconstruct-scene` used RGBD YOLO masks, real edge/mesh providers were lazy-imported only when selected, and reconstruct runs wrote a compact `metrics/summary.json`. This has since been superseded by the depth+edge default scaffold.
-- Wired HAWP into enrichment through a new `WireframeDetection/` provider boundary. `enrich-objects` and `reconstruct-scene` now support `--wireframe-backend none|hawp`, write per-object `wireframe_crop.png` and `wireframe.json` when enabled, and keep the real HAWP adapter lazy/import-safe.
+- Added the legacy target RGBD dataset generation command for rendering labeled RGBD training/adaptation data directly from `Assets/Samples/shapes.blend`.
+- Added the legacy RGBD YOLO evaluation command for measuring a trained RGBD checkpoint on train/val/test splits, including the held-out `shapes.blend` target eval.
+- Earlier YOLO-mask-to-evidence pipeline contract: `detect-shapes` defaulted to unassigned primitive labels, legacy scene reconstruction used RGBD YOLO masks, real edge/mesh providers were lazy-imported only when selected, and reconstruct runs wrote a compact `metrics/summary.json`. This has since been superseded by the depth+edge default scaffold.
+- Wired HAWP into enrichment through a new `WireframeDetection/` provider boundary. legacy enrichment and scene reconstruction supported `--wireframe-backend none|hawp`, wrote per-object `wireframe_crop.png` and `wireframe.json` when enabled, and keep the real HAWP adapter lazy/import-safe.
 - Added `SceneGeometry/coordinate_contract.py` so source renders, detection reports, enrichment crops, fit reports, exported `.blend` files, and metrics views share a single camera-space contract: horizontal FOV, X right, Y depth away from camera, Z up, and white-close depth. Final fitted `.blend` export now defaults to exact camera-space layout; the older ground inspection layout is opt-in with `--final-layout ground`.
-- Added `run.py render-evidence-overlay` to compose detector masks/boxes, dense edge maps, wireframe JSON lines, and mesh-candidate status markers into one audit image. `reconstruct-scene` writes `enrich/evidence_overlay.png` automatically after enrichment.
-- Cleaned fake provider plumbing out of public runtime commands. At that stage, `reconstruct-scene` required RGBD YOLO detection; it now defaults to depth+edge detection. Edge providers are `none|simple|dexined`, mesh providers are `none|triposr`, and wireframe providers are `none|hawp`. Deterministic fakes now live under `Tests/Fakes/` for tests only.
+- Added the legacy evidence-overlay command to compose detector masks/boxes, dense edge maps, wireframe JSON lines, and mesh-candidate status markers into one audit image. legacy scene reconstruction wrote `enrich/evidence_overlay.png` automatically after enrichment.
+- Cleaned fake provider plumbing out of public runtime commands. At that stage, legacy scene reconstruction required RGBD YOLO detection; it now defaults to depth+edge detection. Edge providers are `none|simple|dexined`, mesh providers are `none|triposr`, and wireframe providers are `none|hawp`. Deterministic fakes now live under `Tests/Fakes/` for tests only.
 
 ## 2026-05-25
 
 - Promoted fused reconstruction to the fitting execution contract: fitting now consumes `fused_state` (YOLO, depth, edge, wireframe, mesh evidence) as the primary primitive label source.
 - Hardened fused report loading to normalize missing modality buckets and per-label score coverage.
-- Updated enrichment/fitting tests and CLI wording so fused evidence is treated as the reconstruction contract input, not geometry/legacy label fallbacks.
+- Updated enrichment/fitting tests and CLI wording so fused evidence is treated as the reconstruction contract input, not geometry fallback label defaults.
 - Added a one-pass primitive depth refiner after initial fitting: it renders camera-space fitted depth, compares source/generated residuals per object, ignores weak/sparse overlap evidence, applies bounded center-depth and size corrections, accepts the refined state only if rendered depth scoring does not regress, then exports the final `.blend` from the accepted primitive state.
 - Expanded fitted-depth diagnostics with foreground IoU plus missing/extra foreground ratios so refinement acceptance accounts for silhouette mismatch, not only depth-value residuals.
 - Added the same foreground IoU and missing/extra foreground ratios to per-object fit quality, with low object IoU marked as `needs_review`.
-- Added `fit-primitives --no-depth-refinement` so direct fitting runs can compare initial-only geometry against the accepted refined state without editing code.
+- Added the legacy primitive-fitting no-depth-refinement option so direct fitting runs can compare initial-only geometry against the accepted refined state without editing code.
 - Added a final `fit_quality_summary` verdict and `quality_gate_passed` flag to `primitive_fits.json` so each run explicitly reports whether the accepted geometry is `good`, `usable_needs_review`, or `needs_review` from depth and foreground metrics.
 - Made `depth_refinement.json` explicit even when refinement is disabled, preventing stale refinement diagnostics from being confused with the current output.
 - Added `Tools/Scripts/check_fit_quality.py` to make `primitive_fits.json` quality gates scriptable after a generated `.blend` run, including a required fitted `.blend` existence check and support for passing either a report path or a run directory.
-- Added `fit-primitives --require-quality-gate` so command-line fitting can fail fast unless the final accepted geometry passes `primitive_fits.json` quality checks.
-- Added `reconstruct-scene --require-quality-gate` so full scene reconstruction can fail before metrics rendering unless the final primitive fit quality gate passes, including resumed runs.
+- Added the legacy primitive-fitting quality-gate option so command-line fitting can exit nonzero unless the final accepted geometry passes `primitive_fits.json` quality checks.
+- Added the legacy scene reconstruction quality-gate option so full scene reconstruction can fail before metrics rendering unless the final primitive fit quality gate passes, including resumed runs.
 - Enabled Ultralytics `retina_masks` for RGB and RGBD YOLO prediction to preserve higher-resolution mask boundaries in detection reports.
-- Added configurable legacy `reconstruct-scene --detector-confidence` and `--detector-overlap-iou-threshold` for RGBD YOLO runs, defaulting reconstruction confidence to `0.20` so rotated/occluded primitives just below the previous `0.25` cutoff could survive into fusion review.
+- Added a legacy scene reconstruction detector-confidence option and `--detector-overlap-iou-threshold` for RGBD YOLO runs, defaulting reconstruction confidence to `0.20` so rotated/occluded primitives just below the previous `0.25` cutoff could survive into fusion review.
 - Added experimental RGBD YOLO input channel weighting in B,G,R,D order; the default remains equal `0.25,0.25,0.25,0.25` because inference-time depth-heavy weighting broke detections for the current equal-channel-trained checkpoint.
-- Added `generate-target-rgbd-dataset --object-rotation-degrees` to render target-blend training samples with deterministic random per-object Euler rotation jitter while preserving exact-first samples.
-- Added `generate-target-rgbd-dataset --random-object-rotation` to use fully random per-object Euler rotations within the configured rotation range instead of jittering around the original pose.
-- Promoted `Models/YOLO/sceneforge-yolo26l-rgbd-target-rot2000.pt` as the default `reconstruct-scene` RGBD detector checkpoint after training on 2000 random-rotation target samples.
+- Added the legacy target RGBD dataset object-rotation option to render target-blend training samples with deterministic random per-object Euler rotation jitter while preserving exact-first samples.
+- Added the legacy target RGBD dataset random-rotation option to use fully random per-object Euler rotations within the configured rotation range instead of jittering around the original pose.
+- Promoted `Models/YOLO/sceneforge-yolo26l-rgbd-target-rot2000.pt` as the default legacy scene reconstruction RGBD detector checkpoint after training on 2000 random-rotation target samples.
 - Preserved fitted primitive rotation in `original-camera` Blender exports by mapping camera-space rotation matrices through the reference camera transform instead of exporting upright world-axis proxies.
 - Added a 2D mask-axis rotation fallback for camera-silhouette cylinder/cone fits so visible image orientation can propagate into the fitted 3D primitive when depth PCA is rejected.
 - Tuned fusion for weak detector labels: high-confidence YOLO still anchors, low-confidence true positives can survive, but clearly stronger depth geometry can override weak detector mislabels such as rotated spheres predicted as cylinders.
@@ -112,21 +116,21 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `generate-plane-context-rgbd-dataset` for balanced foreground primitives with labeled room-like floor/wall `plane` context, plus `Tools/Scripts/train_plane_context_generalization.sh` for fine-tuning after the no-plane detector is stable.
 - Split blend-test detector coverage into foreground object recall and plane recall so large walls/floors do not hide missed foreground objects.
 - Added `--device auto` inference support for YOLO/reconstruction/evidence commands so CUDA is selected when available and CPU is used as fallback; detection reports now record requested and resolved detector devices.
-- Started dismantling YOLO as the primary reconstruction dependency. `detect-shapes`, `reconstruct-scene`, `generate.py`, and `test_blends.py` now default to a depth+edge geometry-first segmentation scaffold; RGB/RGBD YOLO remains available as legacy/debug/training comparison backends.
+- Started dismantling YOLO as the primary reconstruction dependency. `detect-shapes`, legacy scene reconstruction, `generate.py`, and `test_blends.py` now default to a depth+edge geometry-first segmentation scaffold; RGB/RGBD YOLO remains available as debug/training comparison backends.
 - Added `Segmentation/depth_edge_segmenter.py` and a backend-info contract so future trained depth-edge instance models can replace the deterministic scaffold without changing reconstruction orchestration.
 - Added backend-neutral `Runtime/device.py` device resolution so CUDA/CPU selection is no longer owned by the YOLO segmenter.
 - Added `LearnedSegmentationModelSpec`, `Segmentation/learned_depth_edge_segmenter.py`, and `--detector-model` routing so the next detector can be a depth+edge/3D instance-mask model while primitive classification stays in geometry/fusion.
-- Moved YOLO segmenter/training imports behind legacy code paths and added `Tools/Dataset/instance_manifest.py`; dataset generators now write detector-neutral instance-mask manifests before legacy YOLO label conversion.
+- Moved YOLO segmenter/training imports behind non-default code paths and added `Tools/Dataset/instance_manifest.py`; dataset generators now write detector-neutral instance-mask manifests before compatibility YOLO label conversion.
 - Added `Segmentation/factory.py` so `run.py` asks for detector runtimes through a backend-neutral factory instead of directly constructing YOLO or depth-edge segmenters in command handlers.
-- Added `Configs/InstanceDetector/depth_edge_3d_instance.json` and `Tools/Training/instance_detector.py` plus `train-instance-detector` and `eval-instance-detector` scaffold commands that consume `instance_dataset_manifest.json`; RGBD YOLO training remains a legacy comparison path.
-- Added the first Primitive3D segmentation-first detector implementation: `primitive-3d-segmenter` loads a PointNet-style class-agnostic point embedding checkpoint from `--detector-model`, projects clustered 3D point instances back into `detections.json`, and keeps primitive labels downstream. `train-instance-detector` and `eval-instance-detector` now build RGB/depth/camera point-cloud caches, train/evaluate the local PyTorch model, and write `primitive_3d_segmenter.pt`, `training_summary.json`, and `eval_summary.json`.
+- Added `Configs/InstanceDetector/depth_edge_3d_instance.json` and `Tools/Training/instance_detector.py` plus legacy instance detector training and evaluation scaffold commands that consume `instance_dataset_manifest.json`; RGBD YOLO training remains a comparison path.
+- Added the first Primitive3D segmentation-first detector implementation: `primitive-3d-segmenter` loads a PointNet-style class-agnostic point embedding checkpoint from `--detector-model`, projects clustered 3D point instances back into `detections.json`, and keeps primitive labels downstream. legacy instance detector training and evaluation built RGB/depth/camera point-cloud caches, trained/evaluated the local PyTorch model, and wrote `primitive_3d_segmenter.pt`, `training_summary.json`, and `eval_summary.json`.
 - Added `run.py generate-perfect-detections` / `generateperfect` plus `Tools/Scripts/render_perfect_blend_masks.py` to render authoritative visible masks and primitive labels directly from labeled `.blend` geometry for detector debugging.
 
 ## Current State
 
-SceneForge currently has a Python CLI prototype that detects visible object/plane proposals from depth+edge evidence and writes `detections.json` plus `overlay.png`. Detector labels are weak proposal evidence only; `detect-shapes` leaves `primitive_label` unassigned by default, `enrich-objects` writes geometry/fusion-selected primitive labels from mask/depth/edge evidence, then `fit-primitives --enrichment` fits rough geometric 3D proxies and exports a Blender scene.
+SceneForge is shifting to the staged SAM3/GroundingDINO-SAM3 object proposal, object completion, object-mesh reconstruction, and empty-room VGGT background direction. `detect-shapes` writes proposal artifacts such as `detections.json`, `overlay.png`, and object workspaces; `complete-objects` and `reconstruct-objects` continue the object lane with OpenAI/FLUX completion and Hunyuan3D or TripoSR meshes.
 
-The active fallback detector scaffold uses depth and edge; the learned `primitive-3d-segmenter` path uses RGB/depth/camera-derived point features and outputs class-agnostic instance masks. Local YOLO segmentation weights, CLIP, and detector-label primitive assignment are legacy/debug paths, not the default authority for primitive labels. Dataset generation writes `instance_dataset_manifest.json` as the detector-neutral training contract, while YOLO labels remain compatibility artifacts. The code does not download model weights at runtime. Tests use isolated test doubles and do not require external model files.
+The primitive-proxy enrichment/fitting path is retired from public execution. Its old public commands have been removed from the active CLI and should not produce `object_enrichment.json`, `primitive_fits.json`, `fit_overlay.png`, or `fitted_scene.blend` as active deliverables. Reusable implementation ideas are preserved in git history or a local ignored archive while new work targets empty-room VGGT planes, object OBB/contact placement, mesh snapping, and explicit alignment reports.
 
 Use `BEFORE_README.md` for the original project idea, then update these docs when the new direction becomes more concrete.
 

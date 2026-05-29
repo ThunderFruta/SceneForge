@@ -133,25 +133,19 @@ def is_image_path(path: str | Path) -> bool:
     return Path(path).suffix.lower() in IMAGE_SUFFIXES
 
 
-def reconstruct_args_for_blend(blend: str | Path, output: str | Path) -> list[str]:
-    args = [
-        "reconstruct-scene",
+def render_args_for_blend(blend: str | Path, output: str | Path) -> list[str]:
+    output_path = Path(output)
+    if output_path.suffix.lower() != ".png":
+        output_path = output_path / "render" / "image.png"
+    return [
+        "render-blend-png",
         "--reference-blend", str(blend),
-        "--detector-backend", "groundingdino-sam3",
-        "--open-vocab-root", "Models/OpenVocabulary",
-        "--text-prompt-preset", "scene-primitives-v1",
-        "--edge-backend", "simple",
-        "--wireframe-backend", "none",
-        "--mesh-backend", "none",
-        "--output", str(output),
-        "--device", "auto",
+        "--output", str(output_path),
+        "--width", "1280",
+        "--height", "720",
+        "--render-samples", "1024",
+        "--exposure", "auto",
     ]
-    ram_backend, ram_args = open_vocab_backend_with_ram_fallback()
-    args[args.index("--detector-backend") + 1] = ram_backend
-    if ram_backend == "ram-groundingdino-sam3":
-        args = remove_option_with_value(args, "--text-prompt-preset")
-    args.extend(ram_args)
-    return args
 
 
 def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
@@ -186,7 +180,7 @@ def completion_args_if_available() -> list[str]:
         )
         return [
             "--completion-backend", "openai-image",
-            "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-image-2"),
+            "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-5.5"),
             "--completion-guidance-scale", "6.0",
             "--completion-steps", "28",
             "--completion-canvas-size", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_CANVAS_SIZE", "1024"),
@@ -246,11 +240,11 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     default_choice = 1 if likely_open_vocab_ready() else 2
     choices = [
         ("Detect objects from image", "DINO/SAM proposal masks to detections.json and overlay.png"),
-        ("Reconstruct scene from .blend or detect image", "Use .blend for full RGBD reconstruction; use image for RAM/DINO/SAM detection"),
+        ("Detect objects from image", "Use SAM3/GroundingDINO-SAM3 proposals for the new object lane"),
         ("Turn .blend into PNG", "Render the active Blender camera to one PNG without depth or detection"),
         ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
-        ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
+        ("Inspect a .blend file", "Render preview views from a selected Blender file"),
         ("Complete latest object crops", "Run OpenAI or FLUX completion over Output/Latest/objects"),
         ("Reconstruct latest object meshes", "Run Hunyuan3D/TripoSR over Output/Latest/objects crops"),
         ("Show command recipes", "Print common explicit commands and exit"),
@@ -259,11 +253,9 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     if selected == 0:
         image = ask_text("Image path", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
         if is_blend_path(image):
-            print("That path is a .blend file, so guided mode will run reconstruction instead of image detection.")
-            output = ask_text("Output directory", "Output/Latest", required=True)
-            args = reconstruct_args_for_blend(image, output)
-            if Path(output).exists() and confirm(f"Use --force for existing output {output}", default=True):
-                args.append("--force")
+            print("That path is a .blend file. Guided mode will render a PNG preview instead.")
+            output = ask_text("PNG output", "Output/Latest/render/image.png", required=True)
+            args = render_args_for_blend(image, output)
             return _run_scene_args(args, execute)
         if not is_image_path(image):
             print("Image detection needs an image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
@@ -281,10 +273,8 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         if not is_blend_path(source):
             print("Option 2 needs a .blend or image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
-        output = ask_text("Output directory", "Output/Latest", required=True)
-        args = reconstruct_args_for_blend(source, output)
-        if Path(output).exists() and confirm(f"Use --force for existing output {output}", default=True):
-            args.append("--force")
+        output = ask_text("PNG output", "Output/Latest/render/image.png", required=True)
+        args = render_args_for_blend(source, output)
         return _run_scene_args(args, execute)
     if selected == 2:
         blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
@@ -318,7 +308,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         args.extend(ram_args)
         return _run_scene_args(args, execute)
     if selected == 5:
-        blend = ask_text("Blend to inspect", "Output/Latest/fitted_scene.blend", required=True)
+        blend = ask_text("Blend to inspect", "path/to/output.blend", required=True)
         return run_after_confirmation([sys.executable, "Tools/Scripts/view_blend.py", "--blend", blend, "--views", "front,iso", "--no-gltf"])
     if selected == 6:
         objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
@@ -373,7 +363,7 @@ def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
     reconstruction_args = object_reconstruction_args_if_available()
     if not reconstruction_args:
         return 0
-    print("Running object reconstruction over completed object crops.")
+    print("Running object mesh reconstruction over completed object crops.")
     return _run_completion_process(
         [sys.executable, "run.py", "reconstruct-objects", "--objects", str(objects_dir), *reconstruction_args]
     )
@@ -414,9 +404,7 @@ def object_masks_dir_for_detect_output(output: Path) -> Path:
 
 def print_recipes() -> None:
     backend, ram_args = open_vocab_backend_with_ram_fallback()
-    detector_backend = "ram-groundingdino-sam3" if backend == "ram-groundingdino-sam3" else "groundingdino-sam3"
     detect_prompt_args = [] if backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
-    reconstruct_prompt_args = [] if detector_backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
     completion_args = completion_args_if_available()
     reconstruction_args = object_reconstruction_args_if_available()
     recipes = [
@@ -426,7 +414,6 @@ def print_recipes() -> None:
         [sys.executable, "run.py", "complete-objects", "--objects", "Output/Latest/objects"] + completion_args,
         [sys.executable, "run.py", "reconstruct-objects", "--objects", "Output/Latest/objects"] + reconstruction_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
-        [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args + completion_args,
     ]
     for command in recipes:
         print(shell_join(command))

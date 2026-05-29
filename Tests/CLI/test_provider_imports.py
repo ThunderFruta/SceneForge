@@ -12,10 +12,10 @@ def test_run_py_does_not_import_real_provider_modules_on_startup() -> None:
     script = (
         "import sys; "
         "import run; "
-        "assert 'EdgeDetection.dexined_provider' not in sys.modules; "
-        "assert 'MeshReconstruction.triposr_provider' not in sys.modules; "
-        "assert 'WireframeDetection.hawp_provider' not in sys.modules; "
-        "assert 'ObjectEnrichment.geometry_classifier' in sys.modules"
+        "assert 'EdgeDetection' not in sys.modules; "
+        "assert 'MeshReconstruction' not in sys.modules; "
+        "assert 'WireframeDetection' not in sys.modules; "
+        "assert 'ObjectEnrichment' not in sys.modules"
     )
     result = subprocess.run(
         [sys.executable, "-c", script],

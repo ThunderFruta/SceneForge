@@ -131,6 +131,6 @@ def test_groundingdino_sam3_segmenter_refines_boxes_to_masks(tmp_path: Path) -> 
     assert len(detections) == 1
     assert detections[0].detector_label == "box"
     assert detections[0].detector_confidence == 0.95
-    assert detections[0].mask_polygon == [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)]
+    assert detections[0].mask_polygon == [(25.0, 20.0), (75.0, 20.0), (75.0, 60.0), (25.0, 60.0)]
     processor = segmenter.sam3._processor
     assert processor.prompts == [([0.5, 0.5, 0.5, 0.5], True)]

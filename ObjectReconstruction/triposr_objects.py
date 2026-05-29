@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageChops, ImageFilter
 
-from MeshReconstruction.triposr_provider import TripoSRMeshProvider
+from ObjectReconstruction.triposr_provider import TripoSRMeshProvider
 
 
 def run_triposr_object_reconstruction(

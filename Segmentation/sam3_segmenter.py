@@ -159,7 +159,10 @@ class Sam3Segmenter:
 
         model_device = self.device or "cuda"
         with _sam3_cuda_literal_device_patch(model_device):
-            model = build_sam3_image_model(device=model_device)
+            try:
+                model = build_sam3_image_model(device=model_device)
+            except TypeError:
+                model = build_sam3_image_model()
         if self.device:
             try:
                 model.to(self.device)
@@ -178,7 +181,11 @@ def _sam3_cuda_literal_device_patch(device: str):
         yield
         return
 
-    import torch
+    try:
+        import torch
+    except ImportError:
+        yield
+        return
 
     original_zeros = torch.zeros
     original_arange = torch.arange

@@ -6,7 +6,7 @@ Guidance for coding agents working in this repository.
 
 SceneForge is an early-stage computer graphics project for turning 2D images into usable 3D assets and scenes. The current source of truth is `BEFORE_README.md`, which describes the idea, first milestone, and longer-term roadmap.
 
-The repository was reset on 2026-05-24. The old depth-to-mesh prototype was deleted and replaced with a fresh Python CLI prototype for segmenting a 2D image, labeling each detected object with a closest primitive shape, and fitting those detections to rough geometric 3D proxies from synthetic depth.
+The repository was reset on 2026-05-24. The previous depth-to-mesh prototype was deleted and replaced with a fresh Python CLI prototype for segmenting a 2D image, labeling each detected object with a closest primitive shape, and fitting those detections to rough geometric 3D proxies from synthetic depth.
 
 Also read:
 
@@ -16,16 +16,18 @@ Also read:
 
 ## Current Goal
 
-Keep early work focused on the current primitive-detection prototype:
+Keep early work focused on the new staged SceneForge pipeline:
 
-1. Load a 2D image.
-2. Segment visible objects.
-3. Classify each object as a closest primitive approximation: sphere, cylinder, cone, box, plane, or unknown.
-4. Write `detections.json`.
-5. Write `overlay.png`.
-6. For synthetic depth inputs, fit detections to simple geometric 3D primitives and export a Blender scene.
+1. Use SAM3 or GroundingDINO-SAM3 to segment visible foreground objects.
+2. Write proposal artifacts such as `detections.json`, `overlay.png`, and per-object crops/masks.
+3. Remove selected SAM3 masks from the original frame and use OpenAI image editing to create an empty-room image.
+4. Run VGGT on the empty-room image to recover background geometry, structural planes, and room surfaces.
+5. Run VGGT on the original image to estimate object placement/contact geometry.
+6. Use Hunyuan3D or TripoSR for object detail meshes, then snap those meshes to compatible empty-room VGGT planes.
 
-Prefer a visible, practical MVP over perfect reconstruction or large architecture.
+The previous depth-edge/enrichment/primitive-fitting pipeline is retired from public execution. Keep reusable ideas in git history or a local ignored `Archives/` copy, but do not reconnect old calls unless a new plan explicitly says to.
+
+Prefer a visible, practical staged MVP over perfect reconstruction or large architecture.
 
 ## Engineering Preferences
 
@@ -50,23 +52,25 @@ Prefer a visible, practical MVP over perfect reconstruction or large architectur
 
 For the current code, keep the first pass shaped around:
 
-- A small CLI that accepts an image path, local YOLO segmentation weights, a local CLIP model directory, and an output directory.
-- Lazy imports for heavy ML dependencies so fake-backend tests run without model files.
-- Deterministic fake backends for tests.
-- JSON and overlay outputs before any 3D export work.
-- Geometric-only 3D primitive fitting for synthetic depth maps, keeping unknown detections as box proxies.
+- Proposal-only SAM3/GroundingDINO-SAM3 detection that writes JSON, overlays, object crops, and masks.
+- Empty-room input generation from the original image with selected SAM3 masks transparented, blacked out, or neutral-filled.
+- OpenAI image editing for empty-room completion while preserving camera framing and room layout.
+- VGGT background geometry from the empty-room image, then plane extraction from that empty-room VGGT model.
+- Original-image VGGT object placement plus Hunyuan3D/TripoSR object meshes snapped to background planes.
+- Lazy imports for heavy ML dependencies so lightweight tests run without model files.
 
 ## Testing And Verification
 
-Once code exists again, prioritize tests that confirm:
+Prioritize tests that confirm:
 
 - Image loading rejects missing and invalid files.
-- Primitive labels stay fixed for V1.
-- Detection reports serialize deterministically.
-- Fake backend pipeline writes `detections.json` and `overlay.png`.
-- Primitive fitting writes `primitive_fits.json` and `fitted_scene.blend` from fake detections plus synthetic depth.
+- SAM3/open-vocabulary proposal reports serialize deterministically.
+- Proposal-only detection writes `detections.json`, `overlay.png`, and expected object workspaces.
+- Empty-room mask generation combines selected object masks while protecting structural labels.
+- Empty-room VGGT plane reports and object-placement reports use stable camera-space coordinates.
+- Removed primitive-proxy CLI calls stay absent from the active parser/help and do not create outputs.
 - CLI options produce deterministic output for small fixtures.
 
 ## Boundaries
 
-Avoid jumping ahead into RigForge, AvatarForge, or ElasticForge until SceneForge has a usable image-to-object-to-geometric-primitive fitting path.
+Avoid jumping ahead into RigForge, AvatarForge, or ElasticForge until SceneForge has a usable SAM3-to-empty-room-VGGT-to-object-mesh scene path.

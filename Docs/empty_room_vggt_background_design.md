@@ -40,8 +40,11 @@ background and for original-image object placement.
 
    Combine SAM3 masks for movable foreground objects. Protect structural labels
    such as `wall`, `floor`, `ceiling`, `road`, `plane`, `room`, and
-   `background` if they appear. Expand the mask enough to remove object edges,
-   shadows, contact patches, and small occluders.
+   `background` only when label, mask size/location, and geometry cues agree.
+   Expand the mask enough to remove object edges, shadows, contact patches, and
+   small occluders. Proposals marked `mask_quality=rectangular_fallback` or
+   otherwise weak should be excluded by default or force downstream
+   `needs_review` metadata.
 
 3. Prepare the OpenAI empty-room input image.
 
@@ -59,7 +62,9 @@ background and for original-image object placement.
    framing, perspective, lighting, walls, floor, ceiling, trim, windows, doors,
    and material style. The model should fill the transparent/black masked
    regions as empty room surfaces and remove furniture, objects, and foreground
-   clutter naturally.
+   clutter naturally. If the original image is used as reference context, the
+   metadata and acceptance checks must record that removed objects did not
+   reappear.
 
 5. Run VGGT on the empty-room image.
 
@@ -133,19 +138,22 @@ Recommended alignment artifacts:
 - source detections path;
 - source object mask directory;
 - OpenAI model and prompt;
+- whether the original image was supplied as reference context;
 - protected labels;
 - removed detection IDs;
+- mask quality counts and review-required detections;
 - mask coverage ratio;
 - mask expansion settings;
 - OpenAI input image path;
 - output image path;
 - whether masked regions were transparent, black, or neutral;
-- warnings.
+- warnings, including possible object reappearance.
 
 `background/planes.json` should include:
 
 - background VGGT source artifacts;
-- camera/coordinate contract;
+- camera/coordinate contract in SceneForge camera space: X right, Y depth
+  away from camera, Z up;
 - plane IDs;
 - plane subtype such as `floor`, `wall`, `ceiling`, `road`,
   `concrete_floor`, or `plane_unknown`;
@@ -157,9 +165,10 @@ Recommended alignment artifacts:
 - detection ID;
 - SAM3 mask source;
 - point count and valid-point ratio;
-- object OBB center, extents, and rotation;
+- object OBB center, extents, and rotation in SceneForge camera space;
 - contact/footprint estimate;
-- quality and fallback reason.
+- point-source and mask-quality metadata;
+- quality and failure or review reason.
 
 `scene_alignment.json` should include:
 
@@ -169,6 +178,7 @@ Recommended alignment artifacts:
 - post-snap object transform;
 - snap delta;
 - snap confidence;
+- empty-room/original-image VGGT camera and scale reconciliation status;
 - whether the object needs review;
 - reason for failure when no compatible plane is found.
 
@@ -180,12 +190,15 @@ Recommended alignment artifacts:
   blacked out, or neutral-filled, not the untouched original as the main target.
 - Use empty-room VGGT for background geometry and planes.
 - Use original-image VGGT for object placement.
+- Normalize empty-room and original-image VGGT artifacts into SceneForge camera
+  space before comparing or snapping: X right, Y depth away from camera, Z up.
 - Use Hunyuan3D meshes as detail assets aligned to VGGT-derived OBBs.
 - Snap object bases to planes only after the original-image VGGT object pose is
   estimated.
 - Do not let OpenAI-generated pixels directly decide object depth or placement.
-- Flag weak plane fits, weak object VGGT crops, and large snap deltas as
-  `needs_review`.
+- Flag weak plane fits, weak object VGGT crops, rectangular fallback masks,
+  camera/scale disagreement, and large snap deltas as `needs_review`. Do not
+  route failed placement into retired primitive-proxy fallbacks.
 
 ## CLI Shape
 
@@ -202,7 +215,7 @@ python3 run.py reconstruct-background   --image Output/Latest/background/empty_r
 python3 run.py fit-object-placements   --image Output/Latest/render/image.png   --detections Output/Latest/detect/detections.json   --objects Output/Latest/objects   --background-planes Output/Latest/background/planes.json   --geometry-backend vggt   --output Output/Latest/alignment
 ```
 
-A later `reconstruct-scene` mode can orchestrate the same steps behind explicit
+A later scene assembly mode can orchestrate the same steps behind explicit
 flags, but the first implementation should keep artifacts staged and inspectable.
 
 ## Testing Plan
@@ -222,9 +235,12 @@ Integration tests with fakes:
   `empty_room_openai_input.png`, `empty_room_metadata.json`, and placeholder
   `empty_room.png`;
 - fake background VGGT output writes deterministic `planes.json`;
-- fake original-image VGGT output writes deterministic object OBBs;
-- fake Hunyuan meshes align to fake OBBs and record selected support planes;
-- missing compatible support plane keeps the object and marks it `needs_review`.
+- fake original-image VGGT output writes deterministic object OBBs in
+  `objects_vggt/object_geometry.json`;
+- fake Hunyuan meshes align to fake OBBs and record selected support planes in
+  `scene_alignment.json`;
+- missing compatible support plane keeps the object and marks it `needs_review`;
+- rectangular fallback masks propagate review-required placement metadata.
 
 Acceptance checks:
 
@@ -232,7 +248,9 @@ Acceptance checks:
 - planes are derived from empty-room VGGT artifacts;
 - objects are placed from original-image VGGT artifacts;
 - Hunyuan meshes are aligned after object placement, not before;
-- reports make every snap decision inspectable.
+- reports make every snap decision inspectable;
+- camera/scale disagreement between empty-room and original-image VGGT produces
+  weak alignment instead of forced snaps.
 
 ## Open Implementation Notes
 
@@ -242,5 +260,5 @@ Acceptance checks:
   quality because OpenAI inpainting and VGGT geometry are separate stages.
 - If empty-room VGGT and original-image VGGT disagree strongly on camera scale or
   orientation, the run should mark alignment as weak instead of forcing a snap.
-- The previous primitive-fitting path can remain as fallback while this VGGT
-  background/object placement path matures.
+- The active fallback for weak masks, VGGT, or snapping is explicit failure or
+  `needs_review` metadata, not retired primitive-proxy execution.

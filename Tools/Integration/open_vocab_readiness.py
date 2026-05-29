@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from Tools.Integration.open_vocab_import_probe import build_report as build_import_probe_report
 from Tools.Integration.open_vocab_preflight import DEFAULT_TEXT_PROMPT, build_report as build_preflight_report

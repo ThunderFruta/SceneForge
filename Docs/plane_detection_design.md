@@ -4,32 +4,34 @@ This document defines the V1 plane-first path for large structural scene
 surfaces such as walls, floors, ceilings, roads, concrete slabs, and other
 dominant planar regions.
 
-The goal is to add broad surface coverage without changing the current
-SceneForge fitting contract. Plane detection should produce fit-ready plane
-evidence from aligned depth first. Semantic subclass labels are metadata and
-guidance only; primitive fitting still treats these surfaces as
-`primitive_label=plane`.
+The goal is to add broad surface coverage to the empty-room VGGT background
+lane without reviving the retired primitive-proxy fitting path. Plane detection
+should produce placement-ready plane evidence from the empty-room VGGT
+background geometry first. Semantic subclass labels are metadata and guidance
+for snapping object meshes, not a retired proxy contract.
 
 ## Problem
 
 Object proposal detectors are a poor primary source for large structural
 surfaces. A wall, floor, ceiling, or road can span most of the frame, be
 partially occluded by foreground objects, and have weak visual texture. These
-surfaces need a geometry-first pass over the full depth frame instead of only
-object-level proposal masks.
+surfaces need a geometry-first pass over the empty-room VGGT background model
+instead of object-level proposal masks or the object-filled original frame.
 
 SceneForge needs this path to:
 
 - recover large support surfaces that object segmentation may miss;
 - keep foreground object detection independent from structural surface fitting;
-- preserve the existing `detections.json` and `primitive_fits.json` contracts;
+- preserve `detections.json` as the object proposal contract while writing background plane evidence separately;
 - expose quality fields so bad or ambiguous planes are reviewable.
 
 ## Scope
 
-V1 detects connected planar regions from aligned depth geometry across the full
-frame. RGB may refine subclass labels, but RGB must not be required for geometry
-acceptance.
+V1 detects connected planar regions from the empty-room VGGT background
+geometry. The preferred source is the VGGT point cloud or background mesh
+generated from `background/empty_room.png`, after SAM3 foreground masks have
+been removed and inpainted. RGB may refine subclass labels, but RGB must not be
+required for geometry acceptance.
 
 Default plane subtypes:
 
@@ -49,6 +51,8 @@ Out of scope for V1:
 - room layout optimization;
 - multi-view plane merging;
 - replacing object proposal generation;
+- detecting planes directly from raw SAM3 object masks;
+- using the object-filled original-image VGGT pass as the primary plane source;
 - changing SceneForge's camera coordinate contract.
 
 ## Coordinate Contract
@@ -59,34 +63,45 @@ Plane detection uses the existing SceneForge camera-space contract from
 - `X` points image right;
 - `Y` points away from the source camera along depth;
 - `Z` points image up;
-- depth is aligned with RGB and uses the current white-close, black-far depth
-  convention;
-- units match the existing primitive fitting and Blender export path.
+- background VGGT depth/points are aligned with `background/empty_room.png`;
+- depth uses the current white-close, black-far depth convention when exported
+  as an image;
+- units match the SceneForge camera-space contract and future Blender export path.
 
-Plane fit reports must remain compatible with the current primitive fitting
-pipeline. A floor, wall, road, or ceiling is still a plane primitive. The subtype
-is advisory metadata.
+Plane reports must remain in the shared SceneForge camera-space frame so object
+placement, snapping, and export can consume them without routeing through the
+retired proxy pipeline.
 
 ## Pipeline
 
 The proposed sequence is:
 
+0. Receive empty-room VGGT geometry.
+
+   Plane detection starts after the empty-room background lane has produced
+   `background/empty_room.png` and VGGT-derived geometry artifacts such as a
+   point cloud, depth map, camera file, or background mesh. It must not use raw
+   SAM3 masks as plane candidates.
+
 1. Normalize inputs.
 
-   Build a valid-depth mask from the aligned depth image. Optionally add RGB
-   confidence weighting when RGB is available and stable, but do not require RGB
+   Build a valid-geometry mask from the empty-room VGGT point cloud, mesh, or
+   aligned depth image. Optionally add RGB confidence weighting from
+   `background/empty_room.png` when available and stable, but do not require RGB
    for candidate extraction.
 
 2. Extract a point cloud.
 
-   Unproject valid pixels through the current `PinholeCamera` logic so candidate
-   generation and primitive fitting share the same camera-space frame.
+   If the source is a depth map, unproject valid pixels through the shared
+   SceneGeometry camera contract. If the source is already a VGGT point cloud or mesh,
+   normalize it into the same SceneForge camera-space frame so candidate
+   candidate generation and placement share the same coordinates.
 
 3. Generate plane candidates.
 
-   Use iterative RANSAC or depth patch clustering with normal support. Each
-   accepted candidate must record the plane equation, normal, inlier mask,
-   residuals, and support count.
+   Use iterative RANSAC, mesh-face clustering, or point-cloud patch clustering
+   with normal support. Each accepted candidate must record the plane equation,
+   normal, inlier mask or mesh-face set, residuals, and support count.
 
 4. Clean connected regions.
 
@@ -114,10 +129,10 @@ The proposed sequence is:
      low-frequency texture cues;
    - ambiguous cases remain `plane_unknown`.
 
-6. Emit fit-ready plane objects.
+6. Emit placement-ready plane objects.
 
-   Plane candidates should be written as enriched detection candidates with
-   `primitive_label=plane`, optional `plane_subtype`, and quality metadata.
+   Plane candidates should be written to background plane reports with optional
+   `plane_subtype` and quality metadata for object snapping and review.
 
 ## Classification Heuristics
 
@@ -155,7 +170,9 @@ Recommended top-level fields:
 
 - `schema_version`
 - `image_path`
-- `depth_path`
+- `empty_room_image_path`
+- `vggt_depth_path`
+- `vggt_points_path` or `background_mesh_path`
 - `image_width`
 - `image_height`
 - `camera`
@@ -169,7 +186,7 @@ Recommended per-plane fields:
 - `primitive_label`
 - `plane_subtype`
 - `bbox_xyxy`
-- `mask_polygon` or `mask_path`
+- `mask_polygon`, `mask_path`, or `mesh_face_indices`
 - `center_xyz`
 - `normal_xyz`
 - `normal_confidence`
@@ -183,15 +200,17 @@ Recommended per-plane fields:
 - `source`
 - `failure_reason`
 
-`primitive_label` must be `plane` for fit-compatible plane entries. `label` may
-use the subtype or a display-oriented label, but fitting must not depend on it.
+`label` may use the subtype or a display-oriented label, but downstream object
+placement must depend on geometry fields and quality metadata, not semantic
+text alone.
 
 ## CLI Surface
 
 The runtime switch should be additive and off by default until the plane detector
-is implemented and tested.
+is implemented and tested. In the new pipeline, this switch consumes the
+empty-room VGGT background artifacts produced by the background lane.
 
-Proposed flags for `reconstruct-scene` and `fit-primitives`:
+Proposed flags for the future empty-room background geometry command:
 
 - `--detect-planes`
 - `--plane-confidence-threshold`
@@ -206,31 +225,22 @@ Recommended defaults:
   `1024`, whichever is larger;
 - `--plane-subtypes`: `wall,floor,ceiling,road,concrete_floor`.
 
-When disabled, existing behavior is unchanged: `fit-primitives` consumes plane
-entries from `detections.json` if they already exist.
+When disabled, object proposal behavior is unchanged. When enabled, the
+empty-room background lane should write `background/planes.json` beside the
+other background geometry artifacts.
 
-When enabled, `reconstruct-scene` should write `detect/plane_detections.json`
-beside `detect/detections.json`. `fit-primitives` should consume the optional
-plane report in addition to existing detections.
+Do not wire this through the archived primitive-proxy public calls; that
+execution path is retired.
 
-## Fitting Contract
+## Placement Contract
 
-Primitive fitting remains the geometry authority.
+Background VGGT geometry remains the plane authority. Plane subclasses should
+map to explicit placement metadata such as `plane_subtype`, `center_xyz`,
+`normal_xyz`, support extents, quality fields, and snap eligibility.
 
-Plane subclasses map to:
-
-```json
-{
-  "primitive_label": "plane",
-  "fit_quality": {
-    "plane_subtype": "floor"
-  }
-}
-```
-
-The exact metadata location can be refined during implementation, but the
-compatibility rule is fixed: exported primitive geometry and existing consumers
-must still see a plane primitive.
+The exact metadata location can be refined during implementation, but the rule
+is fixed: new plane work must feed object placement and mesh snapping directly,
+not the retired primitive-proxy fit report.
 
 If a plane is low confidence:
 
@@ -270,7 +280,7 @@ Review policy:
   `plane_subtype=plane_unknown`;
 - weak plane geometry should be marked `needs_review` and may be excluded from
   exported placement;
-- no plane detector output should break the legacy plane path.
+- no plane detector output should break object proposal or object mesh stages.
 
 ## Test Plan
 
@@ -291,16 +301,17 @@ Integration tests:
   appearance criteria both support it;
 - noisy-depth and partial-occlusion cases emit deterministic `needs_review` and
   `failure_reason` values;
-- `reconstruct-scene` keeps `detect/detections.json` unchanged when
-  `--detect-planes` is disabled.
+- object proposal output keeps `detect/detections.json` unchanged when
+  plane detection is disabled.
 
 Acceptance tests:
 
-- `fitted_scene.blend` generation is stable with plane detection disabled;
-- enabling plane detection adds plane candidates without breaking object fits;
-- `primitive_fits.json` keeps `primitive_label=plane` while carrying subtype
-  metadata;
-- existing quality-gate commands still operate on the final fit report.
+- enabling plane detection adds `background/planes.json` without changing
+  object proposal reports;
+- plane candidates expose snap targets for object meshes;
+- weak or ambiguous planes are reviewable through `needs_review` and
+  `failure_reason`;
+- no retired primitive-proxy output is required.
 
 ## Implementation Order
 
@@ -309,7 +320,6 @@ Acceptance tests:
 2. Implement point-cloud extraction and candidate plane fitting from depth.
 3. Add mask cleanup and connected-component filtering.
 4. Add subtype tagging and quality fields.
-5. Thread the optional plane report into `reconstruct-scene`.
-6. Let `fit-primitives` consume the optional report and attach subtype metadata
-   to plane fits.
+5. Thread the optional plane report into the empty-room background lane.
+6. Add object-snap consumers that read plane geometry directly.
 7. Add focused unit tests, then integration tests using synthetic assets.

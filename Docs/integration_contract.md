@@ -1,8 +1,11 @@
 # Open Source Integration Contract
 
 SceneForge integrates open-source vision repos as replaceable proposal providers.
-The downstream contract stays stable: detector backends write `detections.json`,
-then enrichment and primitive fitting decide the final geometric labels.
+The downstream contract stays stable: detector backends write `detections.json`
+and object workspaces, then later stages use those proposals for mask-quality
+gating, empty-room mask construction, original-image VGGT object placement, and
+mesh snapping. Detector labels remain weak evidence; they do not decide geometry
+or placement.
 
 ## First target: GroundingDINO + SAM3
 
@@ -111,8 +114,8 @@ command against `Assets/Fixtures/OpenVocabulary/open_vocab_smoke_objects.png`.
 - Keep external imports lazy inside adapter execution paths. `import run` must not import GroundingDINO or SAM3.
 - Convert all outputs to `Segmentation.types.SegmentDetection`.
 - Use `detector_label` and `detector_confidence` as weak semantic evidence only.
-- Preserve `primitive_label_policy=geometry_fitting_downstream` in `model_info`.
-- Prefer rectangular fallback masks over hidden failure if SAM3 box-prompt support changes; this keeps output inspectable while exposing reduced mask quality in the report.
+- Preserve proposal-only semantics in `model_info`, using `primitive_label_policy=placement_geometry_downstream` for the active VGGT placement direction.
+- Prefer explicit reduced-quality masks over hidden failure if SAM3 box-prompt support changes. Rectangular fallback masks must be marked with `mask_quality=rectangular_fallback`; downstream empty-room, VGGT crop, and placement stages should treat them as review-required unless explicitly overridden.
 
 ## Model directory convention
 
@@ -130,22 +133,20 @@ Models/
 The `hf/` directory is a local Hugging Face cache or checkpoint directory. Keep it
 out of git with the rest of model artifacts.
 
-## Primary reconstruction path
+## Primary proposal path
 
-After readiness passes, the preferred full-scene integration path is:
+After readiness passes, the preferred active integration path is proposal detection:
 
 ```bash
-python3 run.py reconstruct-scene \
-  --reference-blend Assets/Samples/shapes.blend \
-  --detector-backend groundingdino-sam3 \
+python3 run.py detect-shapes \
+  --backend groundingdino-sam3 \
+  --image path/to/image.png \
   --open-vocab-root Models/OpenVocabulary \
   --text-prompt-preset scene-primitives-v1 \
-  --edge-backend simple \
-  --wireframe-backend none \
-  --mesh-backend none \
-  --output Output/Latest
+  --output Output/Latest/detect \
+  --device auto
 ```
 
-`--open-vocab-root` expands to the GroundingDINO repo/config/checkpoint and SAM3 repo/cache paths. Reconstruction runs must fail before rendering or output mutation when the readiness audit is not `ready_for_smoke_test`. Detections remain proposal-only: GroundingDINO/SAM3 labels are detector evidence, not primitive-label authority.
+`--open-vocab-root` expands to the GroundingDINO repo/config/checkpoint and SAM3 repo/cache paths. Proposal runs must fail before output mutation when the readiness audit is not `ready_for_smoke_test`. Detections remain proposal-only: GroundingDINO/SAM3 labels are detector evidence, not primitive-label authority.
 
-Open-vocabulary detection writes proposal quality metadata in `detections.json` and `proposal_quality.json`, including object count, rectangle fallback count, duplicate overlap count, tiny/empty masks, labels seen, prompt preset, prompt text, thresholds, SAM mask mode, readiness status, and local source paths.
+Open-vocabulary detection writes proposal quality metadata in `detections.json` and `proposal_quality.json`, including object count, mask quality counts, rectangle fallback count, duplicate overlap count, tiny/empty masks, labels seen, prompt preset, prompt text, thresholds, SAM mask mode, readiness status, and local source paths. Downstream stages must read the mask-quality fields before using a proposal for empty-room removal, VGGT point cropping, or object placement.

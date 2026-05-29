@@ -71,10 +71,11 @@ def test_smoke_test_stops_before_runner_when_not_ready(tmp_path: Path) -> None:
     assert (tmp_path / "smoke.json").is_file()
 
 
-def test_smoke_test_runs_command_when_ready(tmp_path: Path) -> None:
+def test_smoke_test_runs_command_when_ready(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "OpenVocabulary"
     prepare_layout(root)
     fill_fake_repos(root)
+    monkeypatch.setenv("HF_TOKEN", "fake-token")
     captured = {}
 
     def runner(command):

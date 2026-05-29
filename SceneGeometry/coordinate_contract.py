@@ -109,7 +109,7 @@ def crop_coordinate_contract(
         "origin": "crop_top_left_pixel_corner",
         "x": "right",
         "y": "down",
-        "depth_alignment": "crop_pixels_match_rgb_mask_depth_edge_pixels",
+        "depth_alignment": "crop_pixels_match_rgb_mask_pixels",
     }
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
 
-from PrimitiveFitting.masks import polygon_to_mask
+from Segmentation.masks import polygon_to_mask
 from ShapeDetection.report import ObjectShapeDetection
 
 
