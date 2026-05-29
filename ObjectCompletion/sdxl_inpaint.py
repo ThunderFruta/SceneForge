@@ -6,11 +6,12 @@ from typing import Any
 
 import numpy as np
 from PIL import Image, ImageFilter
+from skimage.filters import threshold_otsu
 
 
 DEFAULT_PROMPT_TEMPLATE = (
-    "use the left reference scene for context, complete the marked {label} in the right panel, "
-    "return a single isolated complete {label}, white background, no room, no extra objects"
+    "complete the marked {label} only, remove occluders, preserve perspective and material, "
+    "return the target object only"
 )
 DEFAULT_NEGATIVE_PROMPT = "full room, full scene, furniture set, background scene, text, watermark, duplicate object, extra object, distorted, low quality"
 
@@ -119,8 +120,9 @@ def complete_object_dir(
         strength=float(strength),
         generator=generator,
     ).images[0].convert("RGB")
-    completed_object = result.crop(paste_box).convert("RGBA")
-    completed_object.putalpha(output_alpha)
+    completed_rgb = result.crop(paste_box).convert("RGB")
+    completed_object = completed_rgb.convert("RGBA")
+    completed_object.putalpha(object_only_alpha(completed_rgb, output_alpha))
     completed_object.save(object_dir / "completed_crop.png")
 
     record = {
@@ -162,29 +164,60 @@ def build_inpaint_canvas(
         paste_object_source(canvas, object_rgb, object_alpha, x, y)
         mask = Image.new("L", (canvas_size, canvas_size), 0)
         mask.paste(Image.eval(object_alpha.filter(ImageFilter.MaxFilter(5)), lambda value: 255 - value), (x, y))
-        return canvas, mask, (x, y, x + object_rgb.width, y + object_rgb.height), Image.new("L", object_rgb.size, 255)
+        return canvas, mask, (x, y, x + object_rgb.width, y + object_rgb.height), object_alpha
 
     context = context_crop.convert("RGB")
-    canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
+    object_box = object_box_in_context(metadata, source.size, context_crop.size)
+    canvas, crop_box = fit_context_on_canvas(context, canvas_size)
+    draw_reference_marker(canvas, metadata, context_crop.size, (crop_box[2] - crop_box[0], crop_box[3] - crop_box[1]), offset=crop_box[:2])
+
+    scale_x = (crop_box[2] - crop_box[0]) / max(1, context_crop.width)
+    scale_y = (crop_box[3] - crop_box[1]) / max(1, context_crop.height)
+    object_x0 = crop_box[0] + int(round(object_box[0] * scale_x))
+    object_y0 = crop_box[1] + int(round(object_box[1] * scale_y))
+    object_x1 = crop_box[0] + int(round(object_box[2] * scale_x))
+    object_y1 = crop_box[1] + int(round(object_box[3] * scale_y))
+    paste_box = (
+        max(0, object_x0),
+        max(0, object_y0),
+        min(canvas_size, object_x1),
+        min(canvas_size, object_y1),
+    )
+
     mask = Image.new("L", (canvas_size, canvas_size), 0)
+    mask_region = Image.new("L", (max(1, paste_box[2] - paste_box[0]), max(1, paste_box[3] - paste_box[1])), 255)
+    mask.paste(mask_region, paste_box[:2])
+    source_alpha = source.getchannel("A").resize(mask_region.size, Image.Resampling.LANCZOS)
+    output_alpha = source_alpha.filter(ImageFilter.MaxFilter(31))
+    return canvas, mask, paste_box, output_alpha
 
-    panel_gap = max(16, canvas_size // 40)
-    margin = max(24, canvas_size // 32)
-    panel_width = (canvas_size - 2 * margin - panel_gap) // 2
-    panel_height = canvas_size - 2 * margin
-    left_box = (margin, margin, margin + panel_width, margin + panel_height)
-    right_box = (margin + panel_width + panel_gap, margin, margin + 2 * panel_width + panel_gap, margin + panel_height)
 
-    context_panel = fit_on_white(context, (panel_width, panel_height))
-    draw_reference_marker(context_panel, metadata, context_crop.size, context_panel.size)
-    canvas.paste(context_panel, left_box[:2])
-
-    object_panel, object_alpha = fit_rgba_on_white(source, (panel_width, panel_height))
-    canvas.paste(object_panel, right_box[:2])
-    editable = Image.eval(object_alpha.filter(ImageFilter.MaxFilter(7)), lambda value: 255 - value)
-    mask.paste(editable, right_box[:2])
-    output_alpha = Image.new("L", object_panel.size, 255)
-    return canvas, mask, right_box, output_alpha
+def object_only_alpha(image: Image.Image, seed_alpha: Image.Image) -> Image.Image:
+    seed = seed_alpha.convert("L")
+    if seed.getbbox() is None:
+        return seed
+    array = np.asarray(image.convert("RGB"), dtype=np.int16)
+    border = np.concatenate(
+        [
+            array[0, :, :],
+            array[-1, :, :],
+            array[:, 0, :],
+            array[:, -1, :],
+        ],
+        axis=0,
+    )
+    background = np.median(border, axis=0)
+    distance = np.linalg.norm(array - background.reshape(1, 1, 3), axis=2)
+    try:
+        threshold = max(12.0, float(threshold_otsu(distance)))
+    except ValueError:
+        threshold = 18.0
+    color_alpha = Image.fromarray((distance > threshold).astype(np.uint8) * 255, mode="L")
+    expanded_seed = seed.filter(ImageFilter.MaxFilter(51))
+    combined = Image.composite(Image.new("L", seed.size, 255), Image.new("L", seed.size, 0), expanded_seed)
+    combined = Image.composite(combined, Image.new("L", seed.size, 0), color_alpha.filter(ImageFilter.MaxFilter(9)))
+    combined = Image.composite(Image.new("L", seed.size, 255), combined, seed.filter(ImageFilter.MaxFilter(5)))
+    return combined.filter(ImageFilter.GaussianBlur(1.2))
 
 
 def resize_rgba_crop(image: Image.Image, *, max_size: int) -> tuple[Image.Image, Image.Image]:
@@ -209,6 +242,16 @@ def fit_on_white(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return panel
 
 
+def fit_context_on_canvas(image: Image.Image, canvas_size: int) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    fitted = image.copy().convert("RGB")
+    fitted.thumbnail((canvas_size, canvas_size), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (canvas_size, canvas_size), mean_background_color(fitted))
+    x = (canvas_size - fitted.width) // 2
+    y = (canvas_size - fitted.height) // 2
+    canvas.paste(fitted, (x, y))
+    return canvas, (x, y, x + fitted.width, y + fitted.height)
+
+
 def fit_rgba_on_white(image: Image.Image, size: tuple[int, int]) -> tuple[Image.Image, Image.Image]:
     fitted = image.copy().convert("RGBA")
     fitted.thumbnail(size, Image.Resampling.LANCZOS)
@@ -226,6 +269,7 @@ def draw_reference_marker(
     metadata: dict[str, Any],
     context_size: tuple[int, int],
     panel_size: tuple[int, int],
+    offset: tuple[int, int] = (0, 0),
 ) -> None:
     from PIL import ImageDraw
 
@@ -234,10 +278,10 @@ def draw_reference_marker(
     offset_x = (panel_size[0] - context_size[0] * scale) / 2.0
     offset_y = (panel_size[1] - context_size[1] * scale) / 2.0
     box = (
-        offset_x + object_box[0] * scale,
-        offset_y + object_box[1] * scale,
-        offset_x + object_box[2] * scale,
-        offset_y + object_box[3] * scale,
+        offset[0] + offset_x + object_box[0] * scale,
+        offset[1] + offset_y + object_box[1] * scale,
+        offset[0] + offset_x + object_box[2] * scale,
+        offset[1] + offset_y + object_box[3] * scale,
     )
     draw = ImageDraw.Draw(panel, "RGBA")
     draw.rectangle(box, outline=(255, 38, 0, 255), width=4)

@@ -10,6 +10,7 @@ from ObjectCompletion.sdxl_inpaint import (
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_PROMPT_TEMPLATE,
     build_inpaint_canvas,
+    object_only_alpha,
     read_metadata,
     write_manifest,
 )
@@ -71,13 +72,13 @@ def load_pipeline(model_dir: str | Path, device: str | None):
         local_files_only=True,
     )
     if str(requested_device).startswith("cuda"):
-        pipe.enable_sequential_cpu_offload()
         if hasattr(pipe, "vae"):
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
         if hasattr(pipe, "enable_attention_slicing"):
             pipe.enable_attention_slicing()
-        generator_device = "cpu"
+        pipe = pipe.to(requested_device)
+        generator_device = requested_device
     else:
         pipe = pipe.to("cpu")
         generator_device = "cpu"
@@ -123,8 +124,9 @@ def complete_object_dir(
         generator=generator,
         max_sequence_length=512,
     ).images[0].convert("RGB")
-    completed_object = result.crop(paste_box).convert("RGBA")
-    completed_object.putalpha(output_alpha)
+    completed_rgb = result.crop(paste_box).convert("RGB")
+    completed_object = completed_rgb.convert("RGBA")
+    completed_object.putalpha(object_only_alpha(completed_rgb, output_alpha))
     completed_object.save(object_dir / "completed_crop.png")
 
     record = {
