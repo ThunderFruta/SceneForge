@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import gc
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -178,11 +179,63 @@ def texture_records(
     if not device.startswith("cuda"):
         raise RuntimeError("Hunyuan3D paint is only enabled for CUDA in SceneForge right now.")
     print(f"Running Hunyuan3D paint for {len(ok_records)} reconstructed objects.", flush=True)
-    paint_pipeline = load_paint_pipeline(device=device, resolution=resolution, views=views)
     for index, record in enumerate(ok_records, start=1):
         object_dir = root / Path(record["object_dir"]).name
         print(f"Hunyuan3D paint {index}/{len(ok_records)}: {object_dir.name}", flush=True)
-        texture_object_dir(object_dir, record, paint_pipeline=paint_pipeline, use_remesh=use_remesh)
+        texture_object_dir_in_fresh_process(
+            object_dir,
+            record,
+            device=device,
+            resolution=resolution,
+            views=views,
+            use_remesh=use_remesh,
+        )
+
+
+def texture_object_dir_in_fresh_process(
+    object_dir: Path,
+    record: dict[str, Any],
+    *,
+    device: str,
+    resolution: int,
+    views: int,
+    use_remesh: bool,
+) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "ObjectReconstruction.hunyuan3d_objects",
+        "--texture-one",
+        str(object_dir),
+        "--device",
+        device,
+        "--resolution",
+        str(resolution),
+        "--views",
+        str(views),
+    ]
+    command.append("--use-remesh" if use_remesh else "--no-remesh")
+    env = os.environ.copy()
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    result = subprocess.run(command, cwd=Path.cwd(), env=env, check=False)
+    metadata_path = object_dir / "hunyuan3d_metadata.json"
+    if metadata_path.is_file():
+        try:
+            updated_record = json.loads(metadata_path.read_text(encoding="utf-8"))
+            record.update(updated_record)
+            return
+        except Exception:
+            pass
+    if result.returncode != 0:
+        record.update(
+            {
+                "texture_status": "failed",
+                "texture_reason": f"hunyuan3d_paint_process_failed_exit_{result.returncode}",
+                "textured_mesh": None,
+                "textured_glb": None,
+            }
+        )
+        write_object_metadata(object_dir, record)
 
 
 def load_paint_pipeline(*, device: str, resolution: int, views: int):
@@ -202,12 +255,28 @@ def load_paint_pipeline(*, device: str, resolution: int, views: int):
             "Hunyuan3D paint import failed. It needs the hy3dpaint dependencies and compiled rasterizer/renderer extensions."
         ) from exc
 
+    install_torchvision_functional_tensor_shim()
     config = Hunyuan3DPaintConfig(max_num_view=views, resolution=resolution)
     config.device = device
     config.realesrgan_ckpt_path = str(realesrgan_path)
     config.multiview_cfg_path = str(paint_root / "cfgs" / "hunyuan-paint-pbr.yaml")
     config.custom_pipeline = str(paint_root / "hunyuanpaintpbr")
     return Hunyuan3DPaintPipeline(config)
+
+
+def install_torchvision_functional_tensor_shim() -> None:
+    module_name = "torchvision.transforms.functional_tensor"
+    if module_name in sys.modules:
+        return
+    try:
+        from torchvision.transforms import functional as functional
+    except Exception:
+        return
+    import types
+
+    shim = types.ModuleType(module_name)
+    shim.rgb_to_grayscale = functional.rgb_to_grayscale
+    sys.modules[module_name] = shim
 
 
 def texture_object_dir(
@@ -229,7 +298,7 @@ def texture_object_dir(
             image_path=str(input_path),
             output_mesh_path=str(output_obj),
             use_remesh=use_remesh,
-            save_glb=True,
+            save_glb=False,
         )
         record.update(
             {
@@ -313,3 +382,39 @@ def write_manifest(
         encoding="utf-8",
     )
     return payload
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Internal Hunyuan3D object helpers.")
+    parser.add_argument("--texture-one", type=Path)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--resolution", type=int, default=512)
+    parser.add_argument("--views", type=int, default=6)
+    parser.add_argument("--use-remesh", action="store_true")
+    parser.add_argument("--no-remesh", action="store_true")
+    args = parser.parse_args()
+
+    if args.texture_one is None:
+        parser.error("--texture-one is required for direct module execution")
+    metadata_path = args.texture_one / "hunyuan3d_metadata.json"
+    if metadata_path.is_file():
+        record = json.loads(metadata_path.read_text(encoding="utf-8"))
+    else:
+        record = {"object_dir": str(args.texture_one), "status": "ok"}
+    paint_pipeline = load_paint_pipeline(device=args.device, resolution=args.resolution, views=args.views)
+    texture_object_dir(
+        args.texture_one,
+        record,
+        paint_pipeline=paint_pipeline,
+        use_remesh=not args.no_remesh,
+    )
+    torch = import_torch()
+    del paint_pipeline
+    release_torch_memory(torch, args.device)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
