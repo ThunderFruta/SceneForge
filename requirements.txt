@@ -24,3 +24,4 @@ seaborn
 easydict
 kornia
 OpenEXR
+openai

@@ -182,13 +182,14 @@ def completion_args_if_available() -> list[str]:
     if preferred_backend in {"openai", "openai-image", "gpt-5.5"}:
         max_objects = os.environ.get(
             "SCENEFORGE_OPENAI_COMPLETION_MAX_OBJECTS",
-            os.environ.get("SCENEFORGE_COMPLETION_MAX_OBJECTS", "1"),
+            os.environ.get("SCENEFORGE_COMPLETION_MAX_OBJECTS", "0"),
         )
         return [
             "--completion-backend", "openai-image",
-            "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-5.5"),
+            "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-image-2"),
             "--completion-guidance-scale", "6.0",
             "--completion-steps", "28",
+            "--completion-canvas-size", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_CANVAS_SIZE", "768"),
             "--completion-max-objects", max_objects,
         ]
     if preferred_backend not in {"flux", "flux-fill"}:

@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from PrimitiveFitting.masks import polygon_to_mask
 from ShapeDetection.report import ObjectShapeDetection
@@ -36,6 +36,7 @@ def write_object_masks(
         context_mask = full_mask.crop(context_box)
         context_masked_crop = context_crop.convert("RGBA")
         context_masked_crop.putalpha(context_mask)
+        context_focus_crop = dim_context_outside_mask(context_crop, context_mask)
 
         full_mask.save(object_dir / "full_mask.png")
         rgb_crop.save(object_dir / "rgb_crop.png")
@@ -44,6 +45,7 @@ def write_object_masks(
         context_crop.save(object_dir / "context_crop.png")
         context_mask.save(object_dir / "context_mask.png")
         context_masked_crop.save(object_dir / "context_masked_crop.png")
+        context_focus_crop.save(object_dir / "context_focus_crop.png")
         (object_dir / "metadata.json").write_text(
             json.dumps(
                 {
@@ -78,6 +80,16 @@ def safe_label(value: str) -> str:
     label = re.sub(r"[^a-z0-9]+", "_", value.strip().lower())
     label = label.strip("_")
     return label[:48] or "object"
+
+
+def dim_context_outside_mask(context_crop: Image.Image, context_mask: Image.Image) -> Image.Image:
+    base = context_crop.convert("RGB")
+    mask = context_mask.convert("L").filter(ImageFilter.MaxFilter(25)).filter(ImageFilter.GaussianBlur(4.0))
+    gray = base.convert("L").convert("RGB")
+    dim = Image.blend(gray, Image.new("RGB", base.size, (20, 20, 20)), 0.58)
+    focused = dim.copy()
+    focused.paste(base, (0, 0), mask)
+    return focused
 
 
 def crop_box(detection: ObjectShapeDetection, width: int, height: int) -> tuple[int, int, int, int]:

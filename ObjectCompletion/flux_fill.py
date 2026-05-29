@@ -29,7 +29,7 @@ def run_flux_object_completion(
     strength: float = 1.0,
     canvas_size: int = 1024,
     seed: int = 20260528,
-    max_objects: int = 16,
+    max_objects: int = 0,
     quantization: str = "4bit",
 ) -> dict[str, Any]:
     root = Path(objects_dir)
@@ -68,7 +68,8 @@ def run_flux_object_completion(
                 raise
         current_device = str(generator_device)
         generator = torch.Generator(device=generator_device).manual_seed(int(seed))
-        for index, object_dir in enumerate(object_dirs[:max_objects], start=1):
+        selected_dirs = object_dirs if max_objects <= 0 else object_dirs[:max_objects]
+        for index, object_dir in enumerate(selected_dirs, start=1):
             while True:
                 try:
                     records.append(

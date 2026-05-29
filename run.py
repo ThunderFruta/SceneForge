@@ -145,11 +145,11 @@ def build_parser() -> argparse.ArgumentParser:
     complete.add_argument("--objects", default="Output/Latest/objects")
     add_completion_args(complete)
     complete.set_defaults(
-        completion_backend="flux-fill",
-        completion_model="Models/Completion/FluxFill",
+        completion_backend="openai-image",
+        completion_model="gpt-5.5",
         completion_device="auto",
         completion_steps=28,
-        completion_guidance_scale=30.0,
+        completion_guidance_scale=6.0,
         completion_quantization="4bit",
     )
     complete.set_defaults(func=cmd_complete_objects)
@@ -331,7 +331,7 @@ def add_open_vocabulary_detector_args(parser: argparse.ArgumentParser) -> None:
 
 
 def add_completion_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--completion-backend", choices=("none", "sdxl-inpaint", "flux-fill"), default="none")
+    parser.add_argument("--completion-backend", choices=("none", "sdxl-inpaint", "flux-fill", "openai-image"), default="none")
     parser.add_argument("--completion-model", default="Models/Completion/SDXLInpaint")
     parser.add_argument("--completion-device", default="auto")
     parser.add_argument("--completion-steps", type=int, default=24)
@@ -339,7 +339,7 @@ def add_completion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--completion-strength", type=float, default=0.55)
     parser.add_argument("--completion-canvas-size", type=int, default=1024)
     parser.add_argument("--completion-seed", type=int, default=20260528)
-    parser.add_argument("--completion-max-objects", type=int, default=16)
+    parser.add_argument("--completion-max-objects", type=int, default=0)
     parser.add_argument("--completion-quantization", choices=("none", "8bit", "4bit"), default="4bit")
 
 

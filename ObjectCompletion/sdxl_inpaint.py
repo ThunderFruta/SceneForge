@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from skimage.filters import threshold_otsu
 
 
@@ -26,7 +26,7 @@ def run_sdxl_object_completion(
     strength: float = 0.55,
     canvas_size: int = 1024,
     seed: int = 20260528,
-    max_objects: int = 16,
+    max_objects: int = 0,
 ) -> dict[str, Any]:
     root = Path(objects_dir)
     if not root.is_dir():
@@ -39,7 +39,8 @@ def run_sdxl_object_completion(
     pipe, torch, generator_device = load_pipeline(model_dir, device)
     generator = torch.Generator(device=generator_device).manual_seed(int(seed))
     records: list[dict[str, Any]] = []
-    for index, object_dir in enumerate(object_dirs[:max_objects], start=1):
+    selected_dirs = object_dirs if max_objects <= 0 else object_dirs[:max_objects]
+    for index, object_dir in enumerate(selected_dirs, start=1):
         record = complete_object_dir(
             object_dir,
             pipe=pipe,
@@ -162,49 +163,74 @@ def build_inpaint_canvas(
     canvas_size: int,
 ) -> tuple[Image.Image, Image.Image, tuple[int, int, int, int], Image.Image]:
     source = masked_crop.convert("RGBA")
-    object_rgb, visible_alpha = resize_rgba_crop(source, max_size=int(canvas_size * 0.78))
-    output_alpha = estimate_expected_alpha(visible_alpha, metadata)
-    visible_alpha = ImageChops.darker(visible_alpha, output_alpha)
-    repaint_alpha = repaint_alpha_from_visible(output_alpha, visible_alpha)
     canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
-    x = (canvas_size - object_rgb.width) // 2
-    y = (canvas_size - object_rgb.height) // 2
+    reference_box, target_box = side_by_side_canvas_boxes(canvas_size)
+    object_max_size = min(target_box[2] - target_box[0], target_box[3] - target_box[1])
+    object_rgb, visible_alpha = resize_rgba_crop(source, max_size=object_max_size)
+    output_alpha = Image.new("L", object_rgb.size, 255)
+    repaint_alpha = Image.eval(visible_alpha, lambda value: 255 - value)
+    repaint_alpha = repaint_alpha.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(1.1))
+    draw_side_by_side_labels(canvas, reference_box, target_box)
+    paste_reference_panel(canvas, context_crop, reference_box)
+    x = target_box[0] + ((target_box[2] - target_box[0]) - object_rgb.width) // 2
+    y = target_box[1] + ((target_box[3] - target_box[1]) - object_rgb.height) // 2
     paste_box = (x, y, x + object_rgb.width, y + object_rgb.height)
-    paste_reference_context(canvas, context_crop, max_size=int(canvas_size * 0.24), avoid_box=paste_box)
     paste_object_source(canvas, object_rgb, visible_alpha, x, y)
     mask = Image.new("L", (canvas_size, canvas_size), 0)
     mask.paste(repaint_alpha, (x, y))
     return canvas, mask, paste_box, output_alpha
 
 
-def estimate_expected_alpha(visible_alpha: Image.Image, metadata: dict[str, Any]) -> Image.Image:
-    label = str(metadata.get("detector_label") or metadata.get("primitive_label") or "").lower()
-    alpha = visible_alpha.convert("L")
-    if "vase" in label:
-        return close_alpha(mirror_alpha(alpha), 35)
-    if "chair" in label:
-        return close_alpha(alpha, 51)
-    if "flower" in label:
-        return close_alpha(alpha, 23)
-    return close_alpha(alpha, 35)
+def side_by_side_canvas_boxes(canvas_size: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    margin = max(20, canvas_size // 42)
+    gap = max(18, canvas_size // 45)
+    label_height = max(42, canvas_size // 22)
+    reference_width = int(canvas_size * 0.40)
+    reference_box = (
+        margin,
+        label_height + margin,
+        reference_width - margin,
+        canvas_size - margin,
+    )
+    target_box = (
+        reference_width + gap,
+        label_height + margin,
+        canvas_size - margin,
+        canvas_size - margin,
+    )
+    return reference_box, target_box
 
 
-def mirror_alpha(alpha: Image.Image) -> Image.Image:
-    return ImageChops.lighter(alpha, alpha.transpose(Image.Transpose.FLIP_LEFT_RIGHT))
+def draw_side_by_side_labels(
+    canvas: Image.Image,
+    reference_box: tuple[int, int, int, int],
+    target_box: tuple[int, int, int, int],
+) -> None:
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    for box, label, fill in (
+        (reference_box, "REFERENCE CONTEXT", (55, 55, 55, 255)),
+        (target_box, "TARGET OBJECT - EDIT MASKED GAPS ONLY", (22, 72, 116, 255)),
+    ):
+        label_box = (box[0], 12, box[2], box[1] - 8)
+        draw.rounded_rectangle(label_box, radius=10, fill=fill)
+        draw.text((label_box[0] + 12, label_box[1] + 11), label, fill=(255, 255, 255, 255))
+        draw.rounded_rectangle(box, radius=12, outline=fill, width=3)
 
 
-def close_alpha(alpha: Image.Image, size: int) -> Image.Image:
-    kernel_size = max(3, int(size) | 1)
-    kernel_size = min(kernel_size, 99)
-    closed = alpha.filter(ImageFilter.MaxFilter(kernel_size)).filter(ImageFilter.MinFilter(kernel_size))
-    return ImageChops.lighter(alpha, closed)
-
-
-def repaint_alpha_from_visible(output_alpha: Image.Image, visible_alpha: Image.Image) -> Image.Image:
-    missing = ImageChops.subtract(output_alpha.convert("L"), visible_alpha.convert("L"))
-    if missing.getbbox() is None:
-        return missing
-    return missing.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(1.1))
+def paste_reference_panel(
+    canvas: Image.Image,
+    context_crop: Image.Image | None,
+    panel_box: tuple[int, int, int, int],
+) -> None:
+    if context_crop is None:
+        return
+    reference = context_crop.copy().convert("RGB")
+    panel_width = max(1, panel_box[2] - panel_box[0] - 16)
+    panel_height = max(1, panel_box[3] - panel_box[1] - 16)
+    reference.thumbnail((panel_width, panel_height), Image.Resampling.LANCZOS)
+    x = panel_box[0] + ((panel_box[2] - panel_box[0]) - reference.width) // 2
+    y = panel_box[1] + ((panel_box[3] - panel_box[1]) - reference.height) // 2
+    canvas.paste(reference, (x, y))
 
 
 def paste_reference_context(
@@ -297,17 +323,17 @@ def compose_completed_object(
     final_alpha = output_alpha.convert("L")
     if final_alpha.size != source.size:
         final_alpha = final_alpha.resize(source.size, Image.Resampling.LANCZOS)
-    visible_alpha = ImageChops.darker(source.getchannel("A"), final_alpha)
-    fill_alpha = ImageChops.subtract(final_alpha, visible_alpha)
+    visible_alpha = source.getchannel("A")
+    fill_alpha = Image.eval(visible_alpha, lambda value: 255 - value)
     if generated_fill_is_black(completed_rgb, fill_alpha):
-        source.putalpha(visible_alpha)
-        return clear_transparent_rgb(source), "black_generated_fill_preserved_source"
+        source_rgb = source.convert("RGB")
+        source_rgb.paste(Image.new("RGB", source.size, (245, 245, 240)), (0, 0), fill_alpha)
+        return source_rgb.convert("RGBA"), "black_generated_fill_preserved_source"
     completed_object = completed_rgb.convert("RGBA")
-    completed_object.putalpha(final_alpha)
     source.putalpha(visible_alpha)
     completed_object.paste(source, (0, 0), visible_alpha)
-    completed_object.putalpha(final_alpha)
-    return clear_transparent_rgb(completed_object), None
+    completed_object.putalpha(Image.new("L", completed_object.size, 255))
+    return completed_object, None
 
 
 def clear_transparent_rgb(image: Image.Image) -> Image.Image:

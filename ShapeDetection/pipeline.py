@@ -32,7 +32,7 @@ def run_shape_detection(
     completion_strength: float = 0.55,
     completion_canvas_size: int = 1024,
     completion_seed: int = 20260528,
-    completion_max_objects: int = 16,
+    completion_max_objects: int = 0,
     completion_quantization: str = "4bit",
 ) -> DetectionReport:
     resolved_image_path = Path(image_path)
@@ -173,6 +173,23 @@ def run_object_completion(
             seed=seed,
             max_objects=max_objects,
             quantization=quantization,
+        )
+        return
+    if backend == "openai-image":
+        from ObjectCompletion.openai_image import DEFAULT_OPENAI_IMAGE_MODEL, run_openai_object_completion
+
+        model = str(model_dir or DEFAULT_OPENAI_IMAGE_MODEL)
+        if model in {"", "Models/Completion/SDXLInpaint", "Models/Completion/FluxFill"}:
+            model = DEFAULT_OPENAI_IMAGE_MODEL
+        run_openai_object_completion(
+            objects_dir=objects_dir,
+            model=model,
+            steps=steps,
+            guidance_scale=guidance_scale,
+            strength=strength,
+            canvas_size=canvas_size,
+            seed=seed,
+            max_objects=max_objects,
         )
         return
     if backend != "sdxl-inpaint":
