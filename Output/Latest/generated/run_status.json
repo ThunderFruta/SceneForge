@@ -1,0 +1,47 @@
+{
+  "open_vocab": {
+    "backend": "groundingdino-sam3",
+    "enabled": true,
+    "paths": {
+      "groundingdino_checkpoint": "Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth",
+      "groundingdino_config": "Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+      "groundingdino_repo_dir": "Models/OpenVocabulary/GroundingDINO/repo",
+      "ram_checkpoint": null,
+      "ram_repo_dir": null,
+      "sam3_model_dir": "Models/OpenVocabulary/SAM3/hf",
+      "sam3_repo_dir": "Models/OpenVocabulary/SAM3/repo"
+    },
+    "readiness_status": "ready_for_smoke_test",
+    "ready_for_smoke_test": true,
+    "root_dir": "Models/OpenVocabulary",
+    "sam3_access": {
+      "cache_config_exists": false,
+      "detail": "SAM3 is gated on Hugging Face; authenticate or pre-populate the local cache before smoke tests.",
+      "model_dir": "Models/OpenVocabulary/SAM3/hf",
+      "ready": true,
+      "repo_id": "facebook/sam3",
+      "status": "token_cache_present",
+      "token_cache_present": true,
+      "token_env_names": [
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN"
+      ],
+      "token_env_present": false
+    },
+    "text_prompt": "object . foreground object . chair . table . sofa . bed . lamp . couch . cabinet . plant . flower . flowers . vase . flower pot . person . box . sphere . cylinder . cone .",
+    "text_prompt_preset": "scene-primitives-v1",
+    "text_prompt_refresh_enabled": true,
+    "text_prompt_refresh_path": "Output/Latest/qwen_object_vocab.json",
+    "text_prompt_source": "preset"
+  },
+  "render": {
+    "camera_metadata_path": "Output/Latest/generated/render/camera.json",
+    "depth_path": "Output/Latest/generated/render/depth.png",
+    "fov_degrees": 70.0,
+    "image_path": "Output/Latest/generated/render/image.png"
+  },
+  "schema_version": 1,
+  "stage": "detect",
+  "status": "running",
+  "timestamp_utc": "2026-05-29T01:12:33.257358+00:00"
+}

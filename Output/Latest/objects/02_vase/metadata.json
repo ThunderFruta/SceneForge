@@ -1,0 +1,30 @@
+{
+  "bbox_xyxy": [
+    748.0,
+    171.0,
+    790.0,
+    315.0
+  ],
+  "context_box_xyxy": [
+    724,
+    91,
+    814,
+    395
+  ],
+  "crop_box_xyxy": [
+    748,
+    171,
+    790,
+    315
+  ],
+  "detector_confidence": 0.9707333445549011,
+  "detector_label": "vase",
+  "id": 2,
+  "image_height": 1000,
+  "image_width": 1500,
+  "mask_pixels": 4829,
+  "mask_polygon_points": 7,
+  "primitive_confidence": 0.0,
+  "primitive_label": "unknown",
+  "primitive_label_source": "unassigned"
+}

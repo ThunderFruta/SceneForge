@@ -1,0 +1,15 @@
+{
+  "camera_name": "Camera",
+  "coordinate_contract": "x_right_y_depth_away_z_up_camera_space",
+  "depth_convention": "white_close_black_far",
+  "far_depth": 8.0,
+  "fov_degrees": 63.929416329349614,
+  "image_height": 640,
+  "image_width": 640,
+  "near_depth": 1.0,
+  "schema_version": 1,
+  "sensor_fit": "horizontal",
+  "shift_x": 0.0,
+  "shift_y": 0.0,
+  "timestamp_utc": "2026-05-29T01:12:33.203545+00:00"
+}

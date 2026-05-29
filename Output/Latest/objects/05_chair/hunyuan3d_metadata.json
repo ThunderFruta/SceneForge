@@ -1,0 +1,16 @@
+{
+  "glb": "hunyuan3d_mesh.glb",
+  "hunyuan3d_input": "hunyuan3d_input.png",
+  "hunyuan3d_mask": "hunyuan3d_mask.png",
+  "mesh": "hunyuan3d_mesh.obj",
+  "object_dir": "Output/Latest/objects/05_chair",
+  "order_index": 5,
+  "reason": null,
+  "source": "completed",
+  "source_image": "completed_crop.png",
+  "status": "ok",
+  "texture_reason": null,
+  "texture_status": "ok",
+  "textured_glb": null,
+  "textured_mesh": "hunyuan3d_textured.obj"
+}

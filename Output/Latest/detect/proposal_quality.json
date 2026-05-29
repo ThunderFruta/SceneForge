@@ -1,0 +1,27 @@
+{
+  "duplicate_iou_threshold": 0.75,
+  "duplicate_overlap_count": 0,
+  "empty_mask_count": 0,
+  "filtering": {
+    "filtered_count": 1,
+    "input_count": 7,
+    "max_bbox_area_ratio": 1,
+    "output_count": 6
+  },
+  "image_height": 1000,
+  "image_width": 1500,
+  "labels_seen": [
+    "chair",
+    "flower",
+    "round table",
+    "vase"
+  ],
+  "object_count": 6,
+  "proposal_sources": {
+    "ram_sam3_box_prompt": 6
+  },
+  "rectangle_fallback_count": 0,
+  "schema_version": 1,
+  "tiny_mask_count": 0,
+  "tiny_mask_pixels": 64.0
+}

@@ -1,0 +1,19 @@
+{
+  "backend_model": "gpt-image-2",
+  "canvas_size": 1024,
+  "completed_crop": "completed_crop.png",
+  "context_crop": "context_focus_crop.png",
+  "guidance_scale": 6.0,
+  "model": "gpt-image-2",
+  "negative_prompt": "full room, full scene, furniture set, background scene, text, watermark, duplicate object, extra object, distorted, low quality",
+  "object_dir": "Output/Latest/objects/04_flower",
+  "openai_input": "completion_openai_input.png",
+  "openai_reference": "completion_openai_reference.png",
+  "order_index": 4,
+  "prompt": "Repair the target object crop in image 1. The target object is: flower. Image 2, if present, is only reference context for shape, perspective, materials, and occlusion reasoning. Complete missing or cut-out parts of the target object and remove occluders from the target. Preserve the visible target-object pixels as closely as possible, including camera perspective, lighting, material, scale, and edges. Do not copy the reference background, other furniture, or reference layout into the final crop. For a vase or plant, preserve the thin vertical glass/plant structure and complete only the missing continuation of that object. Do not add a room, full scene, extra furniture, text, watermark, or new objects. Use a plain neutral background. Return one clean square product-style image of the single completed target object.",
+  "seed": 20260528,
+  "source_crop": "masked_crop.png",
+  "status": "complete",
+  "steps": 28,
+  "strength": 0.55
+}

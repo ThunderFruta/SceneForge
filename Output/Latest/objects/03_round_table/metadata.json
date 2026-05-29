@@ -1,0 +1,30 @@
+{
+  "bbox_xyxy": [
+    422.0,
+    225.0,
+    1074.0,
+    803.0
+  ],
+  "context_box_xyxy": [
+    63,
+    0,
+    1433,
+    1000
+  ],
+  "crop_box_xyxy": [
+    422,
+    225,
+    1074,
+    803
+  ],
+  "detector_confidence": 0.9892568588256836,
+  "detector_label": "round table",
+  "id": 3,
+  "image_height": 1000,
+  "image_width": 1500,
+  "mask_pixels": 193190,
+  "mask_polygon_points": 38,
+  "primitive_confidence": 0.0,
+  "primitive_label": "unknown",
+  "primitive_label_source": "unassigned"
+}

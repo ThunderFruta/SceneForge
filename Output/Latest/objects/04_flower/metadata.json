@@ -1,0 +1,30 @@
+{
+  "bbox_xyxy": [
+    698.0,
+    49.0,
+    849.0,
+    272.0
+  ],
+  "context_box_xyxy": [
+    614,
+    0,
+    933,
+    395
+  ],
+  "crop_box_xyxy": [
+    698,
+    49,
+    849,
+    272
+  ],
+  "detector_confidence": 0.9631577730178833,
+  "detector_label": "flower",
+  "id": 4,
+  "image_height": 1000,
+  "image_width": 1500,
+  "mask_pixels": 12007,
+  "mask_polygon_points": 28,
+  "primitive_confidence": 0.0,
+  "primitive_label": "unknown",
+  "primitive_label_source": "unassigned"
+}

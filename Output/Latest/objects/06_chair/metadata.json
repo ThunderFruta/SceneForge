@@ -1,0 +1,30 @@
+{
+  "bbox_xyxy": [
+    893.0,
+    126.0,
+    1285.0,
+    709.0
+  ],
+  "context_box_xyxy": [
+    677,
+    0,
+    1500,
+    1000
+  ],
+  "crop_box_xyxy": [
+    893,
+    126,
+    1285,
+    709
+  ],
+  "detector_confidence": 0.9881266355514526,
+  "detector_label": "chair",
+  "id": 6,
+  "image_height": 1000,
+  "image_width": 1500,
+  "mask_pixels": 84231,
+  "mask_polygon_points": 28,
+  "primitive_confidence": 0.0,
+  "primitive_label": "unknown",
+  "primitive_label_source": "unassigned"
+}

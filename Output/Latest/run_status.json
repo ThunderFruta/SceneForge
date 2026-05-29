@@ -1,0 +1,42 @@
+{
+  "error": "Depth path does not exist or is not a file: Output/Latest/render/depth.png",
+  "open_vocab": {
+    "backend": "ram-groundingdino-sam3",
+    "enabled": true,
+    "paths": {
+      "groundingdino_checkpoint": "Models/OpenVocabulary/GroundingDINO/weights/groundingdino_swint_ogc.pth",
+      "groundingdino_config": "Models/OpenVocabulary/GroundingDINO/repo/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+      "groundingdino_repo_dir": "Models/OpenVocabulary/GroundingDINO/repo",
+      "ram_checkpoint": "Models/RAM/weights/ram_swin_large_14m.pth",
+      "ram_repo_dir": "Models/RAM/repo",
+      "sam3_model_dir": "Models/OpenVocabulary/SAM3/hf",
+      "sam3_repo_dir": "Models/OpenVocabulary/SAM3/repo"
+    },
+    "readiness_status": "ready_for_smoke_test",
+    "ready_for_smoke_test": true,
+    "root_dir": "Models/OpenVocabulary",
+    "sam3_access": {
+      "cache_config_exists": false,
+      "detail": "SAM3 is gated on Hugging Face; authenticate or pre-populate the local cache before smoke tests.",
+      "model_dir": "Models/OpenVocabulary/SAM3/hf",
+      "ready": true,
+      "repo_id": "facebook/sam3",
+      "status": "token_cache_present",
+      "token_cache_present": true,
+      "token_env_names": [
+        "HF_TOKEN",
+        "HUGGINGFACE_HUB_TOKEN"
+      ],
+      "token_env_present": false
+    },
+    "text_prompt": "",
+    "text_prompt_preset": null,
+    "text_prompt_refresh_enabled": false,
+    "text_prompt_refresh_path": "Output/Latest/qwen_object_vocab.json",
+    "text_prompt_source": "ram_tags"
+  },
+  "schema_version": 1,
+  "stage": "failed",
+  "status": "failed",
+  "timestamp_utc": "2026-05-28T21:37:21.522321+00:00"
+}

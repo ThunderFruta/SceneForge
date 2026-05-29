@@ -1,0 +1,17 @@
+{
+  "camera_name": null,
+  "detector_backend": "ram-groundingdino-sam3",
+  "detector_model": null,
+  "detector_weights": null,
+  "edge_backend": "simple",
+  "far_depth": 8.0,
+  "final_layout": "camera",
+  "height": 640,
+  "mesh_backend": "none",
+  "near_depth": 1.0,
+  "reference_blend": "/mnt/Projects/SceneForge/Assets/Samples/roomScene.blend",
+  "schema_version": 1,
+  "seed": 20260525,
+  "width": 640,
+  "wireframe_backend": "none"
+}

@@ -23,3 +23,7 @@ runs/
 *.3ds
 *.c4d
 *.rar
+
+# Track the active latest output snapshot.
+!Output/Latest/
+!Output/Latest/**
