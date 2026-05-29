@@ -215,13 +215,20 @@ def object_reconstruction_args_if_available() -> list[str]:
         print("SceneForge object reconstruction is disabled by SCENEFORGE_OBJECT_RECON_BACKEND.")
         return []
     if preferred_backend == "hunyuan3d":
-        return [
+        args = [
             "--backend", "hunyuan3d",
             "--model", os.environ.get("SCENEFORGE_HUNYUAN3D_MODEL", "tencent/Hunyuan3D-2.1"),
             "--device", os.environ.get("SCENEFORGE_OBJECT_RECON_DEVICE", os.environ.get("SCENEFORGE_HUNYUAN3D_DEVICE", "auto")),
             "--source", os.environ.get("SCENEFORGE_OBJECT_RECON_SOURCE", "completed"),
             "--max-objects", os.environ.get("SCENEFORGE_OBJECT_RECON_MAX_OBJECTS", "0"),
         ]
+        if os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE", "").strip().lower() in {"1", "true", "yes", "on"}:
+            args.extend([
+                "--with-texture",
+                "--texture-resolution", os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE_RESOLUTION", "512"),
+                "--texture-views", os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE_VIEWS", "6"),
+            ])
+        return args
     if preferred_backend != "triposr":
         print(f"Info: SCENEFORGE_OBJECT_RECON_BACKEND={preferred_backend} is ignored; use hunyuan3d or triposr.")
         return []
