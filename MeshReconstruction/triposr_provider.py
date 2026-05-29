@@ -88,7 +88,7 @@ class TripoSRMeshProvider(MeshProvider):
         self._patch_local_dino_download()
         from tsr.system import TSR
 
-        requested_device = self.device or "cuda:0"
+        requested_device = self.device if self.device not in (None, "auto") else ("cuda:0" if torch.cuda.is_available() else "cpu")
         if requested_device.isdigit():
             requested_device = f"cuda:{requested_device}"
         if requested_device.startswith("cuda") and not torch.cuda.is_available():

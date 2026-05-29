@@ -88,6 +88,7 @@ Do not assume any of the old CLI, package metadata, output formats, or module bo
 - `EdgeDetection/`: provide no-op, simple classical, and local-model dense edge providers.
 - `WireframeDetection/`: provide no-op and local HAWP wireframe providers for per-object line/junction evidence.
 - `MeshReconstruction/`: provide no-op and local-model advisory mesh candidate providers.
+- `ObjectReconstruction/`: run object-level 3D reconstruction stages such as completed-crop TripoSR mesh export.
 - `PrimitiveFitting/`: load synthetic depth/enrichment, unproject masked pixels, fit simple geometric 3D primitive proxies, and export Blender scenes.
 - `Runtime/`: backend-neutral runtime helpers such as torch device resolution shared by detector, enrichment, and future 3D model paths.
 - `OutputWriter/`: write stable JSON reports, annotated overlay images, depth previews, and metric comparison summaries.

@@ -218,6 +218,19 @@ Use real providers only when those local adapters and weights exist:
 
 HAWP writes per-object `objects/NN/wireframe_crop.png` overlays and `objects/NN/wireframe.json` line/junction evidence. The real adapter shells out to the local HAWP repo and never downloads weights. Use `--wireframe-backend none` to omit wireframe evidence. Use `--mesh-backend none` to skip mesh candidates.
 
+Run object-level TripoSR reconstruction after detection/completion has written `Output/Latest/objects`:
+
+```bash
+.venv/bin/python run.py reconstruct-objects \
+  --objects Output/Latest/objects \
+  --backend triposr \
+  --model-dir Models/Mesh/TripoSR \
+  --device auto \
+  --source completed
+```
+
+This writes `triposr_mesh.obj` and `triposr_metadata.json` in each processed object folder plus `Output/Latest/objects/triposr_manifest.json`.
+
 Render one combined evidence overlay from an existing detection/enrichment run:
 
 ```bash

@@ -168,8 +168,7 @@ def build_inpaint_canvas(
     object_max_size = min(target_box[2] - target_box[0], target_box[3] - target_box[1])
     object_rgb, visible_alpha = resize_rgba_crop(source, max_size=object_max_size)
     output_alpha = Image.new("L", object_rgb.size, 255)
-    repaint_alpha = Image.eval(visible_alpha, lambda value: 255 - value)
-    repaint_alpha = repaint_alpha.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(1.1))
+    repaint_alpha = repair_alpha_from_visible(visible_alpha)
     draw_side_by_side_labels(canvas, reference_box, target_box)
     paste_reference_panel(canvas, context_crop, reference_box)
     x = target_box[0] + ((target_box[2] - target_box[0]) - object_rgb.width) // 2
@@ -179,6 +178,17 @@ def build_inpaint_canvas(
     mask = Image.new("L", (canvas_size, canvas_size), 0)
     mask.paste(repaint_alpha, (x, y))
     return canvas, mask, paste_box, output_alpha
+
+
+def repair_alpha_from_visible(visible_alpha: Image.Image) -> Image.Image:
+    visible = visible_alpha.convert("L")
+    missing = Image.eval(visible, lambda value: 255 - value)
+    band_size = max(33, min(visible.size) // 4)
+    if band_size % 2 == 0:
+        band_size += 1
+    near_object = visible.filter(ImageFilter.MaxFilter(band_size))
+    repair = ImageChops.multiply(missing, near_object)
+    return repair.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(1.1))
 
 
 def side_by_side_canvas_boxes(canvas_size: int) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
@@ -325,11 +335,13 @@ def compose_completed_object(
         final_alpha = final_alpha.resize(source.size, Image.Resampling.LANCZOS)
     visible_alpha = source.getchannel("A")
     fill_alpha = Image.eval(visible_alpha, lambda value: 255 - value)
+    repair_alpha = repair_alpha_from_visible(visible_alpha)
     if generated_fill_is_black(completed_rgb, fill_alpha):
         source_rgb = source.convert("RGB")
         source_rgb.paste(Image.new("RGB", source.size, (245, 245, 240)), (0, 0), fill_alpha)
         return source_rgb.convert("RGBA"), "black_generated_fill_preserved_source"
-    completed_object = completed_rgb.convert("RGBA")
+    completed_object = Image.new("RGBA", source.size, (245, 245, 240, 255))
+    completed_object.paste(completed_rgb.convert("RGBA"), (0, 0), repair_alpha)
     source.putalpha(visible_alpha)
     completed_object.paste(source, (0, 0), visible_alpha)
     completed_object.putalpha(Image.new("L", completed_object.size, 255))

@@ -154,6 +154,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     complete.set_defaults(func=cmd_complete_objects)
 
+    reconstruct_objects = subparsers.add_parser(
+        "reconstruct-objects",
+        help="Run object-level TripoSR mesh reconstruction over completed or masked object crops.",
+    )
+    reconstruct_objects.add_argument("--objects", default="Output/Latest/objects")
+    reconstruct_objects.add_argument("--backend", choices=("triposr",), default="triposr")
+    reconstruct_objects.add_argument("--model-dir", default="Models/Mesh/TripoSR")
+    reconstruct_objects.add_argument("--device", default="auto")
+    reconstruct_objects.add_argument("--source", choices=("auto", "completed", "masked"), default="completed")
+    reconstruct_objects.add_argument("--max-objects", type=int, default=0)
+    reconstruct_objects.set_defaults(func=cmd_reconstruct_objects)
+
     enrich = subparsers.add_parser("enrich-objects", help="Fuse depth, edge, wireframe, and mesh evidence.")
     enrich.add_argument("--image", required=True)
     enrich.add_argument("--depth", required=True)
@@ -638,6 +650,23 @@ def cmd_complete_objects(args: argparse.Namespace) -> int:
         quantization=args.completion_quantization,
     )
     print(f"Wrote {Path(args.objects) / 'completion_manifest.json'}")
+    return 0
+
+
+def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
+    if args.backend != "triposr":
+        raise CliError(f"Unsupported object reconstruction backend: {args.backend}")
+    model_dir = _require_dir(args.model_dir, "--model-dir")
+    from ObjectReconstruction.triposr_objects import run_triposr_object_reconstruction
+
+    run_triposr_object_reconstruction(
+        objects_dir=Path(args.objects),
+        model_dir=model_dir,
+        device=args.device,
+        source=args.source,
+        max_objects=args.max_objects,
+    )
+    print(f"Wrote {Path(args.objects) / 'triposr_manifest.json'}")
     return 0
 
 

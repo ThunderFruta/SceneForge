@@ -189,7 +189,7 @@ def completion_args_if_available() -> list[str]:
             "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-image-2"),
             "--completion-guidance-scale", "6.0",
             "--completion-steps", "28",
-            "--completion-canvas-size", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_CANVAS_SIZE", "768"),
+            "--completion-canvas-size", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_CANVAS_SIZE", "1024"),
             "--completion-max-objects", max_objects,
         ]
     if preferred_backend not in {"flux", "flux-fill"}:
@@ -208,6 +208,24 @@ def completion_args_if_available() -> list[str]:
     return []
 
 
+def object_reconstruction_args_if_available() -> list[str]:
+    preferred_backend = os.environ.get("SCENEFORGE_OBJECT_RECON_BACKEND", "triposr").strip().lower()
+    disabled_values = {"", "none", "0", "false", "off"}
+    if preferred_backend in disabled_values:
+        print("SceneForge object reconstruction is disabled by SCENEFORGE_OBJECT_RECON_BACKEND.")
+        return []
+    if preferred_backend != "triposr":
+        print(f"Info: SCENEFORGE_OBJECT_RECON_BACKEND={preferred_backend} is ignored; use triposr.")
+        return []
+    return [
+        "--backend", "triposr",
+        "--model-dir", os.environ.get("SCENEFORGE_TRIPOSR_MODEL_DIR", "Models/Mesh/TripoSR"),
+        "--device", os.environ.get("SCENEFORGE_TRIPOSR_DEVICE", "auto"),
+        "--source", os.environ.get("SCENEFORGE_TRIPOSR_SOURCE", "completed"),
+        "--max-objects", os.environ.get("SCENEFORGE_TRIPOSR_MAX_OBJECTS", "0"),
+    ]
+
+
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     root = repo_root()
     default_choice = 1 if likely_open_vocab_ready() else 2
@@ -219,6 +237,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
         ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
         ("Complete latest object crops", "Run OpenAI or FLUX completion over Output/Latest/objects"),
+        ("Reconstruct latest object meshes", "Run TripoSR over Output/Latest/objects crops"),
         ("Show command recipes", "Print common explicit commands and exit"),
     ]
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
@@ -293,6 +312,14 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         if completion_args:
             args.extend(completion_args)
         return _run_scene_args(args, execute)
+    if selected == 7:
+        objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
+        args = [
+            "reconstruct-objects",
+            "--objects", objects,
+            *object_reconstruction_args_if_available(),
+        ]
+        return _run_scene_args(args, execute)
     print_recipes()
     return 0
 
@@ -319,15 +346,22 @@ def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
     status = _run_completion_process(
         [sys.executable, "run.py", "complete-objects", "--objects", str(objects_dir), *completion_args]
     )
-    if status == 0:
+    if status != 0:
+        fallback_args = lower_memory_completion_args(completion_args)
+        if fallback_args != completion_args:
+            status = _run_completion_process(
+                [sys.executable, "run.py", "complete-objects", "--objects", str(objects_dir), *fallback_args],
+                banner="Object completion failed; retrying with lower-memory settings.",
+            )
+    if status != 0:
+        return status
+    reconstruction_args = object_reconstruction_args_if_available()
+    if not reconstruction_args:
         return 0
-    fallback_args = lower_memory_completion_args(completion_args)
-    if fallback_args != completion_args:
-        status = _run_completion_process(
-            [sys.executable, "run.py", "complete-objects", "--objects", str(objects_dir), *fallback_args],
-            banner="Object completion failed; retrying with lower-memory settings.",
-        )
-    return status
+    print("Running TripoSR object reconstruction over completed object crops.")
+    return _run_completion_process(
+        [sys.executable, "run.py", "reconstruct-objects", "--objects", str(objects_dir), *reconstruction_args]
+    )
 
 
 def _run_completion_process(command: list[str], banner: str | None = None) -> int:
@@ -369,11 +403,13 @@ def print_recipes() -> None:
     detect_prompt_args = [] if backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
     reconstruct_prompt_args = [] if detector_backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
     completion_args = completion_args_if_available()
+    reconstruction_args = object_reconstruction_args_if_available()
     recipes = [
         [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
         [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
         [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
         [sys.executable, "run.py", "complete-objects", "--objects", "Output/Latest/objects"] + completion_args,
+        [sys.executable, "run.py", "reconstruct-objects", "--objects", "Output/Latest/objects"] + reconstruction_args,
         [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
         [sys.executable, "run.py", "reconstruct-scene", "--reference-blend", "path/to/file.blend", "--detector-backend", detector_backend, "--open-vocab-root", "Models/OpenVocabulary"] + reconstruct_prompt_args + ["--edge-backend", "simple", "--wireframe-backend", "none", "--mesh-backend", "none", "--output", "Output/Latest", "--device", "auto", "--force"] + ram_args + completion_args,
     ]

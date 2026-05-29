@@ -12,11 +12,8 @@ from PIL import Image
 
 from ObjectCompletion.sdxl_inpaint import (
     DEFAULT_NEGATIVE_PROMPT,
-    build_inpaint_canvas,
-    compose_completed_object,
     load_context_reference,
     read_metadata,
-    save_completion_debug_artifacts,
     write_manifest,
 )
 
@@ -130,18 +127,14 @@ def complete_object_dir(
 
     masked_crop = Image.open(masked_crop_path).convert("RGBA")
     context_crop, context_reference_name = load_context_reference(object_dir)
-    image, mask, paste_box, output_alpha = build_inpaint_canvas(
-        masked_crop=masked_crop,
-        context_crop=context_crop,
-        metadata=metadata,
-        canvas_size=canvas_size,
-    )
-    save_completion_debug_artifacts(object_dir, image, mask, output_alpha, paste_box)
-
+    target_input = render_target_square(masked_crop, canvas_size=canvas_size)
     input_path = object_dir / "completion_openai_input.png"
-    mask_path = object_dir / "completion_openai_mask.png"
-    image.save(input_path)
-    write_openai_mask(mask, mask_path)
+    reference_path = object_dir / "completion_openai_reference.png"
+    target_input.save(input_path)
+    if context_crop is not None:
+        render_reference_square(context_crop, canvas_size=canvas_size).save(reference_path)
+    else:
+        reference_path = None
 
     prompt = build_openai_prompt(label)
     result_image, backend_model, backend_warning = call_openai_image_completion(
@@ -149,16 +142,10 @@ def complete_object_dir(
         model=model,
         prompt=prompt,
         input_path=input_path,
-        mask_path=mask_path,
+        reference_path=reference_path,
         canvas_size=canvas_size,
     )
-    completed_object, warning = compose_completed_object(
-        result=result_image,
-        paste_box=paste_box,
-        output_alpha=output_alpha,
-        source_rgba=masked_crop,
-    )
-    completed_object.save(object_dir / "completed_crop.png")
+    result_image.convert("RGBA").save(object_dir / "completed_crop.png")
 
     record = {
         "object_dir": str(object_dir),
@@ -172,18 +159,15 @@ def complete_object_dir(
         "strength": float(strength),
         "canvas_size": int(canvas_size),
         "seed": int(seed),
-        "paste_box_xyxy": list(paste_box),
         "completed_crop": "completed_crop.png",
         "source_crop": "masked_crop.png",
         "context_crop": context_reference_name,
         "openai_input": input_path.name,
-        "openai_mask": mask_path.name,
+        "openai_reference": reference_path.name if reference_path is not None else None,
         "order_index": index,
     }
     if backend_warning:
         record["backend_warning"] = backend_warning
-    if warning:
-        record["completion_warning"] = warning
     (object_dir / "completion_metadata.json").write_text(
         json.dumps(record, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -195,13 +179,14 @@ def build_openai_prompt(label: str) -> str:
     normalized = label.lower().strip()
     constraints = label_specific_constraints(normalized)
     return (
-        f"Edit only the masked pixels to complete the partially visible {label}. "
-        "Treat any vase, plant, flower, chair, person, shadow object, or foreground obstruction as an occluder unless it is the named target object. "
-        "Remove occluders from the target and infer the hidden target-object surface behind them. "
-        "Preserve every unmasked pixel exactly, including camera perspective, lighting, material, scale, and edges. "
+        f"Repair the target object crop in image 1. The target object is: {label}. "
+        "Image 2, if present, is only reference context for shape, perspective, materials, and occlusion reasoning. "
+        "Complete missing or cut-out parts of the target object and remove occluders from the target. "
+        "Preserve the visible target-object pixels as closely as possible, including camera perspective, lighting, material, scale, and edges. "
+        "Do not copy the reference background, other furniture, or reference layout into the final crop. "
         f"{constraints} "
         "Do not add a room, full scene, extra furniture, text, watermark, or new objects. "
-        "Return a clean product-style square crop of the single completed target object."
+        "Use a plain neutral background. Return one clean square product-style image of the single completed target object."
     )
 
 
@@ -224,9 +209,10 @@ def label_specific_constraints(label: str) -> str:
 
 
 def write_openai_mask(mask: Image.Image, output_path: Path) -> None:
-    alpha = mask.convert("L")
-    mask_rgba = Image.new("RGBA", alpha.size, (255, 255, 255, 0))
-    mask_rgba.putalpha(alpha)
+    edit_alpha = mask.convert("L")
+    keep_alpha = Image.eval(edit_alpha, lambda value: 255 - value)
+    mask_rgba = Image.new("RGBA", keep_alpha.size, (255, 255, 255, 255))
+    mask_rgba.putalpha(keep_alpha)
     mask_rgba.save(output_path)
 
 
@@ -236,7 +222,7 @@ def call_openai_image_completion(
     model: str,
     prompt: str,
     input_path: Path,
-    mask_path: Path,
+    reference_path: Path | None,
     canvas_size: int,
 ) -> tuple[Image.Image, str, str | None]:
     if model.startswith("gpt-image"):
@@ -246,7 +232,7 @@ def call_openai_image_completion(
             model=model,
             prompt=prompt,
             input_path=input_path,
-            mask_path=mask_path,
+            reference_path=reference_path,
             canvas_size=canvas_size,
         ), model, None
 
@@ -257,7 +243,7 @@ def call_openai_image_completion(
             model=model,
             prompt=prompt,
             input_path=input_path,
-            mask_path=mask_path,
+            reference_path=reference_path,
             canvas_size=canvas_size,
         ), model, None
     except Exception as exc:
@@ -271,7 +257,7 @@ def call_openai_image_completion(
                 model=fallback,
                 prompt=prompt,
                 input_path=input_path,
-                mask_path=mask_path,
+                reference_path=reference_path,
                 canvas_size=canvas_size,
             ),
             fallback,
@@ -285,21 +271,24 @@ def call_responses_image_tool(
     model: str,
     prompt: str,
     input_path: Path,
-    mask_path: Path,
+    reference_path: Path | None,
     canvas_size: int,
 ) -> Image.Image:
     image_file_id = create_openai_file(client, input_path)
-    mask_file_id = create_openai_file(client, mask_path)
+    reference_file_id = create_openai_file(client, reference_path) if reference_path is not None else None
     try:
+        content = [
+            {"type": "input_text", "text": prompt},
+            {"type": "input_image", "file_id": image_file_id},
+        ]
+        if reference_file_id is not None:
+            content.append({"type": "input_image", "file_id": reference_file_id})
         response = client.responses.create(
             model=model,
             input=[
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": prompt},
-                        {"type": "input_image", "file_id": image_file_id},
-                    ],
+                    "content": content,
                 }
             ],
             tools=[
@@ -307,14 +296,13 @@ def call_responses_image_tool(
                     "type": "image_generation",
                     "quality": DEFAULT_OPENAI_IMAGE_QUALITY,
                     "size": f"{canvas_size}x{canvas_size}",
-                    "input_image_mask": {"file_id": mask_file_id},
                 }
             ],
             timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
         )
     finally:
         delete_openai_file(client, image_file_id)
-        delete_openai_file(client, mask_file_id)
+        delete_openai_file(client, reference_file_id)
     return decode_image_response(response)
 
 
@@ -324,30 +312,66 @@ def call_image_edit_api(
     model: str,
     prompt: str,
     input_path: Path,
-    mask_path: Path,
+    reference_path: Path | None,
     canvas_size: int,
 ) -> Image.Image:
-    with input_path.open("rb") as image_file, mask_path.open("rb") as mask_file:
+    canvas_size = valid_openai_image_size(canvas_size)
+    with input_path.open("rb") as image_file:
+        image_files = [image_file]
+        reference_file = None
+        if reference_path is not None:
+            reference_file = reference_path.open("rb")
+            image_files.append(reference_file)
         print(
             f"Calling OpenAI Image API edit with {model}, quality={DEFAULT_OPENAI_IMAGE_QUALITY}, timeout {DEFAULT_OPENAI_TIMEOUT_SECONDS:.0f}s.",
             flush=True,
         )
-        result = client.images.edit(
-            model=model,
-            image=image_file,
-            mask=mask_file,
-            prompt=prompt,
-            size=f"{canvas_size}x{canvas_size}",
-            quality=DEFAULT_OPENAI_IMAGE_QUALITY,
-            output_format="png",
-            timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
-        )
+        try:
+            result = client.images.edit(
+                model=model,
+                image=image_files,
+                prompt=prompt,
+                size=f"{canvas_size}x{canvas_size}",
+                quality=DEFAULT_OPENAI_IMAGE_QUALITY,
+                output_format="png",
+                background="opaque",
+                timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
+            )
+        finally:
+            if reference_file is not None:
+                reference_file.close()
     image_base64 = result.data[0].b64_json
     image_bytes = base64.b64decode(image_base64)
     output_path = os.environ.get("SCENEFORGE_OPENAI_LAST_IMAGE")
     if output_path:
         Path(output_path).write_bytes(image_bytes)
     return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+
+def valid_openai_image_size(canvas_size: int) -> int:
+    if int(canvas_size) < 1024:
+        return 1024
+    return int(canvas_size)
+
+
+def render_target_square(masked_crop: Image.Image, *, canvas_size: int) -> Image.Image:
+    source = masked_crop.convert("RGBA")
+    source.thumbnail((int(canvas_size * 0.88), int(canvas_size * 0.88)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
+    x = (canvas_size - source.width) // 2
+    y = (canvas_size - source.height) // 2
+    canvas.paste(source.convert("RGB"), (x, y), source.getchannel("A"))
+    return canvas
+
+
+def render_reference_square(reference_crop: Image.Image, *, canvas_size: int) -> Image.Image:
+    reference = reference_crop.convert("RGB")
+    reference.thumbnail((int(canvas_size * 0.94), int(canvas_size * 0.94)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
+    x = (canvas_size - reference.width) // 2
+    y = (canvas_size - reference.height) // 2
+    canvas.paste(reference, (x, y))
+    return canvas
 
 
 def should_fallback_to_image_edit_api(exc: BaseException) -> bool:
