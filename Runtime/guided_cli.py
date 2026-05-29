@@ -173,14 +173,27 @@ def detect_args_for_image(image: str | Path, output: str | Path) -> list[str]:
 
 
 def completion_args_if_available() -> list[str]:
-    preferred_backend = os.environ.get("SCENEFORGE_COMPLETION_BACKEND", "flux-fill").strip().lower()
+    preferred_backend = os.environ.get("SCENEFORGE_COMPLETION_BACKEND", "openai-image").strip().lower()
     flux_model_dir = repo_root() / "Models" / "Completion" / "FluxFill"
     disabled_values = {"", "none", "0", "false", "off"}
     if preferred_backend in disabled_values:
         print("SceneForge guided completion is disabled by SCENEFORGE_COMPLETION_BACKEND.")
         return []
+    if preferred_backend in {"openai", "openai-image", "gpt-5.5"}:
+        max_objects = os.environ.get(
+            "SCENEFORGE_OPENAI_COMPLETION_MAX_OBJECTS",
+            os.environ.get("SCENEFORGE_COMPLETION_MAX_OBJECTS", "1"),
+        )
+        return [
+            "--completion-backend", "openai-image",
+            "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-5.5"),
+            "--completion-guidance-scale", "6.0",
+            "--completion-steps", "28",
+            "--completion-max-objects", max_objects,
+        ]
     if preferred_backend not in {"flux", "flux-fill"}:
-        print(f"Info: SCENEFORGE_COMPLETION_BACKEND={preferred_backend} is ignored; FLUX is enforced for guided mode.")
+        print(f"Info: SCENEFORGE_COMPLETION_BACKEND={preferred_backend} is ignored; use openai-image or flux-fill.")
+        return []
     if flux_model_dir.is_dir():
         return [
             "--completion-backend", "flux-fill",
@@ -204,7 +217,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
         ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
-        ("Complete latest object crops", "Run FLUX completion over Output/Latest/objects"),
+        ("Complete latest object crops", "Run OpenAI or FLUX completion over Output/Latest/objects"),
         ("Show command recipes", "Print common explicit commands and exit"),
     ]
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)

@@ -12,6 +12,7 @@ from ObjectCompletion.sdxl_inpaint import (
     DEFAULT_PROMPT_TEMPLATE,
     build_inpaint_canvas,
     compose_completed_object,
+    load_context_reference,
     read_metadata,
     save_completion_debug_artifacts,
     write_manifest,
@@ -271,12 +272,11 @@ def complete_object_dir(
     label = str(metadata.get("detector_label") or metadata.get("primitive_label") or "object")
     prompt = DEFAULT_PROMPT_TEMPLATE.format(label=label)
     masked_crop_path = object_dir / "masked_crop.png"
-    context_crop_path = object_dir / "context_crop.png"
     if not masked_crop_path.is_file():
         return {"object_dir": str(object_dir), "status": "skipped", "reason": "missing_masked_crop"}
 
     masked_crop = Image.open(masked_crop_path).convert("RGBA")
-    context_crop = Image.open(context_crop_path).convert("RGB") if context_crop_path.is_file() else None
+    context_crop, context_reference_name = load_context_reference(object_dir)
     image, mask, paste_box, output_alpha = build_inpaint_canvas(
         masked_crop=masked_crop,
         context_crop=context_crop,
@@ -318,7 +318,7 @@ def complete_object_dir(
         "paste_box_xyxy": list(paste_box),
         "completed_crop": "completed_crop.png",
         "source_crop": "masked_crop.png",
-        "context_crop": "context_crop.png" if context_crop_path.is_file() else None,
+        "context_crop": context_reference_name,
         "order_index": index,
     }
     if warning:

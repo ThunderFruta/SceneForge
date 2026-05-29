@@ -97,12 +97,11 @@ def complete_object_dir(
     label = str(metadata.get("detector_label") or metadata.get("primitive_label") or "object")
     prompt = DEFAULT_PROMPT_TEMPLATE.format(label=label)
     masked_crop_path = object_dir / "masked_crop.png"
-    context_crop_path = object_dir / "context_crop.png"
     if not masked_crop_path.is_file():
         return {"object_dir": str(object_dir), "status": "skipped", "reason": "missing_masked_crop"}
 
     masked_crop = Image.open(masked_crop_path).convert("RGBA")
-    context_crop = Image.open(context_crop_path).convert("RGB") if context_crop_path.is_file() else None
+    context_crop, context_reference_name = load_context_reference(object_dir)
     image, mask, paste_box, output_alpha = build_inpaint_canvas(
         masked_crop=masked_crop,
         context_crop=context_crop,
@@ -143,7 +142,7 @@ def complete_object_dir(
         "paste_box_xyxy": list(paste_box),
         "completed_crop": "completed_crop.png",
         "source_crop": "masked_crop.png",
-        "context_crop": "context_crop.png" if context_crop_path.is_file() else None,
+        "context_crop": context_reference_name,
         "order_index": index,
     }
     if warning:
@@ -165,6 +164,7 @@ def build_inpaint_canvas(
     source = masked_crop.convert("RGBA")
     object_rgb, visible_alpha = resize_rgba_crop(source, max_size=int(canvas_size * 0.78))
     output_alpha = estimate_expected_alpha(visible_alpha, metadata)
+    visible_alpha = ImageChops.darker(visible_alpha, output_alpha)
     repaint_alpha = repaint_alpha_from_visible(output_alpha, visible_alpha)
     canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
     x = (canvas_size - object_rgb.width) // 2
@@ -180,8 +180,6 @@ def build_inpaint_canvas(
 def estimate_expected_alpha(visible_alpha: Image.Image, metadata: dict[str, Any]) -> Image.Image:
     label = str(metadata.get("detector_label") or metadata.get("primitive_label") or "").lower()
     alpha = visible_alpha.convert("L")
-    if "table" in label:
-        return estimate_table_alpha(alpha)
     if "vase" in label:
         return close_alpha(mirror_alpha(alpha), 35)
     if "chair" in label:
@@ -189,35 +187,6 @@ def estimate_expected_alpha(visible_alpha: Image.Image, metadata: dict[str, Any]
     if "flower" in label:
         return close_alpha(alpha, 23)
     return close_alpha(alpha, 35)
-
-
-def estimate_table_alpha(alpha: Image.Image) -> Image.Image:
-    bbox = alpha.getbbox()
-    if bbox is None:
-        return alpha
-    x0, y0, x1, y1 = bbox
-    width = max(1, x1 - x0)
-    height = max(1, y1 - y0)
-    prior = Image.new("L", alpha.size, 0)
-    from PIL import ImageDraw
-
-    draw = ImageDraw.Draw(prior)
-    top_bottom = y0 + int(height * 0.48)
-    pedestal_top = y0 + int(height * 0.34)
-    pedestal_half_width = int(width * 0.19)
-    center_x = x0 + width // 2
-    draw.ellipse((x0, y0, x1, top_bottom), fill=255)
-    draw.rounded_rectangle(
-        (
-            center_x - pedestal_half_width,
-            pedestal_top,
-            center_x + pedestal_half_width,
-            y1,
-        ),
-        radius=max(4, pedestal_half_width // 3),
-        fill=255,
-    )
-    return ImageChops.lighter(close_alpha(alpha, 61), prior).filter(ImageFilter.GaussianBlur(0.8))
 
 
 def mirror_alpha(alpha: Image.Image) -> Image.Image:
@@ -265,6 +234,35 @@ def paste_reference_context(
             return
 
 
+def load_context_reference(object_dir: Path) -> tuple[Image.Image | None, str | None]:
+    focus_path = object_dir / "context_focus_crop.png"
+    if focus_path.is_file():
+        return Image.open(focus_path).convert("RGB"), "context_focus_crop.png"
+    context_path = object_dir / "context_crop.png"
+    if not context_path.is_file():
+        return None, None
+    context = Image.open(context_path).convert("RGB")
+    mask_path = object_dir / "context_mask.png"
+    if mask_path.is_file():
+        focused = dim_context_outside_mask(context, Image.open(mask_path).convert("L"))
+        try:
+            focused.save(focus_path)
+        except OSError:
+            pass
+        return focused, "context_focus_crop.png"
+    return context, "context_crop.png"
+
+
+def dim_context_outside_mask(context_crop: Image.Image, context_mask: Image.Image) -> Image.Image:
+    base = context_crop.convert("RGB")
+    mask = context_mask.convert("L").filter(ImageFilter.MaxFilter(25)).filter(ImageFilter.GaussianBlur(4.0))
+    gray = base.convert("L").convert("RGB")
+    dim = Image.blend(gray, Image.new("RGB", base.size, (20, 20, 20)), 0.58)
+    focused = dim.copy()
+    focused.paste(base, (0, 0), mask)
+    return focused
+
+
 def boxes_overlap(
     first: tuple[int, int, int, int],
     second: tuple[int, int, int, int],
@@ -299,14 +297,24 @@ def compose_completed_object(
     final_alpha = output_alpha.convert("L")
     if final_alpha.size != source.size:
         final_alpha = final_alpha.resize(source.size, Image.Resampling.LANCZOS)
-    visible_alpha = source.getchannel("A")
+    visible_alpha = ImageChops.darker(source.getchannel("A"), final_alpha)
     fill_alpha = ImageChops.subtract(final_alpha, visible_alpha)
     if generated_fill_is_black(completed_rgb, fill_alpha):
-        return source, "black_generated_fill_preserved_source"
+        source.putalpha(visible_alpha)
+        return clear_transparent_rgb(source), "black_generated_fill_preserved_source"
     completed_object = completed_rgb.convert("RGBA")
     completed_object.putalpha(final_alpha)
+    source.putalpha(visible_alpha)
     completed_object.paste(source, (0, 0), visible_alpha)
-    return completed_object, None
+    completed_object.putalpha(final_alpha)
+    return clear_transparent_rgb(completed_object), None
+
+
+def clear_transparent_rgb(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    array = np.asarray(rgba, dtype=np.uint8).copy()
+    array[array[:, :, 3] == 0, :3] = 0
+    return Image.fromarray(array, mode="RGBA")
 
 
 def generated_fill_is_black(image: Image.Image, fill_alpha: Image.Image) -> bool:
