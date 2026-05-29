@@ -2,6 +2,11 @@
 
 This file tracks notable project changes while SceneForge is still small.
 
+## 2026-05-29
+
+- Added `Docs/empty_room_vggt_background_design.md` to define the OpenAI empty-room inpaint, dual-VGGT background/object geometry, plane extraction, and object-to-plane snapping plan.
+- Added `Docs/plane_detection_design.md` to define the additive geometry-first path for large structural planes, including subtype metadata, optional `plane_detections.json`, future CLI flags, quality policy, and fit-contract compatibility.
+
 ## 2026-05-27
 
 - Added `ObjectReconstruction/` with `run.py reconstruct-objects`, a direct TripoSR object-crop-to-mesh stage that defaults to `Output/Latest/objects/*/completed_crop.png`, writes `triposr_input.png`, `triposr_mask.png`, `triposr_mesh.obj`, per-object metadata, and `triposr_manifest.json`.

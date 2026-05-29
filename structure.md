@@ -9,6 +9,7 @@ SceneForge has been reset for a fresh implementation direction. This file descri
 - `requirements.txt`: local Python dependencies for image IO, segmentation, CLIP inference, and tests.
 - `run.py`: CLI entrypoint.
 - `AGENTS.md`: instructions for coding agents working in this repository.
+- `Docs/`: design notes and integration contracts for active or near-term pipeline work.
 - `structure.md`: intended repository structure and naming notes.
 - `current_changes.md`: short record of recent project changes.
 - `project_preferences.md`: project conventions and preferences.
@@ -27,6 +28,8 @@ SceneForge/
   current_changes.md
   project_preferences.md
   structure.md
+
+  Docs/
 
   Input/
     Image/
@@ -92,6 +95,7 @@ Do not assume any of the old CLI, package metadata, output formats, or module bo
 - `PrimitiveFitting/`: load synthetic depth/enrichment, unproject masked pixels, fit simple geometric 3D primitive proxies, and export Blender scenes.
 - `Runtime/`: backend-neutral runtime helpers such as torch device resolution shared by detector, enrichment, and future 3D model paths.
 - `OutputWriter/`: write stable JSON reports, annotated overlay images, depth previews, and metric comparison summaries.
+- `Docs/`: preserve design contracts for replaceable proposal providers and near-term geometry features such as plane detection.
 - `Models/InstanceDetector/`: local learned Primitive3D instance-mask detector checkpoints.
 - `Output/Latest/`: ignored active run output.
 - `Output/Archive/`: ignored timestamped run folders only.
