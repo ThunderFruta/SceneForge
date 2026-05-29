@@ -159,11 +159,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run object-level TripoSR mesh reconstruction over completed or masked object crops.",
     )
     reconstruct_objects.add_argument("--objects", default="Output/Latest/objects")
-    reconstruct_objects.add_argument("--backend", choices=("triposr",), default="triposr")
+    reconstruct_objects.add_argument("--backend", choices=("hunyuan3d", "triposr"), default="hunyuan3d")
     reconstruct_objects.add_argument("--model-dir", default="Models/Mesh/TripoSR")
+    reconstruct_objects.add_argument("--model", default="tencent/Hunyuan3D-2.1")
     reconstruct_objects.add_argument("--device", default="auto")
     reconstruct_objects.add_argument("--source", choices=("auto", "completed", "masked"), default="completed")
     reconstruct_objects.add_argument("--max-objects", type=int, default=0)
+    reconstruct_objects.add_argument("--with-texture", action="store_true", help="Run Hunyuan3D paint after shape reconstruction.")
+    reconstruct_objects.add_argument("--texture-resolution", type=int, default=512)
+    reconstruct_objects.add_argument("--texture-views", type=int, default=6)
+    reconstruct_objects.add_argument("--no-texture-remesh", action="store_true")
     reconstruct_objects.set_defaults(func=cmd_reconstruct_objects)
 
     enrich = subparsers.add_parser("enrich-objects", help="Fuse depth, edge, wireframe, and mesh evidence.")
@@ -654,20 +659,36 @@ def cmd_complete_objects(args: argparse.Namespace) -> int:
 
 
 def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
-    if args.backend != "triposr":
-        raise CliError(f"Unsupported object reconstruction backend: {args.backend}")
-    model_dir = _require_dir(args.model_dir, "--model-dir")
-    from ObjectReconstruction.triposr_objects import run_triposr_object_reconstruction
+    if args.backend == "hunyuan3d":
+        from ObjectReconstruction.hunyuan3d_objects import run_hunyuan3d_object_reconstruction
 
-    run_triposr_object_reconstruction(
-        objects_dir=Path(args.objects),
-        model_dir=model_dir,
-        device=args.device,
-        source=args.source,
-        max_objects=args.max_objects,
-    )
-    print(f"Wrote {Path(args.objects) / 'triposr_manifest.json'}")
-    return 0
+        run_hunyuan3d_object_reconstruction(
+            objects_dir=Path(args.objects),
+            model=args.model,
+            device=args.device,
+            source=args.source,
+            max_objects=args.max_objects,
+            with_texture=args.with_texture,
+            texture_resolution=args.texture_resolution,
+            texture_views=args.texture_views,
+            texture_use_remesh=not args.no_texture_remesh,
+        )
+        print(f"Wrote {Path(args.objects) / 'hunyuan3d_manifest.json'}")
+        return 0
+    if args.backend == "triposr":
+        model_dir = _require_dir(args.model_dir, "--model-dir")
+        from ObjectReconstruction.triposr_objects import run_triposr_object_reconstruction
+
+        run_triposr_object_reconstruction(
+            objects_dir=Path(args.objects),
+            model_dir=model_dir,
+            device=args.device,
+            source=args.source,
+            max_objects=args.max_objects,
+        )
+        print(f"Wrote {Path(args.objects) / 'triposr_manifest.json'}")
+        return 0
+    raise CliError(f"Unsupported object reconstruction backend: {args.backend}")
 
 
 def cmd_enrich_objects(args: argparse.Namespace) -> int:

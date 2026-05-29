@@ -95,16 +95,30 @@ class TripoSRMeshProvider(MeshProvider):
             requested_device = "cpu"
 
         local_config_name = self._write_local_config()
-        model = TSR.from_pretrained(
-            str(self.weights_dir),
-            config_name=local_config_name,
-            weight_name="model.ckpt",
-        )
+        model = self._load_tsr_compat(TSR, local_config_name)
         model.renderer.set_chunk_size(4096)
         model.to(requested_device)
         model.eval()
         self._model = model
         self._resolved_device = requested_device
+        return model
+
+    def _load_tsr_compat(self, tsr_cls, config_name: str):
+        import torch
+        from omegaconf import OmegaConf
+
+        config_path = self.weights_dir / config_name
+        weight_path = self.weights_dir / "model.ckpt"
+        cfg = OmegaConf.load(config_path)
+        OmegaConf.resolve(cfg)
+        model = tsr_cls(cfg)
+        checkpoint = torch.load(weight_path, map_location="cpu")
+        try:
+            model.load_state_dict(checkpoint)
+        except RuntimeError as exc:
+            if "image_tokenizer.model.layers" not in str(exc) or "image_tokenizer.model.encoder.layer" not in str(exc):
+                raise
+            model.load_state_dict(remap_legacy_vit_keys(checkpoint))
         return model
 
     def reconstruct(self, rgb_crop_path: Path, mask_path: Path, output_path: Path) -> MeshResult:
@@ -210,3 +224,23 @@ class TripoSRMeshProvider(MeshProvider):
         if not target.is_file() or target.read_text(encoding="utf-8") != text:
             target.write_text(text, encoding="utf-8")
         return target.name
+
+
+def remap_legacy_vit_keys(checkpoint):
+    remapped = {}
+    replacements = (
+        (".encoder.layer.", ".layers."),
+        (".attention.attention.query.", ".attention.q_proj."),
+        (".attention.attention.key.", ".attention.k_proj."),
+        (".attention.attention.value.", ".attention.v_proj."),
+        (".attention.output.dense.", ".attention.o_proj."),
+        (".intermediate.dense.", ".mlp.fc1."),
+        (".output.dense.", ".mlp.fc2."),
+    )
+    for key, value in checkpoint.items():
+        new_key = key
+        if key.startswith("image_tokenizer.model.encoder.layer."):
+            for old, new in replacements:
+                new_key = new_key.replace(old, new)
+        remapped[new_key] = value
+    return remapped

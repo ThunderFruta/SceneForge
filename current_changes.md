@@ -5,6 +5,7 @@ This file tracks notable project changes while SceneForge is still small.
 ## 2026-05-27
 
 - Added `ObjectReconstruction/` with `run.py reconstruct-objects`, a direct TripoSR object-crop-to-mesh stage that defaults to `Output/Latest/objects/*/completed_crop.png`, writes `triposr_input.png`, `triposr_mask.png`, `triposr_mesh.obj`, per-object metadata, and `triposr_manifest.json`.
+- Switched default object reconstruction to GPU-backed Hunyuan3D with TripoSR retained as a fallback backend. Hunyuan3D consumes completed object crops and writes `hunyuan3d_mesh.obj`, `hunyuan3d_mesh.glb`, per-object metadata, and `hunyuan3d_manifest.json`.
 - Added the first open-source integration scaffold for local GroundingDINO and SAM3 repos as proposal-only segmentation backends.
 - Added `sam3` and `groundingdino-sam3` detector backends with lazy imports, local repo/checkpoint path flags, text prompts, and backend metadata that keeps primitive labels downstream.
 - Added `Docs/integration_contract.md` to pin the adapter contract, model directory convention, and no-runtime-download rule for open-source integrations.

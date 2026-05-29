@@ -209,20 +209,28 @@ def completion_args_if_available() -> list[str]:
 
 
 def object_reconstruction_args_if_available() -> list[str]:
-    preferred_backend = os.environ.get("SCENEFORGE_OBJECT_RECON_BACKEND", "triposr").strip().lower()
+    preferred_backend = os.environ.get("SCENEFORGE_OBJECT_RECON_BACKEND", "hunyuan3d").strip().lower()
     disabled_values = {"", "none", "0", "false", "off"}
     if preferred_backend in disabled_values:
         print("SceneForge object reconstruction is disabled by SCENEFORGE_OBJECT_RECON_BACKEND.")
         return []
+    if preferred_backend == "hunyuan3d":
+        return [
+            "--backend", "hunyuan3d",
+            "--model", os.environ.get("SCENEFORGE_HUNYUAN3D_MODEL", "tencent/Hunyuan3D-2.1"),
+            "--device", os.environ.get("SCENEFORGE_OBJECT_RECON_DEVICE", os.environ.get("SCENEFORGE_HUNYUAN3D_DEVICE", "auto")),
+            "--source", os.environ.get("SCENEFORGE_OBJECT_RECON_SOURCE", "completed"),
+            "--max-objects", os.environ.get("SCENEFORGE_OBJECT_RECON_MAX_OBJECTS", "0"),
+        ]
     if preferred_backend != "triposr":
-        print(f"Info: SCENEFORGE_OBJECT_RECON_BACKEND={preferred_backend} is ignored; use triposr.")
+        print(f"Info: SCENEFORGE_OBJECT_RECON_BACKEND={preferred_backend} is ignored; use hunyuan3d or triposr.")
         return []
     return [
         "--backend", "triposr",
         "--model-dir", os.environ.get("SCENEFORGE_TRIPOSR_MODEL_DIR", "Models/Mesh/TripoSR"),
-        "--device", os.environ.get("SCENEFORGE_TRIPOSR_DEVICE", "auto"),
-        "--source", os.environ.get("SCENEFORGE_TRIPOSR_SOURCE", "completed"),
-        "--max-objects", os.environ.get("SCENEFORGE_TRIPOSR_MAX_OBJECTS", "0"),
+        "--device", os.environ.get("SCENEFORGE_OBJECT_RECON_DEVICE", os.environ.get("SCENEFORGE_TRIPOSR_DEVICE", "auto")),
+        "--source", os.environ.get("SCENEFORGE_OBJECT_RECON_SOURCE", os.environ.get("SCENEFORGE_TRIPOSR_SOURCE", "completed")),
+        "--max-objects", os.environ.get("SCENEFORGE_OBJECT_RECON_MAX_OBJECTS", os.environ.get("SCENEFORGE_TRIPOSR_MAX_OBJECTS", "0")),
     ]
 
 
@@ -237,7 +245,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
         ("Inspect latest outputs", "Render preview views from Output/Latest/fitted_scene.blend"),
         ("Complete latest object crops", "Run OpenAI or FLUX completion over Output/Latest/objects"),
-        ("Reconstruct latest object meshes", "Run TripoSR over Output/Latest/objects crops"),
+        ("Reconstruct latest object meshes", "Run Hunyuan3D/TripoSR over Output/Latest/objects crops"),
         ("Show command recipes", "Print common explicit commands and exit"),
     ]
     selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
@@ -358,7 +366,7 @@ def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
     reconstruction_args = object_reconstruction_args_if_available()
     if not reconstruction_args:
         return 0
-    print("Running TripoSR object reconstruction over completed object crops.")
+    print("Running object reconstruction over completed object crops.")
     return _run_completion_process(
         [sys.executable, "run.py", "reconstruct-objects", "--objects", str(objects_dir), *reconstruction_args]
     )
