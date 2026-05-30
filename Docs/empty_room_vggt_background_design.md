@@ -1,105 +1,96 @@
-# Empty Room VGGT Background Design
+# Empty Room VGGT Mesh Design
 
-This document defines the planned empty-room background lane for the new
-SceneForge pipeline.
+This document defines the narrow V1 background lane for SceneForge: produce a
+good empty-room image and an inspectable VGGT-derived room mesh from one original
+image plus SAM3/GroundingDINO-SAM3 object masks.
 
-The goal is to remove foreground objects from the original frame, generate a
-clean empty-room image that preserves the original camera and room layout, run
-VGGT on that cleaned background to recover structural planes, then use a second
-VGGT pass on the original image to place SAM3/Hunyuan objects back onto those
-planes.
+The output of this lane is background geometry only. It does not place objects,
+snap meshes to planes, run original-image object VGGT, or compose the final
+scene. Those steps belong in separate later docs after the empty-room mesh is
+trustworthy.
 
-## Summary
+## Objective
 
-This is a separate background/structure process that works beside the object
-lane.
+Create a clean empty-room background that preserves the original camera,
+perspective, walls, floor, ceiling, lighting, and material style, then run VGGT
+on that cleaned image and export a usable background mesh for inspection in
+Blender.
 
-```text
-Object lane:
-  original image -> SAM3 masks -> object completion -> Hunyuan3D meshes
+OpenAI image editing is used only to fill removed foreground regions with
+plausible room surfaces. VGGT is the geometry source for the mesh.
 
-Background lane:
-  original image + SAM3 masks -> empty-room inpaint -> VGGT -> background mesh -> planes
+## Non-Goals
 
-Placement lane:
-  original image -> VGGT object geometry -> snap objects to background planes
-```
+This V1 intentionally does not include:
 
-OpenAI image generation is used for texture and hidden-surface completion. It is
-not the geometry authority. VGGT is the geometry source for the empty-room
-background and for original-image object placement.
+- original-image VGGT object placement;
+- object OBB fitting;
+- Hunyuan3D or TripoSR mesh alignment;
+- support-plane selection;
+- object-to-plane snapping;
+- final scene composition;
+- retired primitive-proxy outputs or fallbacks.
 
-## Intended Flow
+Plane detection can consume this lane later, but the first useful deliverable is
+a visually and geometrically inspectable empty-room mesh.
 
-1. Run SAM3 or GroundingDINO-SAM3 on the original image.
+## Pipeline
 
-   This writes the existing proposal artifacts, including `detections.json` and
-   per-object masks under the object output folder.
+1. Run object proposals on the original image.
 
-2. Build one full-frame foreground removal mask.
+   Use SAM3 or GroundingDINO-SAM3 to write the existing proposal artifacts:
+   `detections.json`, `overlay.png`, and per-object masks under the object
+   output folder. These masks identify movable foreground content to remove.
 
-   Combine SAM3 masks for movable foreground objects. Protect structural labels
-   such as `wall`, `floor`, `ceiling`, `road`, `plane`, `room`, and
-   `background` only when label, mask size/location, and geometry cues agree.
-   Expand the mask enough to remove object edges, shadows, contact patches, and
-   small occluders. Proposals marked `mask_quality=rectangular_fallback` or
-   otherwise weak should be excluded by default or force downstream
-   `needs_review` metadata.
+2. Build the foreground removal mask.
 
-3. Prepare the OpenAI empty-room input image.
+   Combine selected object masks into one full-frame mask. Expand it enough to
+   remove object borders, shadows, contact patches, and small occluders. Exclude
+   structural proposals such as walls, floors, ceilings, windows, doors, roads,
+   or background surfaces unless a later explicit override says otherwise.
 
-   Create a full-frame copy of the original image where every selected SAM3
-   foreground mask is removed before it is sent to OpenAI. The removed regions
-   should be transparent for edit APIs that support alpha, or black/neutral for
-   APIs that require an opaque image. Keep the original resolution and framing.
-   Save this as `background/empty_room_openai_input.png`.
+   Proposals with weak masks or `mask_quality=rectangular_fallback` should be
+   excluded by default or recorded as review-required in the metadata.
 
-4. Inpaint an empty room from the masked frame.
+3. Prepare the OpenAI edit input.
 
-   Use OpenAI image edit/inpaint mode with `empty_room_openai_input.png`, the
-   combined removal mask, and the original image as reference context when the
-   backend supports multiple inputs. The prompt must preserve exact camera
-   framing, perspective, lighting, walls, floor, ceiling, trim, windows, doors,
-   and material style. The model should fill the transparent/black masked
-   regions as empty room surfaces and remove furniture, objects, and foreground
-   clutter naturally. If the original image is used as reference context, the
-   metadata and acceptance checks must record that removed objects did not
-   reappear.
+   Create a full-frame copy of the original image with the selected foreground
+   regions removed. Use transparency when the edit backend supports alpha.
+   Otherwise use a neutral or black fill that is also recorded in metadata. Keep
+   the original image size and framing exactly.
+
+4. Inpaint the empty room.
+
+   Ask the image edit backend to fill the removed regions as empty room
+   surfaces, preserving the original camera, perspective, lighting, walls,
+   floor, ceiling, trim, windows, doors, and material style. The prompt should
+   explicitly remove movable foreground objects and avoid adding replacement
+   furniture, platforms, rugs, props, or new room layout features.
 
 5. Run VGGT on the empty-room image.
 
-   This produces the background geometry substrate: depth, points, camera data,
-   and/or a background mesh. This is where structural surfaces come from.
+   Use `background/empty_room.png` as the VGGT input. Export depth, points,
+   camera data, confidence when available, and a sampled mesh. Normalize the
+   exported geometry into the SceneForge camera-space contract:
 
-6. Extract planes from the empty-room VGGT geometry.
+   - `X` points image right;
+   - `Y` points away from the source camera along depth;
+   - `Z` points image up.
 
-   Detect floor, wall, ceiling, road, concrete floor, or unknown structural
-   planes from the background mesh or point cloud. Plane detection should not run
-   from raw original-image SAM3 masks.
+6. Export the empty-room mesh for inspection.
 
-7. Run VGGT on the original image.
+   Write a mesh artifact that can be opened directly in Blender. The mesh should
+   preserve the VGGT point-map source and include enough sampled detail to judge
+   whether major walls, floor, ceiling, openings, and hidden inpainted surfaces
+   are coherent. V1 can use OBJ first; GLB or `.blend` export can be added after
+   the mesh contract is stable.
 
-   Use the original object-filled frame to estimate where the SAM3 objects
-   actually sit in camera space. For each object mask, sample original VGGT
-   points and fit an object OBB, footprint, and likely contact region.
+7. Write quality metadata.
 
-8. Reconstruct object detail meshes.
-
-   Use the existing object completion and Hunyuan3D path to generate object
-   meshes from SAM3 crops. Hunyuan3D provides visual/detail geometry, not scene
-   placement authority.
-
-9. Snap objects to background planes.
-
-   Align each object OBB/detail mesh to the original-image VGGT placement, then
-   snap its support/contact region to the nearest compatible empty-room plane.
-   Furniture should prefer floor/support planes. Wall planes should only be used
-   for wall-mounted objects when label and geometry support that choice.
-
-10. Compose the final scene.
-
-   Export a background mesh/textured plane scene plus placed object meshes. Keep
-   reports that show which object snapped to which plane and why.
+   Record enough information to answer whether this is a usable empty-room mesh:
+   what was removed, how much was inpainted, which VGGT artifacts were produced,
+   whether the output resolution/framing stayed fixed, and what warnings require
+   manual review.
 
 ## Artifacts
 
@@ -107,28 +98,21 @@ Recommended background artifacts:
 
 - `background/empty_room.png`
 - `background/empty_room_openai_input.png`
+- `background/empty_room_openai_mask.png`
 - `background/empty_room_mask.png`
-- `background/empty_room_reference.png`
 - `background/empty_room_metadata.json`
-- `background/vggt_depth.png` or equivalent depth artifact
-- `background/vggt_points.*` or equivalent point artifact
+- `background/vggt_depth.png`
+- `background/vggt_depth.npy`
+- `background/vggt_points.npy`
+- `background/vggt_points.xyz`
 - `background/vggt_camera.json`
-- `background/background_mesh.*`
-- `background/planes.json`
+- `background/vggt_confidence.png`, when available
+- `background/vggt_geometry.json`
+- `background/empty_room_mesh.obj`
+- optional `background/empty_room_mesh.glb`
+- optional `background/mesh_preview.png`
 
-Recommended original-object VGGT artifacts:
-
-- `objects_vggt/vggt_depth.png` or equivalent depth artifact
-- `objects_vggt/vggt_points.*` or equivalent point artifact
-- `objects_vggt/vggt_camera.json`
-- `objects_vggt/object_geometry.json`
-
-Recommended alignment artifacts:
-
-- `scene_alignment.json`
-- final composed `.blend`
-- optional alignment/debug overlay showing object masks, support planes, and snap
-  directions.
+Avoid writing object placement or snapping artifacts from this lane.
 
 ## Report Contracts
 
@@ -137,128 +121,154 @@ Recommended alignment artifacts:
 - source image path;
 - source detections path;
 - source object mask directory;
-- OpenAI model and prompt;
-- whether the original image was supplied as reference context;
-- protected labels;
-- removed detection IDs;
-- mask quality counts and review-required detections;
+- selected removed detection IDs;
+- excluded detection IDs and reasons;
+- protected structural labels;
+- mask quality counts;
+- review-required detections;
 - mask coverage ratio;
 - mask expansion settings;
 - OpenAI input image path;
+- OpenAI mask image path;
 - output image path;
-- whether masked regions were transparent, black, or neutral;
-- warnings, including possible object reappearance.
+- image edit backend, model, and prompt;
+- whether the original image was supplied as reference context;
+- fill mode before editing: transparent, neutral, or black;
+- resolution/framing preservation status;
+- warnings such as possible object reappearance, structural hallucination, or
+  excessive masked area.
 
-`background/planes.json` should include:
+`background/vggt_geometry.json` should include:
 
-- background VGGT source artifacts;
-- camera/coordinate contract in SceneForge camera space: X right, Y depth
-  away from camera, Z up;
-- plane IDs;
-- plane subtype such as `floor`, `wall`, `ceiling`, `road`,
-  `concrete_floor`, or `plane_unknown`;
-- plane center, normal, extents, support area, confidence, and quality fields;
-- optional mesh/texture references for the background surface.
-
-`objects_vggt/object_geometry.json` should include:
-
-- detection ID;
-- SAM3 mask source;
+- empty-room image path;
+- VGGT backend, model, device, cache, and local-only settings;
+- depth, point, camera, confidence, and mesh artifact paths;
+- image width and height;
+- coordinate contract in SceneForge camera space;
 - point count and valid-point ratio;
-- object OBB center, extents, and rotation in SceneForge camera space;
-- contact/footprint estimate;
-- point-source and mask-quality metadata;
-- quality and failure or review reason.
+- sampled mesh vertex/face counts;
+- confidence summary when available;
+- known transform used for Blender/OBJ export;
+- warnings and `needs_review` status.
 
-`scene_alignment.json` should include:
+The mesh report should make it clear whether vertices come from VGGT world
+points, camera-space depth, or another explicit source. Hidden changes to axis
+orientation are not acceptable; any axis conversion must be recorded.
 
-- detection ID;
-- selected support plane ID;
-- pre-snap object transform;
-- post-snap object transform;
-- snap delta;
-- snap confidence;
-- empty-room/original-image VGGT camera and scale reconciliation status;
-- whether the object needs review;
-- reason for failure when no compatible plane is found.
+## Quality Policy
 
-## Placement Rules
+The empty-room mesh is usable when:
 
-- Preserve the original camera/framing in `empty_room_openai_input.png` and
-  `empty_room.png`; do not generate a new plausible room with a different layout.
-- Send OpenAI the image after selected SAM3 masks have been transparented,
-  blacked out, or neutral-filled, not the untouched original as the main target.
-- Use empty-room VGGT for background geometry and planes.
-- Use original-image VGGT for object placement.
-- Normalize empty-room and original-image VGGT artifacts into SceneForge camera
-  space before comparing or snapping: X right, Y depth away from camera, Z up.
-- Use Hunyuan3D meshes as detail assets aligned to VGGT-derived OBBs.
-- Snap object bases to planes only after the original-image VGGT object pose is
-  estimated.
-- Do not let OpenAI-generated pixels directly decide object depth or placement.
-- Flag weak plane fits, weak object VGGT crops, rectangular fallback masks,
-  camera/scale disagreement, and large snap deltas as `needs_review`. Do not
-  route failed placement into retired primitive-proxy fallbacks.
+- `empty_room.png` has the same resolution and framing as the original image;
+- removed objects do not visibly reappear;
+- inpainted regions continue the surrounding room surfaces instead of inventing
+  unrelated furniture or layout changes;
+- VGGT writes depth, points, camera, and mesh artifacts for the empty-room image;
+- the mesh opens upright and source-facing in Blender using the documented axis
+  conversion;
+- large structural surfaces are coherent enough for manual inspection;
+- warnings are explicit when image edit quality or VGGT confidence is weak.
+
+The run should mark `needs_review=true` when:
+
+- too much of the image is masked;
+- the mask includes likely structural regions;
+- rectangular fallback masks are used;
+- OpenAI changes the camera framing or room layout;
+- removed objects reappear;
+- VGGT produces sparse, unstable, or low-confidence geometry;
+- the exported mesh has invalid bounds, extreme scale, or wrong orientation.
+
+Weak output should be preserved for inspection with clear metadata. It should
+not fall back to retired primitive-proxy execution.
 
 ## CLI Shape
 
-A future public flow could expose this as explicit staged commands or as an
-opt-in reconstruction mode.
-
-Suggested staged commands:
+The public flow can run as two staged commands:
 
 ```bash
-python3 run.py generate-empty-room   --image Output/Latest/render/image.png   --detections Output/Latest/detect/detections.json   --objects Output/Latest/objects   --output Output/Latest/background
+python3 run.py generate-empty-room \
+  --image Output/Latest/render/image.png \
+  --detections Output/Latest/detect/detections.json \
+  --objects Output/Latest/objects \
+  --output Output/Latest/background
 
-python3 run.py reconstruct-background   --image Output/Latest/background/empty_room.png   --geometry-backend vggt   --output Output/Latest/background
-
-python3 run.py fit-object-placements   --image Output/Latest/render/image.png   --detections Output/Latest/detect/detections.json   --objects Output/Latest/objects   --background-planes Output/Latest/background/planes.json   --geometry-backend vggt   --output Output/Latest/alignment
+python3 run.py run-vggt \
+  --image Output/Latest/background/empty_room.png \
+  --output Output/Latest/background \
+  --backend vggt \
+  --mesh-stem empty_room_mesh \
+  --vggt-cache-dir Models/Geometry/VGGT/hf-cache \
+  --vggt-local-only
 ```
 
-A later scene assembly mode can orchestrate the same steps behind explicit
-flags, but the first implementation should keep artifacts staged and inspectable.
+The existing `run-vggt` command can be reused for the second stage if it writes
+the same VGGT artifacts under `background/`. Use `--mesh-stem empty_room_mesh`
+when writing the background-lane mesh artifacts.
+
+Or as one combined command:
+
+```bash
+python3 run.py run-empty-room-vggt \
+  --image Output/Latest/render/image.png \
+  --detections Output/Latest/detect/detections.json \
+  --objects Output/Latest/objects \
+  --output Output/Latest/background \
+  --empty-room-backend openai-image \
+  --vggt-repo-dir Models/Geometry/VGGT/repo \
+  --vggt-cache-dir Models/Geometry/VGGT/hf-cache \
+  --vggt-local-only \
+  --mesh-stem empty_room_mesh
+```
+
+`construct-empty-room` is an alias for the same combined command.
+
+Optional future empty-room flags:
+
+- `--mask-dilation-px`
+- `--mask-feather-px`
+- `--include-detection-id`
+- `--exclude-detection-id`
+- `--allow-rectangular-fallback-masks`
+- `--empty-room-backend openai-image`
+- `--review-only`
 
 ## Testing Plan
 
 Unit tests:
 
-- combined mask generation from multiple SAM3 polygons;
-- protected-label filtering for structural labels;
-- deterministic mask dilation/feathering coverage;
-- empty-room prompt construction;
-- support-plane selection and snap-delta calculation from fake plane/object
-  geometry.
+- selected detection masks combine into one deterministic full-frame mask;
+- mask expansion is deterministic and bounded;
+- protected structural labels are excluded by default;
+- rectangular fallback masks are excluded or marked review-required;
+- empty-room prompt construction includes framing and no-furniture constraints;
+- metadata records mask coverage, fill mode, selected IDs, and warnings.
 
 Integration tests with fakes:
 
-- fake detections plus fixture image write `empty_room_mask.png`,
+- fake detections plus a fixture image write `empty_room_mask.png`,
   `empty_room_openai_input.png`, `empty_room_metadata.json`, and placeholder
   `empty_room.png`;
-- fake background VGGT output writes deterministic `planes.json`;
-- fake original-image VGGT output writes deterministic object OBBs in
-  `objects_vggt/object_geometry.json`;
-- fake Hunyuan meshes align to fake OBBs and record selected support planes in
-  `scene_alignment.json`;
-- missing compatible support plane keeps the object and marks it `needs_review`;
-- rectangular fallback masks propagate review-required placement metadata.
+- fake VGGT on `empty_room.png` writes deterministic depth, points, camera,
+  geometry report, and mesh artifacts under `background/`;
+- output image dimensions match the source dimensions;
+- weak masks and excessive mask coverage produce `needs_review=true`;
+- no object placement, snapping, or primitive-proxy artifacts are written.
 
 Acceptance checks:
 
-- `empty_room.png` preserves original resolution and framing;
-- planes are derived from empty-room VGGT artifacts;
-- objects are placed from original-image VGGT artifacts;
-- Hunyuan meshes are aligned after object placement, not before;
-- reports make every snap decision inspectable;
-- camera/scale disagreement between empty-room and original-image VGGT produces
-  weak alignment instead of forced snaps.
+- the command sequence produces a background folder that can be inspected without
+  running any object-placement stage;
+- the empty-room image is faithful enough for VGGT to see the room structure;
+- the mesh opens in Blender with the expected orientation and scale envelope;
+- reports explain whether the empty-room mesh is ready for later plane detection.
 
 ## Open Implementation Notes
 
-- The first version should prioritize artifact clarity over one-command
-  convenience.
-- Background texture quality can be improved independently from placement
-  quality because OpenAI inpainting and VGGT geometry are separate stages.
-- If empty-room VGGT and original-image VGGT disagree strongly on camera scale or
-  orientation, the run should mark alignment as weak instead of forcing a snap.
-- The active fallback for weak masks, VGGT, or snapping is explicit failure or
-  `needs_review` metadata, not retired primitive-proxy execution.
+- Prioritize artifact clarity over one-command convenience.
+- Keep the OpenAI edit stage and VGGT mesh stage independently rerunnable.
+- Store the exact prompt and image-edit inputs so bad inpaints can be debugged.
+- Prefer deterministic fake backends for tests so the mesh contract can stabilize
+  before depending on model output quality.
+- Once the empty-room mesh is consistently good, plane detection can consume the
+  same `background/` VGGT artifacts in a separate design.

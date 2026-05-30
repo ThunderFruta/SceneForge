@@ -16,9 +16,6 @@ from SceneGeometry.coordinate_contract import DEFAULT_FOV_DEGREES
 SCHEMA_VERSION = 1
 TABLE_SUPPORT_LABELS = ("table", "desk", "counter")
 TABLETOP_OBJECT_LABELS = ("vase", "flower", "plant", "lamp", "book", "bowl", "cup", "glass", "plate", "pot")
-COMPOSITE_TABLETOP_LABEL = "vase_with_flowers"
-COMPOSITE_CONTAINER_LABELS = ("vase",)
-COMPOSITE_BOUQUET_LABELS = ("flower", "plant")
 PROJECTION_VERTICAL_EDGE_REJECT_RATIO = 0.35
 LABEL_SCALE_FACTORS = (
     ("chair", 0.78),
@@ -80,8 +77,7 @@ def compose_scene(
     geometry = load_json(object_geometry_path)
     source_image_path = Path(source_image_path) if source_image_path is not None else infer_source_image_path(geometry)
     object_dirs = index_object_dirs(objects_dir)
-    relation_result = apply_tabletop_object_relations(geometry.get("objects", []))
-    placements = relation_result["objects"]
+    placements = geometry.get("objects", [])
     scene = new_scene()
     spacing_targets = object_spacing_targets(
         placements,
@@ -219,172 +215,6 @@ def compose_scene(
         write_projection_overlay(source_image_path, records, overlay_path)
     (output_dir / "scene_alignment.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
-
-
-def apply_tabletop_object_relations(placements: list[dict[str, Any]]) -> dict[str, Any]:
-    normalized = [dict(placement) for placement in placements]
-    next_detection_id = max([int(item.get("detection_id", 0)) for item in normalized] or [0]) + 1
-    composites: list[dict[str, Any]] = []
-    suppressed: set[int] = set()
-    table_candidates = [
-        {"detection_id": int(item.get("detection_id", 0)), "bbox_xyxy": item.get("bbox_xyxy")}
-        for item in normalized
-        if is_table_support_label(str(item.get("detector_label") or ""))
-    ]
-
-    containers = [item for item in normalized if is_composite_container_label(str(item.get("detector_label") or ""))]
-    bouquets = [item for item in normalized if is_composite_bouquet_label(str(item.get("detector_label") or ""))]
-    for container in containers:
-        container_id = int(container.get("detection_id", 0))
-        if container_id in suppressed:
-            continue
-        best_bouquet: dict[str, Any] | None = None
-        best_score = 0.0
-        for bouquet in bouquets:
-            bouquet_id = int(bouquet.get("detection_id", 0))
-            if bouquet_id in suppressed or bouquet_id == container_id:
-                continue
-            score = tabletop_pair_score(container, bouquet, table_candidates)
-            if score > best_score:
-                best_score = score
-                best_bouquet = bouquet
-        if best_bouquet is None:
-            continue
-
-        composite_id = f"{COMPOSITE_TABLETOP_LABEL}_{container_id}_{int(best_bouquet.get('detection_id', 0))}"
-        composites.append(
-            composite_placement(
-                detection_id=next_detection_id,
-                composite_id=composite_id,
-                container=container,
-                bouquet=best_bouquet,
-            )
-        )
-        next_detection_id += 1
-        suppressed.add(container_id)
-        suppressed.add(int(best_bouquet.get("detection_id", 0)))
-
-    if not composites:
-        for item in normalized:
-            item.setdefault("relation_role", "primary")
-        return {"objects": normalized, "composites": [], "suppressed_detection_ids": []}
-
-    for item in normalized:
-        detection_id = int(item.get("detection_id", 0))
-        if detection_id in suppressed:
-            composite = next(
-                composite
-                for composite in composites
-                if detection_id in [int(value) for value in composite.get("source_detection_ids", [])]
-            )
-            item["relation_role"] = "child"
-            item["composite_id"] = composite["composite_id"]
-            item["suppressed_by_composite"] = composite["composite_id"]
-        else:
-            item.setdefault("relation_role", "primary")
-
-    return {
-        "objects": normalized + composites,
-        "composites": composites,
-        "suppressed_detection_ids": sorted(suppressed),
-    }
-
-
-def tabletop_pair_score(
-    container: dict[str, Any],
-    bouquet: dict[str, Any],
-    table_candidates: list[dict[str, Any]],
-) -> float:
-    container_bbox = bbox_array(container.get("bbox_xyxy"))
-    bouquet_bbox = bbox_array(bouquet.get("bbox_xyxy"))
-    if container_bbox is None or bouquet_bbox is None:
-        return 0.0
-    overlap = bbox_overlap_area(container_bbox, bouquet_bbox)
-    smaller_area = max(1.0, min(bbox_area(container_bbox), bbox_area(bouquet_bbox)))
-    score = overlap / smaller_area
-    container_center_x = float((container_bbox[0] + container_bbox[2]) / 2.0)
-    bouquet_center_x = float((bouquet_bbox[0] + bouquet_bbox[2]) / 2.0)
-    horizontal_tolerance = max(24.0, max(bbox_width(container_bbox), bbox_width(bouquet_bbox)) * 0.65)
-    horizontally_aligned = abs(container_center_x - bouquet_center_x) <= horizontal_tolerance
-    vertically_stacked = float(bouquet_bbox[3]) >= float(container_bbox[1]) - max(24.0, bbox_height(bouquet_bbox) * 0.35)
-    if horizontally_aligned and vertically_stacked:
-        score = max(score, 0.5)
-    if table_candidates:
-        container_table = best_table_support(container_bbox, table_candidates)
-        bouquet_table = best_table_support(bouquet_bbox, table_candidates)
-        if container_table is not None and bouquet_table is not None:
-            if int(container_table["detection_id"]) == int(bouquet_table["detection_id"]):
-                score += 0.25
-            else:
-                score *= 0.35
-    return float(score)
-
-
-def composite_placement(
-    *,
-    detection_id: int,
-    composite_id: str,
-    container: dict[str, Any],
-    bouquet: dict[str, Any],
-) -> dict[str, Any]:
-    container_id = int(container.get("detection_id", 0))
-    bouquet_id = int(bouquet.get("detection_id", 0))
-    bbox = union_bbox([container.get("bbox_xyxy"), bouquet.get("bbox_xyxy")])
-    center, extent = union_scene_center_and_extent([container, bouquet])
-    composite = dict(bouquet)
-    composite.update(
-        {
-            "detection_id": int(detection_id),
-            "detector_label": COMPOSITE_TABLETOP_LABEL,
-            "box_type": "aabb",
-            "bbox_xyxy": bbox,
-            "center_xyz": center,
-            "extent_xyz": extent,
-            "rotation_matrix": np.eye(3, dtype=np.float64).tolist(),
-            "relation_role": "composite",
-            "composite_id": composite_id,
-            "source_detection_ids": [container_id, bouquet_id],
-            "source_object_dir_id": bouquet_id,
-            "suppressed_by_composite": None,
-            "needs_review": bool(container.get("needs_review", False) or bouquet.get("needs_review", False)),
-            "composite_source": "tabletop_vase_flower_relation_v1",
-            "prompt_hint": "one transparent vase with flowers/stems, no table/floor/base",
-        }
-    )
-    return composite
-
-
-def union_bbox(values: list[Any]) -> list[float] | None:
-    boxes = [bbox_array(value) for value in values]
-    boxes = [box for box in boxes if box is not None]
-    if not boxes:
-        return None
-    stacked = np.stack(boxes, axis=0)
-    return [
-        float(stacked[:, 0].min()),
-        float(stacked[:, 1].min()),
-        float(stacked[:, 2].max()),
-        float(stacked[:, 3].max()),
-    ]
-
-
-def union_scene_center_and_extent(placements: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
-    bounds: list[np.ndarray] = []
-    for placement in placements:
-        try:
-            center, extent = placement_scene_center_and_extent(placement)
-        except Exception:
-            continue
-        bounds.append(np.stack([center - extent / 2.0, center + extent / 2.0], axis=0))
-    if not bounds:
-        center = required_vector(placements[-1].get("center_xyz"), "center_xyz")
-        extent = required_vector(placements[-1].get("extent_xyz"), "extent_xyz")
-        return center.tolist(), extent.tolist()
-    merged = merge_bounds(bounds)
-    center = (merged[0] + merged[1]) / 2.0
-    extent = merged[1] - merged[0]
-    extent = np.maximum(extent, np.array([1e-4, 1e-4, 1e-4], dtype=np.float64))
-    return center.tolist(), extent.tolist()
 
 
 def compose_object_record(
@@ -1059,16 +889,6 @@ def is_tabletop_object_label(label: str) -> bool:
     return any(token in normalized for token in TABLETOP_OBJECT_LABELS)
 
 
-def is_composite_container_label(label: str) -> bool:
-    normalized = label.lower()
-    return any(token in normalized for token in COMPOSITE_CONTAINER_LABELS)
-
-
-def is_composite_bouquet_label(label: str) -> bool:
-    normalized = label.lower()
-    return any(token in normalized for token in COMPOSITE_BOUQUET_LABELS)
-
-
 def best_table_support(bbox_xyxy: Any, table_candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
     bbox = bbox_array(bbox_xyxy)
     if bbox is None:
@@ -1125,14 +945,6 @@ def bbox_overlap_area(a: np.ndarray, b: np.ndarray) -> float:
 
 def bbox_height(bbox: np.ndarray) -> float:
     return float(bbox[3] - bbox[1])
-
-
-def bbox_width(bbox: np.ndarray) -> float:
-    return float(bbox[2] - bbox[0])
-
-
-def bbox_area(bbox: np.ndarray) -> float:
-    return max(0.0, bbox_width(bbox) * bbox_height(bbox))
 
 
 def infer_background_vggt_dir(background_path: Path) -> Path | None:
