@@ -95,8 +95,10 @@ def test_generate_empty_room_fake_writes_mask_input_output_and_metadata(tmp_path
     for name in (
         "empty_room.png",
         "empty_room_openai_input.png",
+        "empty_room_edit_input.png",
         "empty_room_openai_mask.png",
         "empty_room_mask.png",
+        "foreground_removal_mask.png",
         "empty_room_metadata.json",
     ):
         assert (output_dir / name).is_file()
@@ -109,6 +111,10 @@ def test_generate_empty_room_fake_writes_mask_input_output_and_metadata(tmp_path
     assert report["resolution_framing_preserved"] is True
     assert Image.open(output_dir / "empty_room.png").size == (24, 16)
     mask = np.asarray(Image.open(output_dir / "empty_room_mask.png"), dtype=np.uint8)
+    design_mask = np.asarray(Image.open(output_dir / "foreground_removal_mask.png"), dtype=np.uint8)
+    assert np.array_equal(mask, design_mask)
+    assert report["foreground_removal_mask_path"].endswith("foreground_removal_mask.png")
+    assert report["empty_room_edit_input_path"].endswith("empty_room_edit_input.png")
     assert mask[6, 9] == 255
     assert mask[13, 3] == 0
     openai_mask = Image.open(output_dir / "empty_room_openai_mask.png").convert("RGBA")

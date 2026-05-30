@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from run import build_parser
 from SceneComposition.composer import compose_scene, placement_transform_to_gltf, projection_quality_report
 from SceneComposition.placement import build_object_fit_targets, choose_object_supports, fit_object_placements
 
@@ -44,6 +45,18 @@ def write_jagged_bottom_glb(path: Path) -> None:
     mesh.export(path)
 
 
+def write_dangling_bottom_glb(path: Path) -> None:
+    import trimesh
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    body.apply_translation((0.0, 0.25, 0.0))
+    dangling = trimesh.creation.box(extents=(0.08, 0.5, 0.08))
+    dangling.apply_translation((0.0, -0.55, 0.0))
+    mesh = trimesh.util.concatenate([body, dangling])
+    mesh.export(path)
+
+
 def write_background_vggt_fixture(vggt_dir: Path) -> None:
     vggt_dir.mkdir(parents=True, exist_ok=True)
     points = np.zeros((4, 4, 3), dtype=np.float32)
@@ -52,6 +65,30 @@ def write_background_vggt_fixture(vggt_dir: Path) -> None:
             points[y, x] = [float(x), 10.0 + float(y), float(y) / 10.0]
     np.save(vggt_dir / "vggt_points.npy", points)
     Image.new("RGB", (4, 4), (40, 80, 120)).save(vggt_dir / "empty_room.png")
+
+
+def write_plane_detections_fixture(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "planes": [
+                    {
+                        "id": "floor",
+                        "vertices_xyz": [[-1.0, 0.5, -0.2], [1.0, 0.5, -0.2], [1.0, 2.0, -0.2], [-1.0, 2.0, -0.2]],
+                    },
+                    {
+                        "id": "back_wall",
+                        "vertices_xyz": [[-1.0, 2.0, -0.2], [1.0, 2.0, -0.2], [1.0, 2.0, 1.0], [-1.0, 2.0, 1.0]],
+                    },
+                    {
+                        "id": "right_wall",
+                        "vertices_xyz": [[1.0, 0.5, -0.2], [1.0, 2.0, -0.2], [1.0, 2.0, 1.0], [1.0, 0.5, 1.0]],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_projection_quality_accepts_occluded_floor_bottom_with_review() -> None:
@@ -284,7 +321,7 @@ def test_compose_scene_writes_scene_glb_and_alignment_report(tmp_path: Path) -> 
     assert np.allclose(transformed_bounds[:, [0, 2]], [[0.0, -4.0], [2.0, 0.0]])
 
 
-def test_compose_scene_camera_clipped_background_uses_masks(tmp_path: Path) -> None:
+def test_compose_scene_camera_clipped_background_uses_raw_vggt_mesh_with_alignment(tmp_path: Path) -> None:
     background = tmp_path / "background" / "empty_room_mesh.glb"
     objects_dir = tmp_path / "objects"
     object_dir = objects_dir / "01_cube"
@@ -292,6 +329,7 @@ def test_compose_scene_camera_clipped_background_uses_masks(tmp_path: Path) -> N
     output_dir = tmp_path / "scene"
     write_box_glb(background)
     write_background_vggt_fixture(background.parent)
+    write_plane_detections_fixture(background.parent / "plane_detections.json")
     write_box_glb(object_dir / "hunyuan3d_textured.glb")
     object_dir.mkdir(parents=True, exist_ok=True)
     (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
@@ -322,15 +360,31 @@ def test_compose_scene_camera_clipped_background_uses_masks(tmp_path: Path) -> N
         objects_dir=objects_dir,
         object_geometry_path=object_geometry,
         output_dir=output_dir,
-        background_fit="camera-clipped",
         background_stride=1,
+        clip_background_masks=True,
         background_clip_dilation_px=0,
     )
 
     assert report["background"]["source"] == "vggt_points_camera_clipped"
+    assert report["background"]["alignment"] == "plane_guided_orientation_then_placement_bounds_fit"
+    assert report["background"]["orientation"]["method"] == "fitted_floor_back_wall_normals_to_regularized_axes"
+    assert report["background"]["floor_regularization"]["status"] == "applied"
     assert report["background"]["vertex_count"] == 15
+    assert report["background"]["texture_source"] == "empty_room_image_uv_projected"
+    assert report["background"]["uv_count"] == 15
     assert report["background"]["masked_pixel_ratio"] == 1 / 16
+    assert report["background"]["transform_gltf"] != np.eye(4, dtype=np.float64).tolist()
+    assert np.asarray(report["background"]["transformed_bounds"])[1, 1] > 1.0
     assert report["summary"]["composed_count"] == 1
+
+
+def test_compose_scene_cli_defaults_to_empty_room_vggt_background() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["compose-scene"])
+
+    assert args.background == "Output/Latest/background/empty_room_mesh.glb"
+    assert args.background_fit == "camera-clipped"
 
 
 def test_compose_scene_room_corner_background_is_structural(tmp_path: Path) -> None:
@@ -748,6 +802,70 @@ def test_compose_explicit_records_recomputes_tabletop_support_after_floor_snap(t
     assert by_id[2]["support_y"] == table_top
     assert by_id[2]["support_y"] != 0.5
     assert np.isclose(by_id[2]["transformed_bounds"][0][1], table_top)
+
+
+def test_compose_scene_uses_stable_contact_layer_for_dangling_mesh_artifacts(tmp_path: Path) -> None:
+    background = tmp_path / "background.glb"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    placements_path = tmp_path / "object_placements.json"
+    scene_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb")
+    write_dangling_bottom_glb(vase_dir / "hunyuan3d_textured.glb")
+    table_dir.mkdir(parents=True, exist_ok=True)
+    vase_dir.mkdir(parents=True, exist_ok=True)
+    (table_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    (vase_dir / "metadata.json").write_text(json.dumps({"id": 2}), encoding="utf-8")
+    placements_path.write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "status": "accepted",
+                        "needs_review": False,
+                        "mesh_path": str(table_dir / "hunyuan3d_textured.glb"),
+                        "transform_gltf": [[1.0, 0.0, 0.0, 0.0], [0.0, 0.3, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                        "transformed_bounds": [[-0.5, -0.15, -0.5], [0.5, 0.15, 0.5]],
+                        "support": {"mode": "floor_4dof", "support_kind": "floor", "support_y_gltf": -0.15},
+                    },
+                    {
+                        "detection_id": 2,
+                        "detector_label": "vase",
+                        "status": "accepted",
+                        "needs_review": False,
+                        "mesh_path": str(vase_dir / "hunyuan3d_textured.glb"),
+                        "transform_gltf": [[0.2, 0.0, 0.0, 0.0], [0.0, 0.2, 0.0, 0.5], [0.0, 0.0, 0.2, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                        "transformed_bounds": [[-0.1, 0.4, -0.1], [0.1, 0.6, 0.1]],
+                        "support": {"mode": "tabletop_4dof", "support_kind": "tabletop", "support_detection_id": 1, "support_y_gltf": 0.6},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=placements_path,
+        placements_path=placements_path,
+        output_dir=scene_dir,
+        background_fit="room-corner",
+        include_review=True,
+    )
+
+    by_id = {item["detection_id"]: item for item in report["objects"]}
+    table_top = by_id[1]["transformed_bounds"][1][1]
+    contact = by_id[2]["support_contact"]
+    assert by_id[2]["support_y"] == table_top
+    assert np.isclose(contact["contact_y"], table_top)
+    assert contact["raw_bottom_y"] < table_top
+    assert contact["selected_quantile"] > 0.5
+    assert by_id[2]["transformed_bounds"][0][1] < table_top
 
 
 def test_fit_object_placements_has_unknown_5dof_fallback(tmp_path: Path) -> None:

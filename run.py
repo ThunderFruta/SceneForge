@@ -219,8 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     fit_placements.add_argument("--no-optimize-placements", action="store_true")
     fit_placements.set_defaults(func=cmd_fit_object_placements)
 
-    compose_scene = subparsers.add_parser("compose-scene", help="Combine empty-room background planes, VGGT object placements, and object meshes into one GLB scene.")
-    compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_planes.glb")
+    compose_scene = subparsers.add_parser("compose-scene", help="Combine empty-room VGGT background geometry, object placements, and object meshes into one GLB scene.")
+    compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_mesh.glb")
     compose_scene.add_argument("--objects", default="Output/Latest/objects")
     compose_scene.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
     compose_scene.add_argument("--placements", help="Use explicit placement/object_placements.json records instead of fitting directly from object_geometry.json.")
@@ -242,12 +242,17 @@ def build_parser() -> argparse.ArgumentParser:
     compose_scene.add_argument(
         "--background-fit",
         choices=("room-corner", "camera-clipped", "placement-bounds", "raw"),
-        default="room-corner",
-        help="Use a structural room corner, clipped camera background, fitted background mesh, or raw VGGT background.",
+        default="camera-clipped",
+        help="Use clipped empty-room VGGT points, a structural room corner, fitted background mesh, or raw GLB background.",
     )
     compose_scene.add_argument("--background-vggt-dir")
     compose_scene.add_argument("--background-stride", type=int, default=16)
-    compose_scene.add_argument("--no-clip-background-masks", action="store_true")
+    compose_scene.add_argument(
+        "--clip-background-masks",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Clip source object-mask regions out of the VGGT background. Disabled by default because the AI empty-room image should already contain filled background surfaces.",
+    )
     compose_scene.add_argument("--background-clip-dilation-px", type=int, default=8)
     compose_scene.add_argument("--no-snap-objects-to-floor", action="store_true")
     compose_scene.add_argument("--no-optimize-placements", action="store_true")
@@ -261,8 +266,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compose_scene.add_argument(
         "--include-review",
-        action="store_true",
-        help="Include placements marked needs_review instead of skipping them.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include placements marked needs_review instead of skipping them (default: enabled).",
     )
     compose_scene.set_defaults(func=cmd_compose_scene)
 
@@ -302,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run object-level TripoSR mesh reconstruction over completed or masked object crops.",
     )
     reconstruct_objects.add_argument("--objects", default="Output/Latest/objects")
-    reconstruct_objects.add_argument("--backend", choices=("hunyuan3d", "triposr"), default="hunyuan3d")
+    reconstruct_objects.add_argument("--backend", choices=("hunyuan3d", "triposr", "sam3d-objects"), default="hunyuan3d")
     reconstruct_objects.add_argument("--model-dir", default="Models/Mesh/TripoSR")
     reconstruct_objects.add_argument("--model", default="tencent/Hunyuan3D-2.1")
     reconstruct_objects.add_argument("--device", default="auto")
@@ -351,6 +357,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reconstruct_objects.add_argument("--texture-matte-backend", choices=("auto", "bria-rmbg", "mask"), default="auto")
     reconstruct_objects.add_argument("--texture-matte-model-dir", default="Models/Segmentation/BRIA/RMBG-2.0")
+    reconstruct_objects.add_argument("--sam3d-objects-repo-dir")
+    reconstruct_objects.add_argument("--sam3d-objects-checkpoint")
+    reconstruct_objects.add_argument(
+        "--sam3d-objects-command",
+        help="Optional external command template for SAM 3D Objects. Supports {image}, {mask}, {output}, {object_dir}, {repo_dir}, {checkpoint}, and {device}.",
+    )
     reconstruct_objects.set_defaults(func=cmd_reconstruct_objects)
 
 
@@ -400,6 +412,12 @@ def add_completion_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--completion-seed", type=int, default=20260528)
     parser.add_argument("--completion-max-objects", type=int, default=0)
     parser.add_argument("--completion-quantization", choices=("none", "8bit", "4bit"), default="4bit")
+    parser.add_argument(
+        "--completion-context-mode",
+        choices=("reference-square", "application-query"),
+        default="reference-square",
+        help="OpenAI object completion context layout. application-query writes application_query.png beside the object.",
+    )
 
 
 def _resolve_open_vocabulary_runtime_args(args: argparse.Namespace, *, enforce_readiness: bool) -> None:
@@ -841,7 +859,7 @@ def cmd_compose_scene(args: argparse.Namespace) -> int:
         background_depth_offset=args.background_depth_offset,
         background_vggt_dir=args.background_vggt_dir,
         background_stride=args.background_stride,
-        clip_background_masks=not args.no_clip_background_masks,
+        clip_background_masks=args.clip_background_masks,
         background_clip_dilation_px=args.background_clip_dilation_px,
         snap_objects_to_floor=not args.no_snap_objects_to_floor,
         optimize_placements=not args.no_optimize_placements,
@@ -910,6 +928,7 @@ def cmd_detect_shapes(args: argparse.Namespace) -> int:
         completion_seed=args.completion_seed,
         completion_max_objects=args.completion_max_objects,
         completion_quantization=args.completion_quantization,
+        completion_context_mode=args.completion_context_mode,
     )
     print(f"Wrote {Path(args.output) / 'detections.json'}")
     print(f"Wrote {Path(args.output) / 'overlay.png'}")
@@ -931,6 +950,7 @@ def cmd_complete_objects(args: argparse.Namespace) -> int:
         seed=args.completion_seed,
         max_objects=args.completion_max_objects,
         quantization=args.completion_quantization,
+        context_mode=args.completion_context_mode,
     )
     print(f"Wrote {Path(args.objects) / 'completion_manifest.json'}")
     return 0
@@ -976,6 +996,22 @@ def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
             completed_mask_prompt=args.completed_mask_prompt,
         )
         print(f"Wrote {Path(args.objects) / 'triposr_manifest.json'}")
+        return 0
+    if args.backend == "sam3d-objects":
+        from ObjectReconstruction.sam3d_objects import run_sam3d_objects_reconstruction
+
+        run_sam3d_objects_reconstruction(
+            objects_dir=Path(args.objects),
+            repo_dir=args.sam3d_objects_repo_dir,
+            checkpoint=args.sam3d_objects_checkpoint,
+            command_template=args.sam3d_objects_command,
+            model=args.model,
+            device=args.device,
+            source=args.source,
+            max_objects=args.max_objects,
+            completed_mask_backend=args.completed_mask_backend,
+        )
+        print(f"Wrote {Path(args.objects) / 'sam3d_objects_manifest.json'}")
         return 0
     raise CliError(f"Unsupported object reconstruction backend: {args.backend}")
 

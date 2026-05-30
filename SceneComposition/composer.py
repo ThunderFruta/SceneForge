@@ -27,8 +27,14 @@ VGGT_CANDIDATE_LOSS_WEIGHT = 0.35
 DEFAULT_UNIFORM_SCALE_CANDIDATES = (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40)
 LARGE_TARGET_HEIGHT_RATIO = 0.45
 LARGE_TARGET_MIN_UNIFORM_SCALE = 0.70
-FLOOR_SUPPORT_CONTACT_QUANTILE = 0.5
-TABLETOP_SUPPORT_CONTACT_QUANTILE = 20.0
+SUPPORT_CONTACT_FLOOR_QUANTILES = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 35.0)
+SUPPORT_CONTACT_TABLETOP_QUANTILES = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 35.0, 50.0)
+SUPPORT_CONTACT_FALLBACK_QUANTILE = 20.0
+SUPPORT_CONTACT_EXCELLENT_AREA_RATIO = 0.65
+SUPPORT_CONTACT_MIN_AREA_RATIO = 0.10
+SUPPORT_CONTACT_MIN_SPAN_RATIO = 0.12
+SUPPORT_CONTACT_MIN_VERTEX_RATIO = 0.002
+TABLETOP_CONTACT_MIN_VERTEX_RATIO = 0.15
 
 
 def compose_scene(
@@ -44,12 +50,12 @@ def compose_scene(
     scale_mode: str = "fit-box",
     placement_orientation: str = "upright",
     object_scale_factor: float = 0.85,
-    background_fit: str = "room-corner",
+    background_fit: str = "camera-clipped",
     background_margin: float = 1.0,
     background_depth_offset: float = 0.12,
     background_vggt_dir: str | Path | None = None,
     background_stride: int = 16,
-    clip_background_masks: bool = True,
+    clip_background_masks: bool = False,
     background_clip_dilation_px: int = 8,
     snap_objects_to_floor: bool = True,
     optimize_placements: bool = True,
@@ -112,6 +118,9 @@ def compose_scene(
             stride=background_stride,
             clip_masks=clip_background_masks,
             clip_dilation_px=background_clip_dilation_px,
+            placement_bounds=placement_bounds,
+            margin=background_margin,
+            depth_offset=background_depth_offset,
         )
     else:
         background_transform = None
@@ -160,6 +169,7 @@ def compose_scene(
                 object_mesh_name=object_mesh_name,
                 include_review=include_review,
                 support_target=support_targets.get(detection_id),
+                room_bounds=np.asarray(background_stats.get("transformed_bounds"), dtype=np.float64),
             )
         else:
             record = compose_object_record(
@@ -317,7 +327,7 @@ def explicit_support_object_tops(
                 mesh_path,
                 transform,
                 float(target["support_y"]),
-                contact_quantile=support_contact_quantile(target.get("support_kind")),
+                support_kind=target.get("support_kind"),
             )
             support_tops[detection_id] = float(transformed_mesh_bounds(mesh_path, snapped)[1, 1])
         except Exception:
@@ -346,6 +356,7 @@ def compose_explicit_placement_record(
     object_mesh_name: str,
     include_review: bool,
     support_target: dict[str, Any] | None = None,
+    room_bounds: np.ndarray | None = None,
 ) -> dict[str, Any]:
     detection_id = int(placement.get("detection_id", 0))
     label = str(placement.get("detector_label") or "object")
@@ -418,14 +429,17 @@ def compose_explicit_placement_record(
                 mesh_path,
                 transform,
                 support_y,
-                contact_quantile=support_contact_quantile(support_kind),
+                support_kind=support_kind,
             )
+        room_boundary_adjustment = room_boundary_adjustment_report(mesh_path, transform, room_bounds)
+        transform = np.asarray(room_boundary_adjustment["transform_gltf"], dtype=np.float64)
         object_stats = add_scene_asset(
             scene,
             mesh_path,
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
         )
+        support_contact = mesh_support_contact_report(mesh_path, transform, support_kind)
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
         return base
@@ -437,6 +451,8 @@ def compose_explicit_placement_record(
         transform_gltf=transform.tolist(),
         floor_snap_delta=float(support_snap_delta if support_kind == "floor" else 0.0),
         support_snap_delta=float(support_snap_delta),
+        room_boundary_adjustment=room_boundary_adjustment,
+        support_contact=support_contact,
         source_bounds=object_stats["source_bounds"],
         transformed_bounds=object_stats["transformed_bounds"],
         mesh_cleanup=object_stats.get("mesh_cleanup"),
@@ -461,12 +477,6 @@ def normalized_support_kind(mode: Any) -> str | None:
     if mode_text.startswith("unknown"):
         return "unknown"
     return None
-
-
-def support_contact_quantile(support_kind: Any) -> float:
-    if normalized_support_kind(support_kind) == "tabletop":
-        return TABLETOP_SUPPORT_CONTACT_QUANTILE
-    return FLOOR_SUPPORT_CONTACT_QUANTILE
 
 
 def compose_object_record(
@@ -539,7 +549,7 @@ def compose_object_record(
                 mesh_path,
                 transform,
                 snapped_support_y,
-                contact_quantile=support_contact_quantile(base["support_kind"]),
+                support_kind=base["support_kind"],
             )
         optimization = optimize_transform_to_input(
             mesh_path=mesh_path,
@@ -555,7 +565,7 @@ def compose_object_record(
                 mesh_path,
                 transform,
                 snapped_support_y,
-                contact_quantile=support_contact_quantile(base["support_kind"]),
+                support_kind=base["support_kind"],
             )
             if support_snap_delta == 0.0:
                 support_snap_delta = final_snap_delta
@@ -568,6 +578,7 @@ def compose_object_record(
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
         )
+        support_contact = mesh_support_contact_report(mesh_path, transform, base["support_kind"])
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
         return base
@@ -579,6 +590,7 @@ def compose_object_record(
         transform_gltf=np.asarray(transform, dtype=float).tolist(),
         floor_snap_delta=float(support_snap_delta if base["support_kind"] == "floor" else 0.0),
         support_snap_delta=float(support_snap_delta),
+        support_contact=support_contact,
         render_to_input_optimization=optimization["report"],
         projection_quality=optimization["report"].get("projection_quality"),
         source_bounds=object_stats["source_bounds"],
@@ -1244,7 +1256,7 @@ def object_support_targets(
                 mesh_path,
                 transform,
                 floor_y,
-                contact_quantile=support_contact_quantile("floor"),
+                support_kind="floor",
             )
             table_bounds = transformed_mesh_bounds(mesh_path, snapped)
             table_candidates.append(
@@ -1408,6 +1420,83 @@ def room_corner_plane_texture_path(background_vggt_dir: Path | None) -> Path | N
     return candidate if candidate.is_file() else None
 
 
+def add_vggt_fitted_room_background(
+    scene: Any,
+    *,
+    vggt_dir: Path,
+    placement_bounds: np.ndarray | None,
+    margin: float,
+    depth_offset: float,
+    coordinate_contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if placement_bounds is None:
+        return add_vggt_background_mesh(
+            scene,
+            vggt_dir=vggt_dir,
+            objects_dir=Path(),
+            object_dirs={},
+            stride=16,
+            clip_masks=False,
+            clip_dilation_px=0,
+            placement_bounds=None,
+            margin=margin,
+            depth_offset=depth_offset,
+        )
+    plane_path = vggt_dir / "plane_detections.json"
+    planes = load_json(plane_path).get("planes", []) if plane_path.is_file() else []
+    plane_overrides = vggt_plane_room_overrides(planes)
+    stats = add_room_corner_background(
+        scene,
+        placement_bounds=placement_bounds,
+        margin=margin,
+        depth_offset=depth_offset,
+        texture_image_path=room_corner_plane_texture_path(vggt_dir),
+        coordinate_contract=coordinate_contract,
+        floor_y_override=plane_overrides.get("floor_y"),
+        z_back_override=plane_overrides.get("z_back"),
+        side_x_override=plane_overrides.get("side_x"),
+    )
+    stats["source"] = "vggt_textured_fitted_room_planes_expanded"
+    stats["plane_detections_path"] = str(plane_path) if plane_path.is_file() else None
+    stats["vggt_plane_overrides"] = plane_overrides
+    return stats
+
+
+def vggt_plane_room_overrides(planes: list[dict[str, Any]]) -> dict[str, float]:
+    overrides: dict[str, float] = {}
+    floor = first_room_plane(planes, "floor")
+    back_wall = first_room_plane(planes, "back_wall")
+    right_wall = first_room_plane(planes, "right_wall")
+    if floor is not None:
+        vertices = plane_vertices_gltf(floor)
+        if len(vertices) > 0:
+            overrides["floor_y"] = float(np.median(vertices[:, 1]))
+    if back_wall is not None:
+        vertices = plane_vertices_gltf(back_wall)
+        if len(vertices) > 0:
+            overrides["z_back"] = float(np.median(vertices[:, 2]))
+    if right_wall is not None:
+        vertices = plane_vertices_gltf(right_wall)
+        if len(vertices) > 0:
+            overrides["side_x"] = float(np.median(vertices[:, 0]))
+    return overrides
+
+
+def first_room_plane(planes: list[dict[str, Any]], plane_id: str) -> dict[str, Any] | None:
+    for plane in planes:
+        if str(plane.get("id") or "") == plane_id:
+            return plane
+    return None
+
+
+def plane_vertices_gltf(plane: dict[str, Any]) -> np.ndarray:
+    converted: list[tuple[float, float, float]] = []
+    for vertex in plane.get("vertices_xyz") or []:
+        if isinstance(vertex, list) and len(vertex) == 3:
+            converted.append(scene_point_to_gltf_vertex(vertex))
+    return np.asarray(converted, dtype=np.float64)
+
+
 def add_vggt_background_mesh(
     scene: Any,
     *,
@@ -1417,6 +1506,9 @@ def add_vggt_background_mesh(
     stride: int,
     clip_masks: bool,
     clip_dilation_px: int,
+    placement_bounds: np.ndarray | None = None,
+    margin: float = 1.0,
+    depth_offset: float = 0.12,
 ) -> dict[str, Any]:
     try:
         import trimesh
@@ -1448,6 +1540,7 @@ def add_vggt_background_mesh(
     vertex_indices = np.full((len(row_indices), len(col_indices)), -1, dtype=np.int32)
     vertices: list[tuple[float, float, float]] = []
     colors: list[tuple[int, int, int, int]] = []
+    uvs: list[tuple[float, float]] = []
     faces: list[tuple[int, int, int]] = []
     for row_out, y in enumerate(row_indices):
         for col_out, x in enumerate(col_indices):
@@ -1458,6 +1551,9 @@ def add_vggt_background_mesh(
             vertices.append(scene_point_to_gltf_vertex(point))
             color = rgb[y, x]
             colors.append((int(color[0]), int(color[1]), int(color[2]), 255))
+            u = float(x / max(width - 1, 1))
+            v = float(1.0 - y / max(height - 1, 1))
+            uvs.append((u, v))
 
     for row in range(len(row_indices) - 1):
         for col in range(len(col_indices) - 1):
@@ -1476,23 +1572,160 @@ def add_vggt_background_mesh(
         vertex_colors=np.asarray(colors, dtype=np.uint8),
         process=False,
     )
+    mesh.visual = TextureVisuals(
+        uv=np.asarray(uvs, dtype=np.float32),
+        material=PBRMaterial(
+            name="empty_room_vggt_projected_texture",
+            baseColorTexture=image.copy(),
+            baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+            emissiveTexture=image.copy(),
+            emissiveFactor=[0.12, 0.12, 0.12],
+            roughnessFactor=0.9,
+            metallicFactor=0.0,
+            doubleSided=True,
+        ),
+    )
+    raw_source_bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    orientation_transform, orientation_report = vggt_room_orientation_transform(vggt_dir / "plane_detections.json")
+    mesh.apply_transform(orientation_transform)
+    source_bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    transform = np.eye(4, dtype=np.float64)
+    alignment = "raw_vggt_camera_space"
+    if placement_bounds is not None and len(vertices) > 0:
+        fit_transform = vggt_room_background_fit_transform(
+            source_bounds=source_bounds,
+            placement_bounds=placement_bounds,
+            margin=margin,
+            depth_offset=depth_offset,
+        )
+        transform = fit_transform @ orientation_transform
+        mesh.apply_transform(fit_transform)
+        floor_regularization = regularize_vggt_floor_vertices(mesh)
+        alignment = "plane_guided_orientation_then_placement_bounds_fit"
+    else:
+        floor_regularization = {"status": "skipped", "reason": "missing_placement_bounds"}
     scene.add_geometry(mesh, geom_name="background_camera_clipped_000", node_name="background_camera_clipped_000")
-    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    transformed_bounds = np.asarray(mesh.bounds, dtype=np.float64)
     return {
         "path": str(points_path),
         "image_path": str(image_path),
         "mesh_count": 1,
         "source": "vggt_points_camera_clipped",
+        "alignment": alignment,
+        "orientation": orientation_report,
+        "floor_regularization": floor_regularization,
         "stride": stride,
         "clip_masks": bool(clip_masks),
         "clip_dilation_px": int(clip_dilation_px),
         "masked_pixel_ratio": float(mask.mean()) if mask.size else 0.0,
         "vertex_count": int(len(vertices)),
         "face_count": int(len(faces)),
-        "source_bounds": bounds.tolist(),
-        "transform_gltf": np.eye(4, dtype=np.float64).tolist(),
-        "transformed_bounds": bounds.tolist(),
+        "texture_source": "empty_room_image_uv_projected",
+        "texture_image_path": str(image_path),
+        "uv_count": int(len(uvs)),
+        "vertex_colors": "sampled_empty_room_image_fallback",
+        "raw_source_bounds": raw_source_bounds.tolist(),
+        "source_bounds": source_bounds.tolist(),
+        "transform_gltf": transform.tolist(),
+        "transformed_bounds": transformed_bounds.tolist(),
     }
+
+
+def regularize_vggt_floor_vertices(mesh: Any) -> dict[str, Any]:
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
+        return {"status": "skipped", "reason": "empty_mesh"}
+    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    height = float(bounds[1, 1] - bounds[0, 1])
+    if height <= 1e-8:
+        return {"status": "skipped", "reason": "degenerate_height"}
+    floor_y = float(bounds[0, 1])
+    band = max(0.18, height * 0.30)
+    floor_mask = vertices[:, 1] <= floor_y + band
+    affected = int(floor_mask.sum())
+    if affected == 0:
+        return {"status": "skipped", "reason": "no_floor_band_vertices", "floor_y": floor_y, "band": band}
+    vertices[floor_mask, 1] = floor_y
+    mesh.vertices = vertices
+    return {
+        "status": "applied",
+        "method": "lower_vggt_band_to_fitted_floor_y",
+        "floor_y": floor_y,
+        "band": float(band),
+        "affected_vertex_count": affected,
+        "affected_vertex_ratio": float(affected / len(vertices)),
+    }
+
+
+def vggt_room_orientation_transform(plane_path: Path) -> tuple[np.ndarray, dict[str, Any]]:
+    if not plane_path.is_file():
+        return np.eye(4, dtype=np.float64), {"method": "identity", "reason": "missing_plane_detections"}
+    try:
+        planes = load_json(plane_path).get("planes", [])
+    except (OSError, json.JSONDecodeError):
+        return np.eye(4, dtype=np.float64), {"method": "identity", "reason": "invalid_plane_detections"}
+    floor = first_room_plane(planes, "floor")
+    back_wall = first_room_plane(planes, "back_wall")
+    if floor is None or back_wall is None:
+        return np.eye(4, dtype=np.float64), {"method": "identity", "reason": "missing_floor_or_back_wall_plane"}
+    source_up = scene_normal_to_gltf(floor.get("fitted_normal_xyz"))
+    source_back = scene_normal_to_gltf(back_wall.get("fitted_normal_xyz"))
+    target_up = scene_normal_to_gltf(floor.get("normal_xyz"))
+    target_back = scene_normal_to_gltf(back_wall.get("normal_xyz"))
+    if source_up is None or source_back is None or target_up is None or target_back is None:
+        return np.eye(4, dtype=np.float64), {"method": "identity", "reason": "missing_plane_normals"}
+    if float(np.dot(source_up, target_up)) < 0.0:
+        source_up = -source_up
+    if float(np.dot(source_back, target_back)) < 0.0:
+        source_back = -source_back
+    source_basis = room_basis_from_up_and_back(source_up, source_back)
+    target_basis = room_basis_from_up_and_back(target_up, target_back)
+    if source_basis is None or target_basis is None:
+        return np.eye(4, dtype=np.float64), {"method": "identity", "reason": "degenerate_plane_basis"}
+    rotation = target_basis @ source_basis.T
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = rotation
+    return transform, {
+        "method": "fitted_floor_back_wall_normals_to_regularized_axes",
+        "plane_detections_path": str(plane_path),
+        "source_up_gltf": source_up.tolist(),
+        "source_back_gltf": source_back.tolist(),
+        "target_up_gltf": target_up.tolist(),
+        "target_back_gltf": target_back.tolist(),
+        "rotation_gltf": rotation.tolist(),
+    }
+
+
+def scene_normal_to_gltf(value: Any) -> np.ndarray | None:
+    normal = np.asarray(value, dtype=np.float64)
+    if normal.shape != (3,) or not np.isfinite(normal).all():
+        return None
+    mapped = np.asarray([normal[0], normal[2], -normal[1]], dtype=np.float64)
+    norm = float(np.linalg.norm(mapped))
+    if norm <= 1e-8:
+        return None
+    return mapped / norm
+
+
+def room_basis_from_up_and_back(up: np.ndarray, back: np.ndarray) -> np.ndarray | None:
+    up = np.asarray(up, dtype=np.float64)
+    back = np.asarray(back, dtype=np.float64)
+    up_norm = float(np.linalg.norm(up))
+    if up_norm <= 1e-8:
+        return None
+    up = up / up_norm
+    back = back - up * float(np.dot(back, up))
+    back_norm = float(np.linalg.norm(back))
+    if back_norm <= 1e-8:
+        return None
+    back = back / back_norm
+    right = np.cross(up, back)
+    right_norm = float(np.linalg.norm(right))
+    if right_norm <= 1e-8:
+        return None
+    right = right / right_norm
+    back = np.cross(right, up)
+    return np.stack([right, up, back], axis=1)
 
 
 def combined_object_mask(object_dirs: dict[int, Path], *, image_size: tuple[int, int], dilation_px: int) -> np.ndarray:
@@ -1540,11 +1773,11 @@ def snap_transform_to_support(
     transform: np.ndarray,
     support_y: float,
     *,
-    contact_quantile: float = FLOOR_SUPPORT_CONTACT_QUANTILE,
+    support_kind: Any = None,
 ) -> tuple[np.ndarray, float]:
     meshes = load_meshes(mesh_path)
     source_bounds = combined_bounds(meshes)
-    contact_y = transformed_mesh_contact_y(meshes, source_bounds, transform, contact_quantile=contact_quantile)
+    contact_y = transformed_mesh_contact_y(meshes, source_bounds, transform, support_kind=support_kind)
     delta = float(support_y - contact_y)
     snapped = np.asarray(transform, dtype=np.float64).copy()
     snapped[1, 3] += delta
@@ -1559,27 +1792,227 @@ def snap_transform_to_support_bounds(source_bounds: np.ndarray, transform: np.nd
     return snapped, delta
 
 
+def room_boundary_adjustment_report(mesh_path: Path, transform: np.ndarray, room_bounds: np.ndarray | None) -> dict[str, Any]:
+    if room_bounds is None:
+        return {
+            "status": "unavailable",
+            "reason": "missing_room_bounds",
+            "translation_delta": [0.0, 0.0, 0.0],
+            "transform_gltf": np.asarray(transform, dtype=np.float64).tolist(),
+        }
+    room_bounds = np.asarray(room_bounds, dtype=np.float64)
+    if room_bounds.shape != (2, 3) or not np.isfinite(room_bounds).all():
+        return {
+            "status": "unavailable",
+            "reason": "invalid_room_bounds",
+            "translation_delta": [0.0, 0.0, 0.0],
+            "transform_gltf": np.asarray(transform, dtype=np.float64).tolist(),
+        }
+    adjusted = np.asarray(transform, dtype=np.float64).copy()
+    before = transformed_mesh_bounds(mesh_path, adjusted)
+    delta = np.zeros(3, dtype=np.float64)
+    room_extent = room_bounds[1] - room_bounds[0]
+    padding = np.array(
+        [
+            max(float(room_extent[0]) * 0.04, 0.03),
+            0.0,
+            max(float(room_extent[2]) * 0.04, 0.03),
+        ],
+        dtype=np.float64,
+    )
+    inner_min = room_bounds[0] + padding
+    inner_max = room_bounds[1] - padding
+    for axis in (0, 2):
+        object_extent = float(before[1, axis] - before[0, axis])
+        inner_extent = float(inner_max[axis] - inner_min[axis])
+        if object_extent > inner_extent:
+            delta[axis] = float((inner_min[axis] + inner_max[axis]) / 2.0 - (before[0, axis] + before[1, axis]) / 2.0)
+        elif before[0, axis] < inner_min[axis]:
+            delta[axis] = float(inner_min[axis] - before[0, axis])
+        elif before[1, axis] > inner_max[axis]:
+            delta[axis] = float(inner_max[axis] - before[1, axis])
+    adjusted[:3, 3] += delta
+    after = transformed_mesh_bounds(mesh_path, adjusted)
+    changed = bool(np.any(np.abs(delta) > 1e-8))
+    return {
+        "status": "adjusted" if changed else "inside_room_bounds",
+        "method": "x_z_room_bounds_clamp",
+        "translation_delta": [float(value) for value in delta],
+        "room_bounds": room_bounds.tolist(),
+        "inner_room_bounds": np.stack([inner_min, inner_max], axis=0).tolist(),
+        "bounds_before": before.tolist(),
+        "bounds_after": after.tolist(),
+        "transform_gltf": adjusted.tolist(),
+    }
+
+
 def transformed_mesh_contact_y(
     meshes: list[Any],
     source_bounds: np.ndarray,
     transform: np.ndarray,
     *,
-    contact_quantile: float,
+    support_kind: Any = None,
 ) -> float:
+    points = transformed_mesh_vertices(meshes, source_bounds, transform)
+    if len(points) == 0:
+        return float(transformed_bounds_from_source_bounds(source_bounds, transform)[0, 1])
+    return float(support_contact_estimate(points, support_kind=support_kind)["contact_y"])
+
+
+def mesh_support_contact_report(mesh_path: Path, transform: np.ndarray, support_kind: Any) -> dict[str, Any] | None:
+    try:
+        meshes = load_meshes(mesh_path)
+        source_bounds = combined_bounds(meshes)
+        points = transformed_mesh_vertices(meshes, source_bounds, transform)
+    except Exception:
+        return None
+    if len(points) == 0:
+        return None
+    estimate = support_contact_estimate(points, support_kind=support_kind)
+    return {
+        "method": "stable_bottom_footprint_v1",
+        "support_kind": normalized_support_kind(support_kind),
+        "raw_bottom_y": float(points[:, 1].min()),
+        "contact_y": float(estimate["contact_y"]),
+        "selected_quantile": estimate["selected_quantile"],
+        "selection_reason": estimate["selection_reason"],
+        "selected_layer": estimate["selected_layer"],
+    }
+
+
+def transformed_mesh_vertices(meshes: list[Any], source_bounds: np.ndarray, transform: np.ndarray) -> np.ndarray:
     asset_transform = np.asarray(transform, dtype=np.float64) @ normalization_transform(source_bounds)
     vertices: list[np.ndarray] = []
     for mesh in meshes:
         mesh_vertices = np.asarray(mesh.vertices, dtype=np.float64)
         if mesh_vertices.ndim == 2 and mesh_vertices.shape[1] == 3 and len(mesh_vertices) > 0:
-            vertices.append(transform_points(mesh_vertices, asset_transform))
+            transformed = transform_points(mesh_vertices, asset_transform)
+            transformed = transformed[np.isfinite(transformed).all(axis=1)]
+            if len(transformed) > 0:
+                vertices.append(transformed)
     if not vertices:
-        return float(transformed_bounds_from_source_bounds(source_bounds, transform)[0, 1])
-    y_values = np.concatenate(vertices, axis=0)[:, 1]
-    y_values = y_values[np.isfinite(y_values)]
-    if len(y_values) == 0:
-        return float(transformed_bounds_from_source_bounds(source_bounds, transform)[0, 1])
-    quantile = float(np.clip(contact_quantile, 0.0, 100.0))
-    return float(np.percentile(y_values, quantile))
+        return np.empty((0, 3), dtype=np.float64)
+    return np.concatenate(vertices, axis=0)
+
+
+def support_contact_candidates(points: np.ndarray, *, support_kind: Any = None) -> list[dict[str, Any]]:
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3 or len(points) == 0:
+        return []
+    support_kind = normalized_support_kind(support_kind)
+    quantiles = SUPPORT_CONTACT_TABLETOP_QUANTILES if support_kind == "tabletop" else SUPPORT_CONTACT_FLOOR_QUANTILES
+    x_span = max(float(points[:, 0].max() - points[:, 0].min()), 1e-8)
+    z_span = max(float(points[:, 2].max() - points[:, 2].min()), 1e-8)
+    y_span = max(float(points[:, 1].max() - points[:, 1].min()), 1e-8)
+    layer_tolerance = max(y_span * 0.005, 1e-5)
+    candidates: list[dict[str, Any]] = []
+    for quantile in quantiles:
+        contact_y = float(np.percentile(points[:, 1], quantile))
+        layer = points[points[:, 1] <= contact_y + layer_tolerance]
+        accepted, report = support_contact_layer_quality(
+            layer,
+            total_count=len(points),
+            x_span=x_span,
+            z_span=z_span,
+            support_kind=support_kind,
+        )
+        candidates.append(
+            {
+                "contact_y": contact_y,
+                "quantile": float(quantile),
+                "accepted": accepted,
+                **report,
+            }
+        )
+    return candidates
+
+
+def support_contact_estimate(points: np.ndarray, *, support_kind: Any = None) -> dict[str, Any]:
+    y_values = np.asarray(points, dtype=np.float64)[:, 1]
+    support_kind = normalized_support_kind(support_kind)
+    if support_kind in {"floor", "tabletop"}:
+        return {
+            "contact_y": float(y_values.min()),
+            "selected_quantile": 0.0,
+            "selection_reason": f"{support_kind}_bottom_extent",
+            "selected_layer": None,
+        }
+    candidates = support_contact_candidates(points, support_kind=support_kind)
+    for candidate in candidates:
+        if candidate["accepted"]:
+            return {
+                "contact_y": float(candidate["contact_y"]),
+                "selected_quantile": float(candidate["quantile"]),
+                "selection_reason": "stable_contact_layer",
+                "selected_layer": contact_layer_report(candidate),
+            }
+    fallback_y = float(np.percentile(y_values, SUPPORT_CONTACT_FALLBACK_QUANTILE))
+    fallback_layer = None
+    if candidates:
+        fallback_layer = min(candidates, key=lambda item: abs(float(item["quantile"]) - SUPPORT_CONTACT_FALLBACK_QUANTILE))
+        fallback_layer = contact_layer_report(fallback_layer)
+    return {
+        "contact_y": fallback_y,
+        "selected_quantile": float(SUPPORT_CONTACT_FALLBACK_QUANTILE),
+        "selection_reason": "fallback_quantile",
+        "selected_layer": fallback_layer,
+    }
+
+
+def contact_layer_report(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "quantile": float(candidate["quantile"]),
+        "accepted": bool(candidate["accepted"]),
+        "reason": candidate.get("reason"),
+        "vertex_ratio": float(candidate.get("vertex_ratio", 0.0)),
+        "x_span_ratio": float(candidate.get("x_span_ratio", 0.0)),
+        "z_span_ratio": float(candidate.get("z_span_ratio", 0.0)),
+        "area_ratio": float(candidate.get("area_ratio", 0.0)),
+    }
+
+
+def support_contact_layer_quality(
+    layer: np.ndarray,
+    *,
+    total_count: int,
+    x_span: float,
+    z_span: float,
+    support_kind: str | None,
+) -> tuple[bool, dict[str, Any]]:
+    if len(layer) == 0 or total_count <= 0:
+        return False, {
+            "reason": "empty_contact_layer",
+            "vertex_ratio": 0.0,
+            "x_span_ratio": 0.0,
+            "z_span_ratio": 0.0,
+            "area_ratio": 0.0,
+        }
+    layer_x = float(layer[:, 0].max() - layer[:, 0].min())
+    layer_z = float(layer[:, 2].max() - layer[:, 2].min())
+    x_ratio = float(np.clip(layer_x / x_span, 0.0, 1.0))
+    z_ratio = float(np.clip(layer_z / z_span, 0.0, 1.0))
+    area_ratio = x_ratio * z_ratio
+    vertex_ratio = float(len(layer) / total_count)
+    is_tabletop = support_kind == "tabletop"
+    min_vertex_ratio = TABLETOP_CONTACT_MIN_VERTEX_RATIO if is_tabletop else SUPPORT_CONTACT_MIN_VERTEX_RATIO
+    min_area_ratio = SUPPORT_CONTACT_MIN_AREA_RATIO if is_tabletop else 0.025
+    min_span_ratio = SUPPORT_CONTACT_MIN_SPAN_RATIO if is_tabletop else 0.08
+    max_span_ratio = 0.45 if is_tabletop else 0.35
+    excellent_footprint = area_ratio >= SUPPORT_CONTACT_EXCELLENT_AREA_RATIO and min(x_ratio, z_ratio) >= 0.45
+    stable_footprint = (
+        area_ratio >= min_area_ratio
+        and max(x_ratio, z_ratio) >= max_span_ratio
+        and min(x_ratio, z_ratio) >= min_span_ratio
+    )
+    accepted = excellent_footprint or (stable_footprint and vertex_ratio >= min_vertex_ratio)
+    reason = "accepted" if accepted else "unstable_or_tiny_contact_layer"
+    return accepted, {
+        "reason": reason,
+        "vertex_ratio": vertex_ratio,
+        "x_span_ratio": x_ratio,
+        "z_span_ratio": z_ratio,
+        "area_ratio": area_ratio,
+    }
 
 
 def transformed_mesh_bounds(mesh_path: Path, transform: np.ndarray) -> np.ndarray:
@@ -1614,6 +2047,9 @@ def add_room_corner_background(
     texture_image_path: Path | None = None,
     coordinate_contract: dict[str, Any] | None = None,
     texture_grid_steps: int = 36,
+    floor_y_override: float | None = None,
+    z_back_override: float | None = None,
+    side_x_override: float | None = None,
 ) -> dict[str, Any]:
     try:
         import trimesh
@@ -1628,8 +2064,8 @@ def add_room_corner_background(
     y_pad = max(float(extent[1]) * 0.10, 0.05)
     x_min = float(placement_bounds[0, 0] - x_pad)
     x_max = float(placement_bounds[1, 0] + x_pad)
-    floor_y = float(placement_bounds[0, 1] - y_pad)
-    z_back = float(placement_bounds[0, 2] - max(depth_offset, z_pad))
+    floor_y = float(floor_y_override if floor_y_override is not None else placement_bounds[0, 1] - y_pad)
+    z_back = float(z_back_override if z_back_override is not None else placement_bounds[0, 2] - max(depth_offset, z_pad))
     z_front = float(placement_bounds[1, 2] + z_pad)
     camera_frustum_wall_top = max(0.0, -z_back) * 0.56
     wall_top_y = float(
@@ -1638,7 +2074,7 @@ def add_room_corner_background(
             camera_frustum_wall_top,
         )
     )
-    side_x = x_max
+    side_x = float(side_x_override if side_x_override is not None else x_max)
 
     texture_image = Image.open(texture_image_path).convert("RGB") if texture_image_path is not None else None
     texture_contract = room_corner_texture_contract(texture_image, coordinate_contract)
@@ -1978,6 +2414,40 @@ def background_fit_transform(
     target_center = (placement_bounds[0] + placement_bounds[1]) / 2.0
     # GLB Z is back toward the camera for SceneForge exports, so smaller Z is farther away.
     target_center[2] = placement_bounds[1, 2] - depth_offset - target_extent[2] / 2.0
+
+    scale = target_extent / source_extent
+    source_center = (source_bounds[0] + source_bounds[1]) / 2.0
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = np.diag(scale)
+    transform[:3, 3] = target_center - source_center * scale
+    return transform
+
+
+def vggt_room_background_fit_transform(
+    *,
+    source_bounds: np.ndarray,
+    placement_bounds: np.ndarray,
+    margin: float,
+    depth_offset: float,
+) -> np.ndarray:
+    source_extent = source_bounds[1] - source_bounds[0]
+    placement_extent = placement_bounds[1] - placement_bounds[0]
+    if np.any(source_extent <= 1e-8) or np.any(placement_extent <= 1e-8):
+        raise ValueError("Cannot fit VGGT background with degenerate bounds")
+
+    visual_margin = max(float(margin), 1.75)
+    target_extent = np.array(
+        [
+            max(float(placement_extent[0]) * visual_margin, float(placement_extent[0]) + 0.55),
+            max(float(placement_extent[1]) * 2.75, 1.45),
+            max(float(placement_extent[2]) * visual_margin, float(placement_extent[2]) + 0.75),
+        ],
+        dtype=np.float64,
+    )
+    target_center = (placement_bounds[0] + placement_bounds[1]) / 2.0
+    target_center[1] = float(placement_bounds[0, 1] + target_extent[1] / 2.0)
+    # GLB Z is back toward the camera for SceneForge exports, so smaller Z is farther away.
+    target_center[2] = float(placement_bounds[1, 2] - depth_offset - target_extent[2] / 2.0)
 
     scale = target_extent / source_extent
     source_center = (source_bounds[0] + source_bounds[1]) / 2.0

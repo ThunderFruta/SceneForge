@@ -6,9 +6,11 @@ import io
 from PIL import Image
 
 from ObjectCompletion.openai_image import (
+    build_application_query_prompt,
     build_openai_prompt,
     decode_image_response,
     ensure_transparent_completed_image,
+    render_application_query,
     render_target_square,
 )
 
@@ -48,6 +50,30 @@ def test_render_target_square_preserves_transparent_background() -> None:
     assert rendered.mode == "RGBA"
     assert rendered.getpixel((0, 0))[3] == 0
     assert rendered.getchannel("A").getbbox() is not None
+
+
+def test_application_query_prompt_keeps_output_object_only() -> None:
+    prompt = build_application_query_prompt("vase")
+
+    assert "Application-Querying layout" in prompt
+    assert "Extracted Object" in prompt
+    assert "transparent background" in prompt
+    assert "two-panel layout" in prompt
+    assert "Do not include floor" in prompt
+
+
+def test_render_application_query_writes_two_panel_context() -> None:
+    context = Image.new("RGB", (80, 60), (90, 120, 140))
+    target = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    for x in range(10, 30):
+        for y in range(8, 32):
+            target.putpixel((x, y), (120, 80, 40, 255))
+
+    rendered = render_application_query(context, target, label="chair", canvas_size=128)
+
+    assert rendered.mode == "RGB"
+    assert rendered.size[0] > rendered.size[1]
+    assert rendered.getbbox() is not None
 
 
 def test_decode_image_response_preserves_alpha() -> None:

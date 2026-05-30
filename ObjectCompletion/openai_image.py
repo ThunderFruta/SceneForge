@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-5.5"
@@ -34,6 +34,7 @@ def run_openai_object_completion(
     canvas_size: int = 1024,
     seed: int = 20260528,
     max_objects: int = 0,
+    context_mode: str = "reference-square",
 ) -> dict[str, Any]:
     root = Path(objects_dir)
     if not root.is_dir():
@@ -74,6 +75,7 @@ def run_openai_object_completion(
                     canvas_size=canvas_size,
                     seed=seed,
                     index=index,
+                    context_mode=context_mode,
                 )
             )
             print(f"Wrote {object_dir / 'completed_crop.png'}", flush=True)
@@ -94,6 +96,7 @@ def run_openai_object_completion(
                     canvas_size=canvas_size,
                     seed=seed,
                     index=index,
+                    context_mode=context_mode,
                 )
                 futures[future] = (index, object_dir)
             for future in as_completed(futures):
@@ -115,6 +118,7 @@ def complete_object_dir(
     canvas_size: int,
     seed: int,
     index: int,
+    context_mode: str,
 ) -> dict[str, Any]:
     metadata = read_metadata(object_dir / "metadata.json")
     label = str(metadata.get("detector_label") or metadata.get("primitive_label") or "object")
@@ -128,12 +132,30 @@ def complete_object_dir(
     input_path = object_dir / "completion_openai_input.png"
     reference_path = object_dir / "completion_openai_reference.png"
     target_input.save(input_path)
-    if context_crop is not None:
+    application_query_path: Path | None = None
+    context_mode_requested = normalize_context_mode(context_mode)
+    context_mode_effective = context_mode_requested
+    context_mode_warning = None
+    if context_mode_effective == "application-query" and context_crop is not None:
+        application_query_path = object_dir / "application_query.png"
+        render_application_query(
+            context_crop,
+            target_input,
+            label=label,
+            canvas_size=canvas_size,
+        ).save(application_query_path)
+        input_path = application_query_path
+        reference_path = None
+        prompt = build_application_query_prompt(label)
+    elif context_crop is not None:
         render_reference_square(context_crop, canvas_size=canvas_size).save(reference_path)
+        prompt = build_openai_prompt(label)
     else:
         reference_path = None
-
-    prompt = build_openai_prompt(label)
+        prompt = build_openai_prompt(label)
+        if context_mode_effective == "application-query":
+            context_mode_warning = "application_query_requested_without_context_reference"
+            context_mode_effective = "reference-square"
     result_image, backend_model, backend_warning = call_openai_image_completion(
         client=client,
         model=model,
@@ -160,11 +182,16 @@ def complete_object_dir(
         "completed_crop": "completed_crop.png",
         "source_crop": "masked_crop.png",
         "context_crop": context_reference_name,
+        "completion_context_mode_requested": context_mode_requested,
+        "completion_context_mode": context_mode_effective,
+        "application_query": application_query_path.name if application_query_path is not None else None,
         "openai_input": input_path.name,
         "openai_reference": reference_path.name if reference_path is not None else None,
         "background": "transparent",
         "order_index": index,
     }
+    if context_mode_warning:
+        record["context_mode_warning"] = context_mode_warning
     if backend_warning:
         record["backend_warning"] = backend_warning
     (object_dir / "completion_metadata.json").write_text(
@@ -172,6 +199,12 @@ def complete_object_dir(
         encoding="utf-8",
     )
     return record
+
+
+def normalize_context_mode(value: str) -> str:
+    if value not in {"reference-square", "application-query"}:
+        raise ValueError("--completion-context-mode must be reference-square or application-query")
+    return value
 
 
 def build_openai_prompt(label: str) -> str:
@@ -187,6 +220,23 @@ def build_openai_prompt(label: str) -> str:
         "Do not add a room, full scene, extra furniture, text, watermark, or new objects. "
         "No floor under the object. Do not add a floor, ground plane, base slab, platform, plinth, shadow catcher, or support surface under the object; keep only geometry that is part of the target object itself. "
         "Return one clean square product-style PNG of the single completed target object on a transparent background. "
+        "Keep every non-object background pixel fully transparent."
+    )
+
+
+def build_application_query_prompt(label: str) -> str:
+    normalized = label.lower().strip()
+    constraints = label_specific_constraints(normalized)
+    return (
+        f"The input image is an Application-Querying layout for the target object: {label}. "
+        "The left panel shows the source scene with the target object emphasized. "
+        "The right panel is labeled Extracted Object and contains the current visible object crop. "
+        "Use the left panel only for perspective, material, color, lighting, scale, and occlusion cues. "
+        "Replace the right-panel object with one complete isolated render of only the marked target object. "
+        "Preserve visible target-object pixels and complete missing or hidden parts conservatively. "
+        f"{constraints} "
+        "Do not include floor, walls, platforms, shadows, other objects, text, labels, frame borders, or the two-panel layout in the output. "
+        "Return one clean square product-style PNG of the single completed object on a transparent background. "
         "Keep every non-object background pixel fully transparent."
     )
 
@@ -374,6 +424,43 @@ def render_reference_square(reference_crop: Image.Image, *, canvas_size: int) ->
     x = (canvas_size - reference.width) // 2
     y = (canvas_size - reference.height) // 2
     canvas.paste(reference, (x, y))
+    return canvas
+
+
+def render_application_query(
+    context_crop: Image.Image,
+    target_input: Image.Image,
+    *,
+    label: str,
+    canvas_size: int,
+) -> Image.Image:
+    panel_width = int(canvas_size)
+    panel_height = int(canvas_size)
+    gutter = max(12, panel_width // 48)
+    header_height = max(48, panel_height // 16)
+    canvas = Image.new("RGB", (panel_width * 2 + gutter, panel_height), (232, 230, 224))
+    draw = ImageDraw.Draw(canvas)
+
+    left = render_reference_square(context_crop, canvas_size=panel_width)
+    right = Image.new("RGB", (panel_width, panel_height), (248, 247, 243))
+    right_target = target_input.convert("RGBA")
+    card_margin = max(24, panel_width // 24)
+    target_max = panel_width - card_margin * 2
+    right_target.thumbnail((target_max, target_max - header_height), Image.Resampling.LANCZOS)
+    target_x = (panel_width - right_target.width) // 2
+    target_y = header_height + max(8, (panel_height - header_height - right_target.height) // 2)
+    right.paste(right_target.convert("RGB"), (target_x, target_y), right_target.getchannel("A"))
+
+    canvas.paste(left, (0, 0))
+    right_x = panel_width + gutter
+    canvas.paste(right, (right_x, 0))
+
+    border_width = max(3, panel_width // 180)
+    draw.rectangle((0, 0, panel_width - 1, panel_height - 1), outline=(34, 91, 99), width=border_width)
+    draw.rectangle((right_x, 0, right_x + panel_width - 1, panel_height - 1), outline=(74, 69, 59), width=border_width)
+    draw.rectangle((right_x, 0, right_x + panel_width - 1, header_height), fill=(36, 34, 30))
+    draw.text((right_x + card_margin, max(10, header_height // 4)), "Extracted Object", fill=(255, 252, 240))
+    draw.text((card_margin, max(10, header_height // 4)), f"Source context: {label}", fill=(12, 43, 48))
     return canvas
 
 

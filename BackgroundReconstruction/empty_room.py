@@ -78,14 +78,19 @@ def generate_empty_room(
     edit_mask = apply_mask_feather(binary_mask, mask_feather_px)
 
     mask_path = output / "empty_room_mask.png"
+    foreground_removal_mask_path = output / "foreground_removal_mask.png"
     openai_mask_path = output / "empty_room_openai_mask.png"
     input_path = output / "empty_room_openai_input.png"
+    edit_input_path = output / "empty_room_edit_input.png"
     empty_room_path = output / "empty_room.png"
     metadata_path = output / "empty_room_metadata.json"
-    Image.fromarray(binary_mask, mode="L").save(mask_path)
+    removal_mask_image = Image.fromarray(binary_mask, mode="L")
+    removal_mask_image.save(mask_path)
+    removal_mask_image.save(foreground_removal_mask_path)
     build_openai_edit_mask(edit_mask).save(openai_mask_path)
     edit_input = build_edit_input(loaded.image, edit_mask, fill_mode=fill_mode)
     edit_input.save(input_path)
+    edit_input.save(edit_input_path)
 
     prompt = build_empty_room_prompt()
     warnings = build_mask_warnings(
@@ -141,9 +146,11 @@ def generate_empty_room(
             "feather_px": int(mask_feather_px),
         },
         "openai_input_image_path": str(input_path),
+        "empty_room_edit_input_path": str(edit_input_path),
         "openai_mask_image_path": str(openai_mask_path),
         "output_image_path": str(empty_room_path),
         "empty_room_mask_path": str(mask_path),
+        "foreground_removal_mask_path": str(foreground_removal_mask_path),
         "image_edit_backend": backend,
         "model": backend_model,
         "prompt": prompt,
