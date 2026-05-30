@@ -252,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     compose_scene.add_argument("--no-snap-objects-to-floor", action="store_true")
     compose_scene.add_argument("--no-optimize-placements", action="store_true")
     compose_scene.add_argument("--source-image")
-    compose_scene.add_argument("--background-margin", type=float, default=2.2)
+    compose_scene.add_argument("--background-margin", type=float, default=1.0)
     compose_scene.add_argument(
         "--background-depth-offset",
         type=float,

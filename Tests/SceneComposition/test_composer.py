@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from SceneComposition.composer import compose_scene, placement_transform_to_gltf
+from SceneComposition.composer import compose_scene, placement_transform_to_gltf, projection_quality_report
 from SceneComposition.placement import build_object_fit_targets, choose_object_supports, fit_object_placements
 
 
@@ -33,6 +33,17 @@ def write_box_glb(path: Path, *, extents: tuple[float, float, float] = (1.0, 1.0
     mesh.export(path)
 
 
+def write_jagged_bottom_glb(path: Path) -> None:
+    import trimesh
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    vertices = np.asarray(mesh.vertices).copy()
+    vertices[0, 1] -= 0.35
+    mesh.vertices = vertices
+    mesh.export(path)
+
+
 def write_background_vggt_fixture(vggt_dir: Path) -> None:
     vggt_dir.mkdir(parents=True, exist_ok=True)
     points = np.zeros((4, 4, 3), dtype=np.float32)
@@ -41,6 +52,24 @@ def write_background_vggt_fixture(vggt_dir: Path) -> None:
             points[y, x] = [float(x), 10.0 + float(y), float(y) / 10.0]
     np.save(vggt_dir / "vggt_points.npy", points)
     Image.new("RGB", (4, 4), (40, 80, 120)).save(vggt_dir / "empty_room.png")
+
+
+def test_projection_quality_accepts_occluded_floor_bottom_with_review() -> None:
+    target = np.asarray([100.0, 50.0, 180.0, 150.0], dtype=np.float64)
+    projected = np.asarray([98.0, 55.0, 182.0, 205.0], dtype=np.float64)
+    oversized = np.asarray([40.0, 55.0, 240.0, 205.0], dtype=np.float64)
+
+    rejected = projection_quality_report(projected, target)
+    accepted = projection_quality_report(projected, target, allow_occluded_bottom=True)
+    oversized_rejected = projection_quality_report(oversized, target, allow_occluded_bottom=True)
+
+    assert rejected["status"] == "rejected"
+    assert rejected["reason"] == "vertical_edge_error"
+    assert accepted["status"] == "accepted_occluded_bottom"
+    assert accepted["accepted"] is True
+    assert accepted["reason"] == "occluded_bottom_edge_tolerated"
+    assert oversized_rejected["status"] == "rejected"
+    assert oversized_rejected["horizontal_edge_error_ratio"] > oversized_rejected["horizontal_threshold"]
 
 
 def write_plane_report(path: Path, *, floor_z: float = 0.0) -> None:
@@ -347,6 +376,50 @@ def test_compose_scene_room_corner_background_is_structural(tmp_path: Path) -> N
     assert report["background"]["face_count"] == 6
     assert report["background"]["floor_y"] < report["objects"][0]["transformed_bounds"][0][1]
     assert report["background"]["z_back"] < report["objects"][0]["transformed_bounds"][0][2]
+    assert report["background"]["wall_top_y"] >= abs(report["background"]["z_back"]) * 0.55
+
+
+def test_compose_scene_flattens_table_floor_contact_artifacts(tmp_path: Path) -> None:
+    background = tmp_path / "background.glb"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    object_geometry = tmp_path / "object_geometry.json"
+    output_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_jagged_bottom_glb(table_dir / "hunyuan3d_textured.glb")
+    table_dir.mkdir(parents=True, exist_ok=True)
+    (table_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 1.0, 1.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=object_geometry,
+        output_dir=output_dir,
+        background_fit="room-corner",
+        object_scale_factor=1.0,
+    )
+
+    cleanup = report["objects"][0]["mesh_cleanup"]["floor_contact_flatten"][0]
+    assert cleanup["status"] == "applied"
+    assert cleanup["clamped_vertex_count"] > 0
 
 
 def test_compose_scene_snaps_objects_to_floor(tmp_path: Path) -> None:
@@ -551,6 +624,8 @@ def test_fit_object_placements_and_compose_explicit_records(tmp_path: Path) -> N
     assert placements["objects"][0]["losses"]["silhouette"] is not None
     assert placements["objects"][0]["quality"]["silhouette_proxy"]["method"] == "bbox_projection_proxy"
     assert placements["objects"][0]["quality"]["support_footprint"]["status"] in {"accepted", "warning", "rejected"}
+    assert sum(placements["quality"]["status_counts"]["projection"].values()) == 3
+    assert placements["quality"]["losses"]["bbox_projection"]["count"] == 3
     assert (placement_dir / "object_fit_targets.json").is_file()
     assert (placement_dir / "object_placements.json").is_file()
     assert (placement_dir / "placement_quality.json").is_file()
@@ -787,7 +862,7 @@ def test_explicit_placement_cli_commands(tmp_path: Path) -> None:
     assert (placement_dir / "object_placements.json").is_file()
 
 
-def test_compose_scene_scales_and_spreads_chairs_from_table(tmp_path: Path) -> None:
+def test_compose_scene_does_not_apply_chair_specific_scale_or_pose(tmp_path: Path) -> None:
     background = tmp_path / "background.glb"
     objects_dir = tmp_path / "objects"
     table_dir = objects_dir / "01_table"
@@ -839,12 +914,12 @@ def test_compose_scene_scales_and_spreads_chairs_from_table(tmp_path: Path) -> N
     )
 
     by_id = {item["detection_id"]: item for item in report["objects"]}
-    assert by_id[2]["label_scale_factor"] == 0.78
-    assert by_id[2]["spacing_delta_gltf"][0] > 0.0
-    assert by_id[2]["semantic_orientation_kind"] == "face_nearest_table"
-    assert np.isclose(by_id[2]["semantic_yaw_radians"], -np.pi / 2.0)
+    assert by_id[2]["label_scale_factor"] == 1.0
+    assert by_id[2]["spacing_delta_gltf"] == [0.0, 0.0, 0.0]
+    assert by_id[2]["semantic_orientation_kind"] is None
+    assert by_id[2]["semantic_yaw_radians"] == 0.0
     chair_extent_x = by_id[2]["transformed_bounds"][1][0] - by_id[2]["transformed_bounds"][0][0]
-    assert np.isclose(chair_extent_x, 0.78)
+    assert np.isclose(chair_extent_x, 1.0)
 
 
 def test_compose_scene_writes_support_dof_and_render_proxy_overlay(tmp_path: Path) -> None:

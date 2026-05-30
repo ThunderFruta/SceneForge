@@ -18,18 +18,15 @@ TABLE_SUPPORT_LABELS = ("table", "desk", "counter")
 TABLETOP_OBJECT_LABELS = ("vase", "flower", "plant", "lamp", "book", "bowl", "cup", "glass", "plate", "pot")
 PROJECTION_VERTICAL_EDGE_REJECT_RATIO = 0.35
 PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO = 0.65
-LABEL_SCALE_FACTORS = (
-    ("chair", 0.78),
-)
-FLOOR_OBJECT_SPACING_OFFSETS = (
-    ("chair", 0.12),
-)
-ORIENT_TOWARD_SUPPORT_LABELS = ("chair", "stool", "bench")
-SEMANTIC_FRONT_AXIS_GLTF = {
-    "chair": "+Z",
-    "stool": "+Z",
-    "bench": "+Z",
-}
+PROJECTION_OCCLUDED_BOTTOM_TOP_EDGE_REVIEW_RATIO = 0.40
+PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO = 0.55
+PROJECTION_CENTER_REJECT_RATIO = 0.35
+PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO = 2.30
+LABEL_SCALE_FACTORS: tuple[tuple[str, float], ...] = ()
+FLOOR_OBJECT_SPACING_OFFSETS: tuple[tuple[str, float], ...] = ()
+FLOOR_CONTACT_FLATTEN_QUANTILE = 6.0
+ORIENT_TOWARD_SUPPORT_LABELS: tuple[str, ...] = ()
+SEMANTIC_FRONT_AXIS_GLTF: dict[str, str] = {}
 
 
 def compose_scene(
@@ -46,7 +43,7 @@ def compose_scene(
     placement_orientation: str = "upright",
     object_scale_factor: float = 0.85,
     background_fit: str = "room-corner",
-    background_margin: float = 2.2,
+    background_margin: float = 1.0,
     background_depth_offset: float = 0.12,
     background_vggt_dir: str | Path | None = None,
     background_stride: int = 16,
@@ -345,6 +342,7 @@ def compose_explicit_placement_record(
             mesh_path,
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
+            floor_contact_flatten=should_flatten_floor_contact(label, support_kind),
         )
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
@@ -361,6 +359,7 @@ def compose_explicit_placement_record(
         support_snap_delta=float(support_snap_delta),
         source_bounds=object_stats["source_bounds"],
         transformed_bounds=object_stats["transformed_bounds"],
+        mesh_cleanup=object_stats.get("mesh_cleanup"),
     )
     return base
 
@@ -470,6 +469,7 @@ def compose_object_record(
             mesh_path,
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
+            floor_contact_flatten=should_flatten_floor_contact(label, base["support_kind"]),
         )
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
@@ -486,6 +486,7 @@ def compose_object_record(
         projection_quality=optimization["report"].get("projection_quality"),
         source_bounds=object_stats["source_bounds"],
         transformed_bounds=object_stats["transformed_bounds"],
+        mesh_cleanup=object_stats.get("mesh_cleanup"),
     )
     return base
 
@@ -535,16 +536,27 @@ def optimize_transform_to_input(
         return {"transform": transform, "report": base_report}
 
     support_y = float(support_target["support_y"])
+    allow_occluded_bottom = bool((support_target or {}).get("support_kind") == "floor")
     initial_loss = bbox_projection_loss(initial_bbox, target_bbox)
-    best_transform = np.asarray(transform, dtype=np.float64)
-    best_bbox = initial_bbox
-    best_loss = initial_loss
-    best_delta = np.zeros(3, dtype=np.float64)
-    best_yaw = 0.0
-    best_scale = 1.0
+    initial_quality = projection_quality_report(initial_bbox, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
+    best_candidate_transform = np.asarray(transform, dtype=np.float64)
+    best_candidate_bbox = initial_bbox
+    best_candidate_loss = initial_loss
+    best_candidate_delta = np.zeros(3, dtype=np.float64)
+    best_candidate_yaw = 0.0
+    best_candidate_scale = 1.0
+    best_candidate_quality = initial_quality
+    best_accepted_transform = np.asarray(transform, dtype=np.float64)
+    best_accepted_bbox = initial_bbox
+    best_accepted_loss = initial_loss if initial_quality.get("status") != "rejected" else float("inf")
+    best_accepted_delta = np.zeros(3, dtype=np.float64)
+    best_accepted_yaw = 0.0
+    best_accepted_scale = 1.0
+    best_accepted_quality = initial_quality
     candidate_count = 0
+    accepted_candidate_count = 0
     for dx in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
-        for dz in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
+        for dz in (-0.56, -0.44, -0.32, -0.24, -0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
             for yaw in (-0.50, -0.25, 0.0, 0.25, 0.50):
                 for scale in (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40):
                     candidate_count += 1
@@ -554,33 +566,47 @@ def optimize_transform_to_input(
                     if projected is None:
                         continue
                     loss = bbox_projection_loss(projected, target_bbox) + support_penalty(source_bounds, candidate, support_y) + abs(float(np.log(scale))) * 0.08
-                    if loss < best_loss:
-                        best_loss = loss
-                        best_transform = candidate
-                        best_bbox = projected
-                        best_delta = np.array([dx, 0.0, dz], dtype=np.float64)
-                        best_yaw = yaw
-                        best_scale = scale
-    quality = projection_quality_report(
-        best_bbox,
-        target_bbox,
-        allow_occluded_bottom=bool((support_target or {}).get("support_kind") == "floor"),
-    )
-    accepted = quality.get("status") != "rejected"
-    final_transform = best_transform if accepted else np.asarray(transform, dtype=np.float64)
-    final_bbox = best_bbox if accepted else initial_bbox
-    final_loss = best_loss if accepted else initial_loss
+                    quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
+                    if loss < best_candidate_loss:
+                        best_candidate_loss = loss
+                        best_candidate_transform = candidate
+                        best_candidate_bbox = projected
+                        best_candidate_delta = np.array([dx, 0.0, dz], dtype=np.float64)
+                        best_candidate_yaw = yaw
+                        best_candidate_scale = scale
+                        best_candidate_quality = quality
+                    candidate_accepted = quality.get("status") != "rejected"
+                    if candidate_accepted:
+                        accepted_candidate_count += 1
+                        if loss < best_accepted_loss:
+                            best_accepted_loss = loss
+                            best_accepted_transform = candidate
+                            best_accepted_bbox = projected
+                            best_accepted_delta = np.array([dx, 0.0, dz], dtype=np.float64)
+                            best_accepted_yaw = yaw
+                            best_accepted_scale = scale
+                            best_accepted_quality = quality
+    accepted = np.isfinite(best_accepted_loss)
+    final_transform = best_accepted_transform if accepted else np.asarray(transform, dtype=np.float64)
+    final_bbox = best_accepted_bbox if accepted else initial_bbox
+    final_loss = best_accepted_loss if accepted else initial_loss
+    final_quality = best_accepted_quality if accepted else initial_quality
     base_report.update(
         initial_loss=float(initial_loss),
         optimized_loss=float(final_loss),
-        candidate_loss=float(best_loss),
+        candidate_loss=float(best_candidate_loss),
         optimized_projected_bbox_xyxy=final_bbox.tolist(),
-        candidate_projected_bbox_xyxy=best_bbox.tolist(),
-        delta_gltf=[float(value) for value in best_delta] if accepted else [0.0, 0.0, 0.0],
-        yaw_delta_radians=float(best_yaw) if accepted else 0.0,
-        uniform_scale_delta=float(best_scale) if accepted else 1.0,
+        candidate_projected_bbox_xyxy=best_candidate_bbox.tolist(),
+        delta_gltf=[float(value) for value in best_accepted_delta] if accepted else [0.0, 0.0, 0.0],
+        yaw_delta_radians=float(best_accepted_yaw) if accepted else 0.0,
+        uniform_scale_delta=float(best_accepted_scale) if accepted else 1.0,
         candidate_count=int(candidate_count),
-        projection_quality=quality,
+        accepted_candidate_count=int(accepted_candidate_count),
+        candidate_projection_quality=best_candidate_quality,
+        candidate_uniform_scale_delta=float(best_candidate_scale),
+        candidate_delta_gltf=[float(value) for value in best_candidate_delta],
+        candidate_yaw_delta_radians=float(best_candidate_yaw),
+        projection_quality=final_quality,
     )
     return {"transform": final_transform, "report": base_report}
 
@@ -664,21 +690,46 @@ def projection_quality_report(
             "threshold": PROJECTION_VERTICAL_EDGE_REJECT_RATIO,
             "occluded_bottom_threshold": PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO,
         }
+    target_width = max(float(target[2] - target[0]), 1.0)
     target_height = max(float(target[3] - target[1]), 1.0)
+    projected_width = max(float(projected[2] - projected[0]), 1.0)
+    projected_height = max(float(projected[3] - projected[1]), 1.0)
+    projected_area = projected_width * projected_height
+    target_area = target_width * target_height
     top_error = abs(float(projected[1] - target[1]))
     bottom_error = abs(float(projected[3] - target[3]))
+    left_error = abs(float(projected[0] - target[0]))
+    right_error = abs(float(projected[2] - target[2]))
+    center_x_error = abs(float((projected[0] + projected[2] - target[0] - target[2]) / 2.0))
+    center_y_error = abs(float((projected[1] + projected[3] - target[1] - target[3]) / 2.0))
     top_ratio = top_error / target_height
     bottom_ratio = bottom_error / target_height
+    left_ratio = left_error / target_width
+    right_ratio = right_error / target_width
+    center_x_ratio = center_x_error / target_width
+    center_y_ratio = center_y_error / target_height
+    width_error_ratio = abs(projected_width - target_width) / target_width
+    height_error_ratio = abs(projected_height - target_height) / target_height
+    area_ratio = projected_area / max(target_area, 1.0)
     edge_ratio = max(top_error, bottom_error) / target_height
+    horizontal_edge_ratio = max(left_ratio, right_ratio, width_error_ratio)
     occluded_bottom_accepted = (
         accepted is None
         and allow_occluded_bottom
-        and top_ratio <= PROJECTION_VERTICAL_EDGE_REJECT_RATIO
+        and top_ratio <= PROJECTION_OCCLUDED_BOTTOM_TOP_EDGE_REVIEW_RATIO
         and float(projected[3]) > float(target[3])
         and bottom_ratio <= PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO
         and bottom_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO
+        and horizontal_edge_ratio <= PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO
+        and center_x_ratio <= PROJECTION_CENTER_REJECT_RATIO
+        and area_ratio <= PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO
     )
-    rejected = edge_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO and not occluded_bottom_accepted if accepted is None else not bool(accepted)
+    rejected = (
+        (edge_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO or horizontal_edge_ratio > PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO)
+        and not occluded_bottom_accepted
+        if accepted is None
+        else not bool(accepted)
+    )
     if occluded_bottom_accepted:
         status = "accepted_occluded_bottom"
         reason = "occluded_bottom_edge_tolerated"
@@ -690,13 +741,30 @@ def projection_quality_report(
         "accepted": not rejected,
         "reason": reason,
         "vertical_edge_error_ratio": float(edge_ratio),
+        "horizontal_edge_error_ratio": float(horizontal_edge_ratio),
         "top_error_ratio": float(top_ratio),
         "bottom_error_ratio": float(bottom_ratio),
+        "left_error_ratio": float(left_ratio),
+        "right_error_ratio": float(right_ratio),
+        "center_x_error_ratio": float(center_x_ratio),
+        "center_y_error_ratio": float(center_y_ratio),
+        "width_error_ratio": float(width_error_ratio),
+        "height_error_ratio": float(height_error_ratio),
+        "area_ratio": float(area_ratio),
         "top_error_px": float(top_error),
         "bottom_error_px": float(bottom_error),
+        "left_error_px": float(left_error),
+        "right_error_px": float(right_error),
+        "center_x_error_px": float(center_x_error),
+        "center_y_error_px": float(center_y_error),
         "target_height_px": float(target_height),
+        "target_width_px": float(target_width),
         "threshold": PROJECTION_VERTICAL_EDGE_REJECT_RATIO,
         "occluded_bottom_threshold": PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO,
+        "occluded_bottom_top_threshold": PROJECTION_OCCLUDED_BOTTOM_TOP_EDGE_REVIEW_RATIO,
+        "horizontal_threshold": PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO,
+        "center_threshold": PROJECTION_CENTER_REJECT_RATIO,
+        "occluded_bottom_area_threshold": PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO,
     }
 
 
@@ -1031,6 +1099,10 @@ def semantic_front_axis(label: str) -> str:
     return "+Z"
 
 
+def should_flatten_floor_contact(label: str, support_kind: str | None) -> bool:
+    return support_kind == "floor" and is_table_support_label(label)
+
+
 def label_scale_factors_report() -> dict[str, float]:
     return {label: float(scale) for label, scale in LABEL_SCALE_FACTORS}
 
@@ -1347,9 +1419,15 @@ def add_room_corner_background(
     x_min = float(placement_bounds[0, 0] - x_pad)
     x_max = float(placement_bounds[1, 0] + x_pad)
     floor_y = float(placement_bounds[0, 1] - y_pad)
-    wall_top_y = float(placement_bounds[1, 1] + max(float(extent[1]) * 0.90, 0.45))
     z_back = float(placement_bounds[0, 2] - max(depth_offset, z_pad))
     z_front = float(placement_bounds[1, 2] + z_pad)
+    camera_frustum_wall_top = max(0.0, -z_back) * 0.56
+    wall_top_y = float(
+        max(
+            placement_bounds[1, 1] + max(float(extent[1]) * 1.60, 0.65),
+            camera_frustum_wall_top,
+        )
+    )
     side_x = x_max
 
     specs = [
@@ -1602,6 +1680,7 @@ def add_scene_asset(
     name_prefix: str,
     transform: np.ndarray | None = None,
     normalize: bool = True,
+    floor_contact_flatten: bool = False,
 ) -> dict[str, Any]:
     meshes = load_meshes(path)
     if not meshes:
@@ -1614,9 +1693,12 @@ def add_scene_asset(
     else:
         asset_transform = np.eye(4)
     transformed_bounds: list[np.ndarray] = []
+    cleanup_reports: list[dict[str, Any]] = []
     for index, mesh in enumerate(meshes):
         mesh = mesh.copy()
         mesh.apply_transform(asset_transform)
+        if floor_contact_flatten:
+            cleanup_reports.append(flatten_floor_contact(mesh))
         transformed_bounds.append(np.asarray(mesh.bounds, dtype=np.float64))
         scene.add_geometry(mesh, geom_name=f"{name_prefix}_{index:03d}", node_name=f"{name_prefix}_{index:03d}")
     return {
@@ -1625,6 +1707,44 @@ def add_scene_asset(
         "source_bounds": source_bounds.tolist(),
         "transform_gltf": asset_transform.tolist(),
         "transformed_bounds": merge_bounds(transformed_bounds).tolist(),
+        "mesh_cleanup": {
+            "floor_contact_flatten": cleanup_reports,
+        }
+        if cleanup_reports
+        else None,
+    }
+
+
+def flatten_floor_contact(mesh: Any) -> dict[str, Any]:
+    vertices = np.asarray(mesh.vertices, dtype=np.float64).copy()
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
+        return {"status": "skipped", "reason": "empty_vertices"}
+    y_values = vertices[:, 1]
+    floor_y = float(y_values.min())
+    extent_y = float(y_values.max() - y_values.min())
+    if extent_y <= 1e-8:
+        return {"status": "skipped", "reason": "degenerate_y_extent"}
+    threshold = float(np.percentile(y_values, FLOOR_CONTACT_FLATTEN_QUANTILE))
+    mask = y_values < threshold
+    clamped_count = int(mask.sum())
+    if clamped_count == 0:
+        return {
+            "status": "skipped",
+            "reason": "no_vertices_below_quantile",
+            "axis": "gltf_y",
+            "quantile": FLOOR_CONTACT_FLATTEN_QUANTILE,
+            "threshold_y": threshold,
+        }
+    vertices[mask, 1] = floor_y
+    mesh.vertices = vertices
+    return {
+        "status": "applied",
+        "method": "floor_contact_quantile_flatten",
+        "axis": "gltf_y",
+        "quantile": FLOOR_CONTACT_FLATTEN_QUANTILE,
+        "floor_y": floor_y,
+        "threshold_y": threshold,
+        "clamped_vertex_count": clamped_count,
     }
 
 

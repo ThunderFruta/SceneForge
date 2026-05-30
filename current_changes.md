@@ -9,6 +9,8 @@ This file tracks notable project changes while SceneForge is still small.
 - Extended the support-plane placement implementation with explicit 5-DoF unknown-support fallback records, bbox-as-silhouette proxy loss reports, software-rendered mask silhouette losses, sampled VGGT point-proximity losses, finite support-footprint checks, support penetration and object-overlap diagnostics, and placement-quality thresholds written to JSON.
 - Added `run.py render-scene-camera-view` plus `Tools/Scripts/render_scene_camera_view.py` to render composed GLB scenes from the source camera for GT-style visual checks against the input image.
 - Changed explicit placement fitting to relock tabletop objects to the final optimized support-object top surface, widened procedural room-corner backgrounds for source-camera renders, and added a fit-preview render mode for photo-like scene inspection.
+- Tightened support-plane projection acceptance so occluded floor objects can extend below the visible mask without accepting oversized horizontal projections, expanded the floor-depth search window for rear chairs, and enriched `placement_quality.json` with status counts, review items, loss summaries, support modes, and overlap warnings.
+- Removed hardcoded chair scale, spacing, and pose overrides from scene composition; object sizing and placement should come from support, projection, mask, and VGGT evidence instead of per-object fixes.
 
 ## 2026-05-29
 
