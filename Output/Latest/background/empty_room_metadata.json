@@ -1,0 +1,51 @@
+{
+  "empty_room_mask_path": "Output/Latest/background/empty_room_mask.png",
+  "excluded_detection_ids": [],
+  "fill_mode": "transparent",
+  "image_edit_backend": "openai-image",
+  "mask_coverage_ratio": 0.3752486666666667,
+  "mask_expansion_settings": {
+    "dilation_px": 10,
+    "feather_px": 0
+  },
+  "mask_quality_counts": {
+    "unspecified": 6
+  },
+  "model": "gpt-image-1.5",
+  "needs_review": true,
+  "openai_input_image_path": "Output/Latest/background/empty_room_openai_input.png",
+  "openai_mask_image_path": "Output/Latest/background/empty_room_openai_mask.png",
+  "output_image_path": "Output/Latest/background/empty_room.png",
+  "prompt": "Edit the image into the same empty room with the exact same camera framing, perspective, lens, lighting, wall layout, floor layout, ceiling, trim, windows, doors, and material style. Fill only the transparent or marked removed foreground regions as plausible empty room surfaces. Remove movable furniture, props, people, plants, clutter, shadows, and contact patches from the marked regions. Do not add replacement furniture, rugs, platforms, display stands, text, logos, or a new room layout. Return a full-frame opaque image at the same aspect ratio.",
+  "protected_structural_labels": [
+    "background",
+    "ceiling",
+    "concrete floor",
+    "door",
+    "floor",
+    "plane",
+    "road",
+    "room",
+    "wall",
+    "window"
+  ],
+  "reference_context_used": false,
+  "resolution_framing_preserved": false,
+  "review_required_detections": [],
+  "schema_version": 1,
+  "selected_removed_detection_ids": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "source_detections_path": "Output/Latest/detect/detections.json",
+  "source_image_path": "/mnt/Projects/SceneForge/Assets/Samples/Chairs.jpg",
+  "source_object_mask_dir": "Output/Latest/objects",
+  "timestamp_utc": "2026-05-30T00:35:31.345849+00:00",
+  "warnings": [
+    "empty_room_resized_from_1536x1024_to_1500x1000"
+  ]
+}

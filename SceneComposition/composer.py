@@ -17,6 +17,7 @@ SCHEMA_VERSION = 1
 TABLE_SUPPORT_LABELS = ("table", "desk", "counter")
 TABLETOP_OBJECT_LABELS = ("vase", "flower", "plant", "lamp", "book", "bowl", "cup", "glass", "plate", "pot")
 PROJECTION_VERTICAL_EDGE_REJECT_RATIO = 0.35
+PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO = 0.65
 LABEL_SCALE_FACTORS = (
     ("chair", 0.78),
 )
@@ -36,6 +37,7 @@ def compose_scene(
     background_path: str | Path,
     objects_dir: str | Path,
     object_geometry_path: str | Path,
+    placements_path: str | Path | None = None,
     output_dir: str | Path,
     output_name: str = "scene.glb",
     object_mesh_name: str = "hunyuan3d_textured.glb",
@@ -44,7 +46,7 @@ def compose_scene(
     placement_orientation: str = "upright",
     object_scale_factor: float = 0.85,
     background_fit: str = "room-corner",
-    background_margin: float = 1.08,
+    background_margin: float = 2.2,
     background_depth_offset: float = 0.12,
     background_vggt_dir: str | Path | None = None,
     background_stride: int = 16,
@@ -70,33 +72,43 @@ def compose_scene(
     background_path = Path(background_path)
     objects_dir = Path(objects_dir)
     object_geometry_path = Path(object_geometry_path)
+    placements_path = Path(placements_path) if placements_path is not None else None
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     background_vggt_dir = Path(background_vggt_dir) if background_vggt_dir is not None else infer_background_vggt_dir(background_path)
 
     geometry = load_json(object_geometry_path)
-    source_image_path = Path(source_image_path) if source_image_path is not None else infer_source_image_path(geometry)
+    explicit_placements = load_json(placements_path) if placements_path is not None else None
+    placement_source = "object_placements_json" if explicit_placements is not None else "object_geometry_json"
+    coordinate_contract = (explicit_placements or {}).get("coordinate_contract") or geometry.get("coordinate_contract")
+    source_report = explicit_placements if explicit_placements is not None else geometry
+    source_image_path = Path(source_image_path) if source_image_path is not None else infer_source_image_path(source_report)
     object_dirs = index_object_dirs(objects_dir)
-    placements = geometry.get("objects", [])
+    placements = (explicit_placements or geometry).get("objects", [])
     scene = new_scene()
-    spacing_targets = object_spacing_targets(
-        placements,
-        placement_orientation=placement_orientation,
-        object_scale_factor=object_scale_factor,
-    )
-    orientation_targets = object_orientation_targets(
-        placements,
-        placement_orientation=placement_orientation,
-        object_scale_factor=object_scale_factor,
-        spacing_targets=spacing_targets,
-    )
-    placement_bounds = placement_bounds_gltf(
-        placements,
-        placement_orientation=placement_orientation,
-        object_scale_factor=object_scale_factor,
-        spacing_targets=spacing_targets,
-        orientation_targets=orientation_targets,
-    )
+    if explicit_placements is not None:
+        spacing_targets: dict[int, dict[str, Any]] = {}
+        orientation_targets: dict[int, dict[str, Any]] = {}
+        placement_bounds = explicit_placement_bounds_gltf(placements)
+    else:
+        spacing_targets = object_spacing_targets(
+            placements,
+            placement_orientation=placement_orientation,
+            object_scale_factor=object_scale_factor,
+        )
+        orientation_targets = object_orientation_targets(
+            placements,
+            placement_orientation=placement_orientation,
+            object_scale_factor=object_scale_factor,
+            spacing_targets=spacing_targets,
+        )
+        placement_bounds = placement_bounds_gltf(
+            placements,
+            placement_orientation=placement_orientation,
+            object_scale_factor=object_scale_factor,
+            spacing_targets=spacing_targets,
+            orientation_targets=orientation_targets,
+        )
     if background_fit == "room-corner" and placement_bounds is not None:
         background_stats = add_room_corner_background(
             scene,
@@ -132,34 +144,46 @@ def compose_scene(
         )
 
     floor_y = background_floor_y(background_stats) if snap_objects_to_floor else None
-    support_targets = object_support_targets(
-        placements,
-        object_dirs=object_dirs,
-        object_mesh_name=object_mesh_name,
-        include_review=include_review,
-        placement_orientation=placement_orientation,
-        object_scale_factor=object_scale_factor,
-        floor_y=floor_y,
-        spacing_targets=spacing_targets,
-        orientation_targets=orientation_targets,
-    )
-    records: list[dict[str, Any]] = []
-    for placement in placements:
-        detection_id = int(placement.get("detection_id", 0))
-        record = compose_object_record(
-            scene=scene,
-            placement=placement,
+    if explicit_placements is not None:
+        support_targets = explicit_support_targets(placements)
+    else:
+        support_targets = object_support_targets(
+            placements,
             object_dirs=object_dirs,
             object_mesh_name=object_mesh_name,
             include_review=include_review,
             placement_orientation=placement_orientation,
             object_scale_factor=object_scale_factor,
-            support_target=support_targets.get(detection_id),
-            spacing_target=spacing_targets.get(detection_id),
-            orientation_target=orientation_targets.get(detection_id),
-            coordinate_contract=geometry.get("coordinate_contract"),
-            optimize_placements=optimize_placements,
+            floor_y=floor_y,
+            spacing_targets=spacing_targets,
+            orientation_targets=orientation_targets,
         )
+    records: list[dict[str, Any]] = []
+    for placement in placements:
+        detection_id = int(placement.get("detection_id", 0))
+        if explicit_placements is not None:
+            record = compose_explicit_placement_record(
+                scene=scene,
+                placement=placement,
+                object_dirs=object_dirs,
+                object_mesh_name=object_mesh_name,
+                include_review=include_review,
+            )
+        else:
+            record = compose_object_record(
+                scene=scene,
+                placement=placement,
+                object_dirs=object_dirs,
+                object_mesh_name=object_mesh_name,
+                include_review=include_review,
+                placement_orientation=placement_orientation,
+                object_scale_factor=object_scale_factor,
+                support_target=support_targets.get(detection_id),
+                spacing_target=spacing_targets.get(detection_id),
+                orientation_target=orientation_targets.get(detection_id),
+                coordinate_contract=coordinate_contract,
+                optimize_placements=optimize_placements,
+            )
         records.append(record)
     suppressed_objects = suppressed_objects_report(records)
     object_overlap_warnings = object_overlap_warnings_report(records)
@@ -172,12 +196,14 @@ def compose_scene(
         "background_path": str(background_path),
         "objects_dir": str(objects_dir),
         "object_geometry_path": str(object_geometry_path),
+        "placements_path": str(placements_path) if placements_path is not None else None,
+        "placement_source": placement_source,
         "artifacts": {
             "scene_glb": str(scene_path),
             "scene_alignment": str(output_dir / "scene_alignment.json"),
             "input_vs_projection_overlay": str(overlay_path) if source_image_path is not None else None,
         },
-        "coordinate_contract": geometry.get("coordinate_contract"),
+        "coordinate_contract": coordinate_contract,
         "scale_mode": scale_mode,
         "placement_orientation": placement_orientation,
         "object_scale_factor": float(object_scale_factor),
@@ -215,6 +241,143 @@ def compose_scene(
         write_projection_overlay(source_image_path, records, overlay_path)
     (output_dir / "scene_alignment.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
+
+
+def explicit_placement_bounds_gltf(placements: list[dict[str, Any]]) -> np.ndarray | None:
+    bounds: list[np.ndarray] = []
+    for placement in placements:
+        if placement.get("status") != "accepted":
+            continue
+        transformed = bounds_array(placement.get("transformed_bounds"))
+        if transformed is not None:
+            bounds.append(transformed)
+    if not bounds:
+        return None
+    return merge_bounds(bounds)
+
+
+def explicit_support_targets(placements: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    targets: dict[int, dict[str, Any]] = {}
+    for placement in placements:
+        detection_id = int(placement.get("detection_id", 0))
+        support = placement.get("support") or {}
+        support_y = support.get("support_y_gltf")
+        targets[detection_id] = {
+            "support_kind": support.get("support_kind") or support_kind_from_mode(support.get("mode")),
+            "support_detection_id": support.get("support_detection_id"),
+            "support_y": float(support_y) if support_y is not None else None,
+            "support_plane_id": support.get("support_plane_id"),
+            "support_label": support.get("support_label"),
+            "support_confidence": support.get("support_confidence"),
+        }
+    return targets
+
+
+def compose_explicit_placement_record(
+    *,
+    scene: Any,
+    placement: dict[str, Any],
+    object_dirs: dict[int, Path],
+    object_mesh_name: str,
+    include_review: bool,
+) -> dict[str, Any]:
+    detection_id = int(placement.get("detection_id", 0))
+    label = str(placement.get("detector_label") or "object")
+    support = placement.get("support") or {}
+    support_kind = support.get("support_kind") or support_kind_from_mode(support.get("mode"))
+    base = {
+        "detection_id": detection_id,
+        "detector_label": placement.get("detector_label"),
+        "box_type": None,
+        "needs_review": bool(placement.get("needs_review", False)),
+        "relation_role": placement.get("relation_role") or "primary",
+        "composite_id": placement.get("composite_id"),
+        "suppressed_by_composite": placement.get("suppressed_by_composite"),
+        "source_detection_ids": placement.get("source_detection_ids"),
+        "source_object_dir_id": placement.get("source_object_dir_id"),
+        "object_dir": str(object_dirs[detection_id]) if detection_id in object_dirs else None,
+        "object_mesh": placement.get("mesh_path"),
+        "status": "skipped",
+        "reason": None,
+        "placement_source": "object_placements_json",
+        "placement_status": placement.get("status"),
+        "transform_gltf": placement.get("transform_gltf"),
+        "support_kind": support_kind,
+        "support_detection_id": support.get("support_detection_id"),
+        "support_y": support.get("support_y_gltf"),
+        "support_plane_id": support.get("support_plane_id"),
+        "support_label": support.get("support_label"),
+        "support_confidence": support.get("support_confidence"),
+        "label_scale_factor": label_scale_factor(label),
+        "spacing_delta_gltf": [0.0, 0.0, 0.0],
+        "semantic_yaw_radians": 0.0,
+        "semantic_orientation_kind": None,
+        "support_degrees_of_freedom": placement.get("degrees_of_freedom"),
+        "render_to_input_optimization": placement.get("render_to_input_optimization"),
+        "projection_quality": (placement.get("render_to_input_optimization") or {}).get("projection_quality"),
+        "losses": placement.get("losses"),
+        "placement_quality": placement.get("quality"),
+    }
+    if placement.get("suppressed_by_composite"):
+        base.update(reason="suppressed_by_composite")
+        return base
+    if placement.get("status") != "accepted":
+        base.update(reason=placement.get("reason") or "placement_not_accepted")
+        return base
+    if base["needs_review"] and not include_review:
+        base.update(reason="needs_review")
+        return base
+
+    mesh_path = Path(str(placement.get("mesh_path"))) if placement.get("mesh_path") else None
+    if mesh_path is None or not mesh_path.is_file():
+        object_dir = object_dirs.get(int(placement.get("source_object_dir_id") or detection_id))
+        mesh_path = resolve_object_mesh_path(object_dir, object_mesh_name) if object_dir else None
+    if mesh_path is None or not mesh_path.is_file():
+        base.update(status="failed", reason="missing_object_mesh", object_mesh=None)
+        return base
+
+    try:
+        transform = np.asarray(placement.get("transform_gltf"), dtype=np.float64)
+        if transform.shape != (4, 4) or not np.isfinite(transform).all():
+            raise ValueError("transform_gltf must be a finite 4x4 matrix")
+        object_stats = add_scene_asset(
+            scene,
+            mesh_path,
+            name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
+            transform=transform,
+        )
+    except Exception as exc:
+        base.update(status="failed", reason=f"composition_failed: {exc}")
+        return base
+
+    support_snap_delta = placement.get("support_snap_delta")
+    support_snap_delta = float(support_snap_delta) if support_snap_delta is not None else 0.0
+    base.update(
+        object_mesh=str(mesh_path),
+        status="composed",
+        reason=None,
+        transform_gltf=transform.tolist(),
+        floor_snap_delta=float(support_snap_delta if support_kind == "floor" else 0.0),
+        support_snap_delta=float(support_snap_delta),
+        source_bounds=object_stats["source_bounds"],
+        transformed_bounds=object_stats["transformed_bounds"],
+    )
+    return base
+
+
+def support_kind_from_mode(mode: Any) -> str | None:
+    mode_text = str(mode or "")
+    if mode_text.startswith("floor"):
+        return "floor"
+    if mode_text.startswith("tabletop"):
+        return "tabletop"
+    if mode_text.startswith("wall"):
+        return "wall"
+    if mode_text.startswith("ceiling"):
+        return "ceiling"
+    if mode_text.startswith("unknown"):
+        return "unknown"
+    return None
 
 
 def compose_object_record(
@@ -380,17 +543,17 @@ def optimize_transform_to_input(
     best_yaw = 0.0
     best_scale = 1.0
     candidate_count = 0
-    for dx in (-0.08, -0.04, 0.0, 0.04, 0.08):
-        for dz in (-0.08, -0.04, 0.0, 0.04, 0.08):
-            for yaw in (-0.35, -0.175, 0.0, 0.175, 0.35):
-                for scale in (0.92, 1.0, 1.08):
+    for dx in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
+        for dz in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
+            for yaw in (-0.50, -0.25, 0.0, 0.25, 0.50):
+                for scale in (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40):
                     candidate_count += 1
                     candidate = candidate_transform(best_transform=transform, delta=np.array([dx, 0.0, dz]), yaw=yaw, scale=scale)
                     candidate, _delta = snap_transform_to_support_bounds(source_bounds, candidate, support_y)
                     projected = projected_transform_bbox(source_bounds, candidate, coordinate_contract)
                     if projected is None:
                         continue
-                    loss = bbox_projection_loss(projected, target_bbox) + support_penalty(source_bounds, candidate, support_y)
+                    loss = bbox_projection_loss(projected, target_bbox) + support_penalty(source_bounds, candidate, support_y) + abs(float(np.log(scale))) * 0.08
                     if loss < best_loss:
                         best_loss = loss
                         best_transform = candidate
@@ -398,7 +561,11 @@ def optimize_transform_to_input(
                         best_delta = np.array([dx, 0.0, dz], dtype=np.float64)
                         best_yaw = yaw
                         best_scale = scale
-    quality = projection_quality_report(best_bbox, target_bbox)
+    quality = projection_quality_report(
+        best_bbox,
+        target_bbox,
+        allow_occluded_bottom=bool((support_target or {}).get("support_kind") == "floor"),
+    )
     accepted = quality.get("status") != "rejected"
     final_transform = best_transform if accepted else np.asarray(transform, dtype=np.float64)
     final_bbox = best_bbox if accepted else initial_bbox
@@ -476,7 +643,9 @@ def bbox_projection_loss(projected: np.ndarray, target: np.ndarray) -> float:
     projected_area = max(float((projected[2] - projected[0]) * (projected[3] - projected[1])), 1.0)
     target_area = max(float((target[2] - target[0]) * (target[3] - target[1])), 1.0)
     area_loss = abs(np.log(projected_area / target_area))
-    return float((1.0 - iou) + 0.55 * center_loss + 0.15 * area_loss)
+    target_height = max(float(target[3] - target[1]), 1.0)
+    edge_loss = (abs(float(projected[1] - target[1])) + abs(float(projected[3] - target[3]))) / target_height
+    return float((1.0 - iou) + 0.55 * center_loss + 0.15 * area_loss + 0.35 * edge_loss)
 
 
 def projection_quality_report(
@@ -484,6 +653,7 @@ def projection_quality_report(
     target: np.ndarray | None,
     *,
     accepted: bool | None = None,
+    allow_occluded_bottom: bool = False,
 ) -> dict[str, Any]:
     if projected is None or target is None:
         return {
@@ -492,21 +662,41 @@ def projection_quality_report(
             "reason": "missing_projection_or_target",
             "vertical_edge_error_ratio": None,
             "threshold": PROJECTION_VERTICAL_EDGE_REJECT_RATIO,
+            "occluded_bottom_threshold": PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO,
         }
     target_height = max(float(target[3] - target[1]), 1.0)
     top_error = abs(float(projected[1] - target[1]))
     bottom_error = abs(float(projected[3] - target[3]))
+    top_ratio = top_error / target_height
+    bottom_ratio = bottom_error / target_height
     edge_ratio = max(top_error, bottom_error) / target_height
-    rejected = edge_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO if accepted is None else not bool(accepted)
+    occluded_bottom_accepted = (
+        accepted is None
+        and allow_occluded_bottom
+        and top_ratio <= PROJECTION_VERTICAL_EDGE_REJECT_RATIO
+        and float(projected[3]) > float(target[3])
+        and bottom_ratio <= PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO
+        and bottom_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO
+    )
+    rejected = edge_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO and not occluded_bottom_accepted if accepted is None else not bool(accepted)
+    if occluded_bottom_accepted:
+        status = "accepted_occluded_bottom"
+        reason = "occluded_bottom_edge_tolerated"
+    else:
+        status = "rejected" if rejected else "accepted"
+        reason = "vertical_edge_error" if rejected else "within_threshold"
     return {
-        "status": "rejected" if rejected else "accepted",
+        "status": status,
         "accepted": not rejected,
-        "reason": "vertical_edge_error" if rejected else "within_threshold",
+        "reason": reason,
         "vertical_edge_error_ratio": float(edge_ratio),
+        "top_error_ratio": float(top_ratio),
+        "bottom_error_ratio": float(bottom_ratio),
         "top_error_px": float(top_error),
         "bottom_error_px": float(bottom_error),
         "target_height_px": float(target_height),
         "threshold": PROJECTION_VERTICAL_EDGE_REJECT_RATIO,
+        "occluded_bottom_threshold": PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO,
     }
 
 
@@ -901,8 +1091,8 @@ def best_table_support(bbox_xyxy: Any, table_candidates: list[dict[str, Any]]) -
             continue
         score = bbox_overlap_area(bbox, table_bbox)
         if score <= 0.0:
-            # A vase/flower mask can sit slightly above the visible tabletop, so
-            # allow a center projection match when horizontal overlap is clear.
+            # A tabletop object mask can sit slightly above the visible support,
+            # so allow a center projection match when horizontal overlap is clear.
             center_x = float((bbox[0] + bbox[2]) / 2.0)
             horizontal_inside = float(table_bbox[0]) <= center_x <= float(table_bbox[2])
             vertically_near = float(bbox[3]) >= float(table_bbox[1]) - max(24.0, bbox_height(bbox) * 0.35)
@@ -985,6 +1175,8 @@ def add_vggt_background_mesh(
 ) -> dict[str, Any]:
     try:
         import trimesh
+        from trimesh.visual.material import PBRMaterial
+        from trimesh.visual.texture import TextureVisuals
     except Exception as exc:
         raise RuntimeError("Scene composition requires trimesh from requirements.txt.") from exc
 
@@ -1143,6 +1335,8 @@ def add_room_corner_background(
 ) -> dict[str, Any]:
     try:
         import trimesh
+        from trimesh.visual.material import PBRMaterial
+        from trimesh.visual.texture import TextureVisuals
     except Exception as exc:
         raise RuntimeError("Scene composition requires trimesh from requirements.txt.") from exc
 
@@ -1190,9 +1384,9 @@ def add_room_corner_background(
             np.array(
                 [
                     [side_x, floor_y, z_front],
-                    [side_x, floor_y, z_back],
-                    [side_x, wall_top_y, z_back],
                     [side_x, wall_top_y, z_front],
+                    [side_x, wall_top_y, z_back],
+                    [side_x, floor_y, z_back],
                 ],
                 dtype=np.float32,
             ),
@@ -1206,6 +1400,17 @@ def add_room_corner_background(
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
         colors = np.tile(np.asarray(color, dtype=np.uint8), (len(vertices), 1))
         mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=colors, process=False)
+        rgb = [float(value) / 255.0 for value in color[:3]]
+        mesh.visual = TextureVisuals(
+            material=PBRMaterial(
+                name=f"{name}_mat",
+                baseColorFactor=[rgb[0], rgb[1], rgb[2], 1.0],
+                emissiveFactor=[rgb[0] * 0.35, rgb[1] * 0.35, rgb[2] * 0.35],
+                roughnessFactor=0.9,
+                metallicFactor=0.0,
+                doubleSided=True,
+            )
+        )
         scene.add_geometry(mesh, geom_name=name, node_name=name)
         bounds.append(np.asarray(mesh.bounds, dtype=np.float64))
         total_vertices += int(len(vertices))

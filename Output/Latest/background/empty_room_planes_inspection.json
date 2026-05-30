@@ -1,0 +1,142 @@
+{
+  "comparisons": {
+    "detections": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "detections",
+      "unmatched_count": 0
+    },
+    "primitive_fits": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "primitive_fits",
+      "unmatched_count": 0
+    }
+  },
+  "detections": {
+    "count": 0,
+    "items": []
+  },
+  "fits": {
+    "count": 0,
+    "items": []
+  },
+  "format": ".glb",
+  "issues": [],
+  "model_path": "Output/Latest/background/empty_room_planes.glb",
+  "objects": [
+    {
+      "area": 1.0342,
+      "bounds_max": [
+        0.6973,
+        -0.2083,
+        -0.571
+      ],
+      "bounds_min": [
+        -0.5222,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.0875,
+        -0.2083,
+        -0.995
+      ],
+      "dimensions": [
+        1.2196,
+        0.0,
+        0.848
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "floor",
+      "primitive": null,
+      "vertices": 1369
+    },
+    {
+      "area": 1.0366,
+      "bounds_max": [
+        0.6973,
+        0.6417,
+        -1.4189
+      ],
+      "bounds_min": [
+        -0.5222,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.0875,
+        0.2167,
+        -1.4189
+      ],
+      "dimensions": [
+        1.2196,
+        0.85,
+        0.0
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "back_wall",
+      "primitive": null,
+      "vertices": 1369
+    },
+    {
+      "area": 0.7208,
+      "bounds_max": [
+        0.6973,
+        0.6417,
+        -0.571
+      ],
+      "bounds_min": [
+        0.6973,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.6973,
+        0.2167,
+        -0.995
+      ],
+      "dimensions": [
+        0.0,
+        0.85,
+        0.848
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "right_wall",
+      "primitive": null,
+      "vertices": 1369
+    }
+  ],
+  "summary": {
+    "bounds_max": [
+      0.6973,
+      0.6417,
+      -0.571
+    ],
+    "bounds_min": [
+      -0.5222,
+      -0.2083,
+      -1.4189
+    ],
+    "dimensions": [
+      1.2195,
+      0.85,
+      0.8479
+    ],
+    "issues": [],
+    "object_count": 3,
+    "total_faces": 7776,
+    "total_vertices": 4107
+  }
+}

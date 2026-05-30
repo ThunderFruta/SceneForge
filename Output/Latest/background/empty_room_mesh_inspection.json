@@ -1,0 +1,82 @@
+{
+  "comparisons": {
+    "detections": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "detections",
+      "unmatched_count": 0
+    },
+    "primitive_fits": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "primitive_fits",
+      "unmatched_count": 0
+    }
+  },
+  "detections": {
+    "count": 0,
+    "items": []
+  },
+  "fits": {
+    "count": 0,
+    "items": []
+  },
+  "format": ".glb",
+  "issues": [],
+  "model_path": "Output/Latest/background/empty_room_mesh.glb",
+  "objects": [
+    {
+      "area": 1.0745,
+      "bounds_max": [
+        0.4503,
+        0.4593,
+        -0.6031
+      ],
+      "bounds_min": [
+        -0.5168,
+        -0.2266,
+        -1.349
+      ],
+      "center": [
+        -0.0333,
+        0.1163,
+        -0.976
+      ],
+      "dimensions": [
+        0.967,
+        0.6859,
+        0.7459
+      ],
+      "edges": 17453,
+      "faces": 11532,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "geometry_0",
+      "primitive": null,
+      "vertices": 5922
+    }
+  ],
+  "summary": {
+    "bounds_max": [
+      0.4503,
+      0.4593,
+      -0.6031
+    ],
+    "bounds_min": [
+      -0.5168,
+      -0.2266,
+      -1.349
+    ],
+    "dimensions": [
+      0.9671,
+      0.6859,
+      0.7459
+    ],
+    "issues": [],
+    "object_count": 1,
+    "total_faces": 11532,
+    "total_vertices": 5922
+  }
+}

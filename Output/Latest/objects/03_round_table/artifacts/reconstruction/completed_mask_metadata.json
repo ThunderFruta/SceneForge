@@ -1,0 +1,11 @@
+{
+  "backend": "foreground",
+  "coverage_ratio": 0.2161092758178711,
+  "foreground_pixels": 226607,
+  "image_height": 1024,
+  "image_width": 1024,
+  "mask": "artifacts/reconstruction/completed_mask.png",
+  "mask_source": "completed_neutral_background_foreground",
+  "schema_version": 1,
+  "text_prompt": "round table . foreground object . object only . no floor . no ground plane . no base slab ."
+}

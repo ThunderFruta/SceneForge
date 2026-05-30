@@ -1,0 +1,397 @@
+{
+  "artifacts": {
+    "boxes_obj": "Output/Latest/objects_vggt/vggt_boxes.obj",
+    "regions_overlay_png": "Output/Latest/objects_vggt/vggt_regions_overlay.png"
+  },
+  "box_mode": "auto",
+  "coordinate_contract": {
+    "camera_model": "pinhole",
+    "depth": {
+      "convention": "white_close_black_far",
+      "far_depth": 8.0,
+      "format": "8bit_grayscale_png_L",
+      "near_depth": 1.0,
+      "orientation": "rgb_aligned_no_flip",
+      "schema_version": 1
+    },
+    "fov_degrees": 70.0,
+    "image_height": 1000,
+    "image_width": 1500,
+    "pixel": {
+      "coordinate_system": "image_pixel_top_left_v1",
+      "origin": "top_left_pixel_corner",
+      "sample_position": "pixel_center",
+      "schema_version": 1,
+      "x": "right",
+      "y": "down"
+    },
+    "purpose": "all_source_detection_enrichment_fit_metrics_artifacts_share_this_frame",
+    "scene": {
+      "axes": {
+        "x": "image_right",
+        "y": "depth_away_from_camera",
+        "z": "image_up"
+      },
+      "blender_world_mapping": {
+        "blender_camera_local_forward": "-Z",
+        "camera_layout_camera_forward": "+Y",
+        "camera_layout_camera_location": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "x": "+X",
+        "y": "+Y",
+        "z": "+Z"
+      },
+      "coordinate_system": "sceneforge_camera_v1",
+      "handedness": "right_handed",
+      "origin": "source_camera_center_for_camera_layout",
+      "schema_version": 1,
+      "units": "blender_units",
+      "upright_axis": "z"
+    },
+    "schema_version": 1,
+    "sensor_fit": "horizontal"
+  },
+  "detections_path": "Output/Latest/detect/detections.json",
+  "min_valid_points": 64,
+  "objects": [
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/01_chair/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/01_chair/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/01_chair/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/01_chair/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/01_chair/valid_points.png"
+      },
+      "bbox_xyxy": [
+        162.0,
+        267.0,
+        683.0,
+        974.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        -0.22340811398750376,
+        0.8846640775632207,
+        -0.07201156892052456
+      ],
+      "coverage_ratio": 0.09041066666666667,
+      "detection_id": 1,
+      "detector_confidence": 0.99045,
+      "detector_label": "chair",
+      "extent_xyz": [
+        0.5804586972958221,
+        0.41427773060046647,
+        0.3255664521153666
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/01_chair/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 135616,
+      "region_dir": "Output/Latest/objects_vggt/regions/01_chair",
+      "rotation_matrix": [
+        [
+          0.2811093506326491,
+          -0.7833378777045299,
+          -0.5543999479980619
+        ],
+        [
+          -0.9366032188522301,
+          -0.09802601582721845,
+          -0.3364005211896727
+        ],
+        [
+          0.2091696522503486,
+          0.6138181078906073,
+          -0.7612328073612323
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    },
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/02_vase/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/02_vase/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/02_vase/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/02_vase/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/02_vase/valid_points.png"
+      },
+      "bbox_xyxy": [
+        748.0,
+        171.0,
+        790.0,
+        315.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        0.0016922089402094014,
+        1.0604331773621127,
+        0.18402163368533558
+      ],
+      "coverage_ratio": 0.003219333333333333,
+      "detection_id": 2,
+      "detector_confidence": 0.970733,
+      "detector_label": "vase",
+      "extent_xyz": [
+        0.4829530168854121,
+        0.10537564545147454,
+        0.03555724430270281
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/02_vase/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 4829,
+      "region_dir": "Output/Latest/objects_vggt/regions/02_vase",
+      "rotation_matrix": [
+        [
+          -0.01752594809047145,
+          0.00016203286027592956,
+          -0.9998463956472925
+        ],
+        [
+          0.9932721526625546,
+          0.11448992809421857,
+          -0.017392156567704646
+        ],
+        [
+          0.11446952384204713,
+          -0.9934243957696693,
+          -0.0021674872645894277
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    },
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/03_round_table/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/03_round_table/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/03_round_table/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/03_round_table/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/03_round_table/valid_points.png"
+      },
+      "bbox_xyxy": [
+        422.0,
+        225.0,
+        1074.0,
+        803.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        0.017342305014849943,
+        0.9564353998618623,
+        0.054180462801601895
+      ],
+      "coverage_ratio": 0.12879333333333334,
+      "detection_id": 3,
+      "detector_confidence": 0.989257,
+      "detector_label": "round table",
+      "extent_xyz": [
+        0.4730196926473343,
+        0.47989256167347494,
+        0.4556464028834234
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/03_round_table/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 193190,
+      "region_dir": "Output/Latest/objects_vggt/regions/03_round_table",
+      "rotation_matrix": [
+        [
+          -0.1408070857585065,
+          0.9199256179561618,
+          -0.36593745644327047
+        ],
+        [
+          0.24763846662818573,
+          0.3905964928647453,
+          0.8866282025786242
+        ],
+        [
+          0.9585658842490893,
+          0.03422334276096881,
+          -0.2828077233104279
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    },
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/04_flower/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/04_flower/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/04_flower/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/04_flower/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/04_flower/valid_points.png"
+      },
+      "bbox_xyxy": [
+        698.0,
+        49.0,
+        849.0,
+        272.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        0.009846794424914559,
+        1.0815646899994298,
+        0.2763890436268389
+      ],
+      "coverage_ratio": 0.008004666666666667,
+      "detection_id": 4,
+      "detector_confidence": 0.963158,
+      "detector_label": "flower",
+      "extent_xyz": [
+        0.5814453590760645,
+        0.16381696612852142,
+        0.12964805994587203
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/04_flower/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 12007,
+      "region_dir": "Output/Latest/objects_vggt/regions/04_flower",
+      "rotation_matrix": [
+        [
+          -0.05236210586247702,
+          0.9960277492468074,
+          -0.07202036239832108
+        ],
+        [
+          0.9444549150948274,
+          0.07282335955247349,
+          0.3204710153145125
+        ],
+        [
+          0.3244427888285856,
+          -0.05123944802425101,
+          -0.9445164878091328
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    },
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/05_chair/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/05_chair/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/05_chair/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/05_chair/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/05_chair/valid_points.png"
+      },
+      "bbox_xyxy": [
+        362.0,
+        99.0,
+        602.0,
+        529.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        -0.17507465983517506,
+        1.031328301289832,
+        0.14823154470402913
+      ],
+      "coverage_ratio": 0.033034666666666664,
+      "detection_id": 5,
+      "detector_confidence": 0.981296,
+      "detector_label": "chair",
+      "extent_xyz": [
+        0.46916134178335495,
+        0.515687097348178,
+        0.2137505823336634
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/05_chair/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 49552,
+      "region_dir": "Output/Latest/objects_vggt/regions/05_chair",
+      "rotation_matrix": [
+        [
+          -0.03796443190146878,
+          -0.5256720051193483,
+          -0.849839776042639
+        ],
+        [
+          0.3709649275825603,
+          0.7822654756165554,
+          -0.5004455496475823
+        ],
+        [
+          0.9278705321401606,
+          -0.33425988196642553,
+          0.1653076129333635
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    },
+    {
+      "artifacts": {
+        "mask_png": "Output/Latest/objects_vggt/regions/06_chair/mask.png",
+        "point_distance_png": "Output/Latest/objects_vggt/regions/06_chair/point_distance.png",
+        "points_obj": "Output/Latest/objects_vggt/regions/06_chair/points.obj",
+        "points_xyz": "Output/Latest/objects_vggt/regions/06_chair/points.xyz",
+        "valid_points_png": "Output/Latest/objects_vggt/regions/06_chair/valid_points.png"
+      },
+      "bbox_xyxy": [
+        893.0,
+        126.0,
+        1285.0,
+        709.0
+      ],
+      "box_type": "obb",
+      "center_xyz": [
+        0.1967778170122586,
+        1.0305337528252105,
+        0.08779035573419203
+      ],
+      "coverage_ratio": 0.056154,
+      "detection_id": 6,
+      "detector_confidence": 0.988127,
+      "detector_label": "chair",
+      "extent_xyz": [
+        0.4471889579930354,
+        0.450564503589672,
+        0.34066380262025675
+      ],
+      "failure_reason": null,
+      "mask_path": "Output/Latest/objects/06_chair/artifacts/segmentation/full_mask.png",
+      "mask_source": "full_mask",
+      "needs_review": false,
+      "point_count": 84231,
+      "region_dir": "Output/Latest/objects_vggt/regions/06_chair",
+      "rotation_matrix": [
+        [
+          -0.3833812891745255,
+          0.6677259279221098,
+          0.6380915861312042
+        ],
+        [
+          -0.23071351755849712,
+          0.5997410504387425,
+          -0.7662127284471448
+        ],
+        [
+          -0.894309823230553,
+          -0.4409679779748083,
+          -0.07587609949216734
+        ]
+      ],
+      "valid_point_ratio": 1.0
+    }
+  ],
+  "objects_dir": "Output/Latest/objects",
+  "schema_version": 1,
+  "summary": {
+    "detection_count": 6,
+    "failed_count": 0,
+    "fit_count": 6,
+    "needs_review_count": 0
+  },
+  "timestamp_utc": "2026-05-30T00:59:00.031458+00:00",
+  "vggt_camera_path": "Output/Latest/objects_vggt/vggt_camera.json",
+  "vggt_dir": "Output/Latest/objects_vggt",
+  "vggt_points_path": "Output/Latest/objects_vggt/vggt_points.npy"
+}

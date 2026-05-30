@@ -1,0 +1,60 @@
+{
+  "coordinate_contract": {
+    "camera_model": "pinhole",
+    "depth": {
+      "convention": "white_close_black_far",
+      "far_depth": 8.0,
+      "format": "8bit_grayscale_png_L",
+      "near_depth": 1.0,
+      "orientation": "rgb_aligned_no_flip",
+      "schema_version": 1
+    },
+    "fov_degrees": 70.0,
+    "image_height": 1000,
+    "image_width": 1500,
+    "pixel": {
+      "coordinate_system": "image_pixel_top_left_v1",
+      "origin": "top_left_pixel_corner",
+      "sample_position": "pixel_center",
+      "schema_version": 1,
+      "x": "right",
+      "y": "down"
+    },
+    "purpose": "all_source_detection_enrichment_fit_metrics_artifacts_share_this_frame",
+    "scene": {
+      "axes": {
+        "x": "image_right",
+        "y": "depth_away_from_camera",
+        "z": "image_up"
+      },
+      "blender_world_mapping": {
+        "blender_camera_local_forward": "-Z",
+        "camera_layout_camera_forward": "+Y",
+        "camera_layout_camera_location": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "x": "+X",
+        "y": "+Y",
+        "z": "+Z"
+      },
+      "coordinate_system": "sceneforge_camera_v1",
+      "handedness": "right_handed",
+      "origin": "source_camera_center_for_camera_layout",
+      "schema_version": 1,
+      "units": "blender_units",
+      "upright_axis": "z"
+    },
+    "schema_version": 1,
+    "sensor_fit": "horizontal"
+  },
+  "image_height": 1000,
+  "image_width": 1500,
+  "schema_version": 1,
+  "vggt_camera": {
+    "image_height": 1000,
+    "image_width": 1500,
+    "source": "vggt"
+  }
+}

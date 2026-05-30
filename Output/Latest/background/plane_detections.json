@@ -1,0 +1,290 @@
+{
+  "align_xyz": true,
+  "artifacts": {
+    "planes_glb": "Output/Latest/background/empty_room_planes.glb",
+    "planes_json": "Output/Latest/background/plane_detections.json"
+  },
+  "background_dir": "Output/Latest/background",
+  "coordinate_contract": {
+    "camera_model": "pinhole",
+    "depth": {
+      "convention": "white_close_black_far",
+      "far_depth": 8.0,
+      "format": "8bit_grayscale_png_L",
+      "near_depth": 1.0,
+      "orientation": "rgb_aligned_no_flip",
+      "schema_version": 1
+    },
+    "fov_degrees": 70.0,
+    "image_height": 1000,
+    "image_width": 1500,
+    "pixel": {
+      "coordinate_system": "image_pixel_top_left_v1",
+      "origin": "top_left_pixel_corner",
+      "sample_position": "pixel_center",
+      "schema_version": 1,
+      "x": "right",
+      "y": "down"
+    },
+    "purpose": "all_source_detection_enrichment_fit_metrics_artifacts_share_this_frame",
+    "scene": {
+      "axes": {
+        "x": "image_right",
+        "y": "depth_away_from_camera",
+        "z": "image_up"
+      },
+      "blender_world_mapping": {
+        "blender_camera_local_forward": "-Z",
+        "camera_layout_camera_forward": "+Y",
+        "camera_layout_camera_location": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "x": "+X",
+        "y": "+Y",
+        "z": "+Z"
+      },
+      "coordinate_system": "sceneforge_camera_v1",
+      "handedness": "right_handed",
+      "origin": "source_camera_center_for_camera_layout",
+      "schema_version": 1,
+      "units": "blender_units",
+      "upright_axis": "z"
+    },
+    "schema_version": 1,
+    "sensor_fit": "horizontal"
+  },
+  "empty_room_image_path": "Output/Latest/background/empty_room.png",
+  "image_height": 1000,
+  "image_width": 1500,
+  "mesh": {
+    "axis_transform": "gltf_x_image_right_y_image_up_z_back_toward_camera",
+    "bounds_gltf": [
+      [
+        -0.5222406387329102,
+        -0.20825549960136414,
+        -1.4189488887786865
+      ],
+      [
+        0.6973149180412292,
+        0.6417444944381714,
+        -0.5709750056266785
+      ]
+    ],
+    "face_count": 7776,
+    "grid_steps": 36,
+    "mesh_glb": "Output/Latest/background/empty_room_planes.glb",
+    "object_count": 3,
+    "texture_source": "empty_room_image_uv_projected",
+    "vertex_colors": "projected_empty_room_image_fallback",
+    "vertex_count": 4107
+  },
+  "model_info": {
+    "backend": "empty_room_vggt_xyz_planes",
+    "point_source": "background/vggt_points.npy",
+    "regularization": "xyz_aligned_scene_camera_axes"
+  },
+  "padding_ratio": 0.08,
+  "planes": [
+    {
+      "center_xyz": [
+        0.08753714322137829,
+        0.994961957335472,
+        -0.20825550496578216
+      ],
+      "color_rgba": [
+        222,
+        222,
+        226,
+        255
+      ],
+      "failure_reason": null,
+      "fit_residual": 0.007340162224278339,
+      "fitted_center_xyz": [
+        -0.004720045253634453,
+        0.8093440532684326,
+        -0.15988852083683014
+      ],
+      "fitted_normal_xyz": [
+        -0.009951347219564002,
+        -0.31401396019656147,
+        0.9493662114748914
+      ],
+      "id": "floor",
+      "label": "floor",
+      "needs_review": false,
+      "normal_confidence": 1.0,
+      "normal_xyz": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "plane_extent_xyz": [
+        1.219555609017372,
+        0.8479738891124725,
+        0.0
+      ],
+      "plane_subtype": "floor",
+      "primitive_label": "plane",
+      "source": "xyz_regularized_empty_room_vggt",
+      "support_count": 9964,
+      "vertices_xyz": [
+        [
+          -0.5222406612873077,
+          0.5709750127792358,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          0.5709750127792358,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          1.4189489018917083,
+          -0.20825550496578216
+        ],
+        [
+          -0.5222406612873077,
+          1.4189489018917083,
+          -0.20825550496578216
+        ]
+      ]
+    },
+    {
+      "center_xyz": [
+        0.08753714322137829,
+        1.4189489018917083,
+        0.21674449503421783
+      ],
+      "color_rgba": [
+        229,
+        229,
+        231,
+        255
+      ],
+      "failure_reason": null,
+      "fit_residual": 0.10557930141696639,
+      "fitted_center_xyz": [
+        -0.013412506319582462,
+        1.0277153253555298,
+        0.1255074143409729
+      ],
+      "fitted_normal_xyz": [
+        0.11497258249760475,
+        0.9849064556798212,
+        -0.1293853887965856
+      ],
+      "id": "back_wall",
+      "label": "wall",
+      "needs_review": false,
+      "normal_confidence": 1.0,
+      "normal_xyz": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "plane_extent_xyz": [
+        1.219555609017372,
+        0.0,
+        0.85
+      ],
+      "plane_subtype": "wall",
+      "primitive_label": "plane",
+      "source": "xyz_regularized_empty_room_vggt",
+      "support_count": 15980,
+      "vertices_xyz": [
+        [
+          -0.5222406612873077,
+          1.4189489018917083,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          1.4189489018917083,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          1.4189489018917083,
+          0.6417444950342178
+        ],
+        [
+          -0.5222406612873077,
+          1.4189489018917083,
+          0.6417444950342178
+        ]
+      ]
+    },
+    {
+      "center_xyz": [
+        0.6973149477300643,
+        0.994961957335472,
+        0.21674449503421783
+      ],
+      "color_rgba": [
+        223,
+        223,
+        225,
+        249
+      ],
+      "failure_reason": null,
+      "fit_residual": 0.03465559027774522,
+      "fitted_center_xyz": [
+        0.22479237616062164,
+        1.0140972137451172,
+        0.1109350323677063
+      ],
+      "fitted_normal_xyz": [
+        0.7164831176997934,
+        0.6975641271604358,
+        -0.00749870322676877
+      ],
+      "id": "right_wall",
+      "label": "wall",
+      "needs_review": false,
+      "normal_confidence": 1.0,
+      "normal_xyz": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "plane_extent_xyz": [
+        0.0,
+        0.8479738891124725,
+        0.85
+      ],
+      "plane_subtype": "wall",
+      "primitive_label": "plane",
+      "source": "xyz_regularized_empty_room_vggt",
+      "support_count": 9360,
+      "vertices_xyz": [
+        [
+          0.6973149477300643,
+          0.5709750127792358,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          1.4189489018917083,
+          -0.20825550496578216
+        ],
+        [
+          0.6973149477300643,
+          1.4189489018917083,
+          0.6417444950342178
+        ],
+        [
+          0.6973149477300643,
+          0.5709750127792358,
+          0.6417444950342178
+        ]
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "stride": 8,
+  "timestamp_utc": "2026-05-30T01:59:22.376364+00:00",
+  "vggt_points_path": "Output/Latest/background/vggt_points.npy"
+}

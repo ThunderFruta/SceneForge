@@ -94,6 +94,17 @@ def build_parser() -> argparse.ArgumentParser:
     render_png.add_argument("--gamma", type=float, default=1.0)
     render_png.set_defaults(func=cmd_render_blend_png)
 
+    render_scene_camera = subparsers.add_parser("render-scene-camera-view", help="Render a composed OBJ/GLB scene from the source image camera.")
+    render_scene_camera.add_argument("--scene", default="Output/Latest/scene/scene.glb")
+    render_scene_camera.add_argument("--output", default="Output/Latest/scene/source_camera_render.png")
+    render_scene_camera.add_argument("--alignment-report", default="Output/Latest/scene/scene_alignment.json")
+    render_scene_camera.add_argument("--blender", default="blender")
+    render_scene_camera.add_argument("--width", type=int)
+    render_scene_camera.add_argument("--height", type=int)
+    render_scene_camera.add_argument("--fov-degrees", type=float)
+    render_scene_camera.add_argument("--camera-mode", choices=("source", "fit-preview"), default="source")
+    render_scene_camera.set_defaults(func=cmd_render_scene_camera_view)
+
     run_vggt = subparsers.add_parser("run-vggt", help="Run VGGT geometry capture for one RGB image.")
     run_vggt.add_argument("--image", required=True)
     run_vggt.add_argument("--output", default="Output/Latest/objects_vggt")
@@ -174,10 +185,45 @@ def build_parser() -> argparse.ArgumentParser:
     fit_empty_room_planes.add_argument("--padding-ratio", type=float, default=0.08)
     fit_empty_room_planes.set_defaults(func=cmd_fit_empty_room_planes)
 
+    choose_supports = subparsers.add_parser("choose-object-supports", help="Choose explicit support planes for object placements.")
+    choose_supports.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
+    choose_supports.add_argument("--planes", default="Output/Latest/background/plane_detections.json")
+    choose_supports.add_argument("--detections", default="Output/Latest/detect/detections.json")
+    choose_supports.add_argument("--objects", default="Output/Latest/objects")
+    choose_supports.add_argument("--output", default="Output/Latest/placement")
+    choose_supports.add_argument("--object-mesh-name", default="hunyuan3d_textured.glb")
+    choose_supports.add_argument(
+        "--placement-orientation",
+        choices=("upright", "obb"),
+        default="upright",
+        help="Use upright visual object meshes by default; obb preserves raw VGGT PCA box rotation.",
+    )
+    choose_supports.add_argument("--object-scale-factor", type=float, default=0.85)
+    choose_supports.add_argument("--include-review", action="store_true")
+    choose_supports.set_defaults(func=cmd_choose_object_supports)
+
+    build_fit_targets = subparsers.add_parser("build-object-fit-targets", help="Collect mesh, mask, bbox, VGGT point, and support evidence for placement fitting.")
+    build_fit_targets.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
+    build_fit_targets.add_argument("--supports", default="Output/Latest/placement/object_supports.json")
+    build_fit_targets.add_argument("--objects", default="Output/Latest/objects")
+    build_fit_targets.add_argument("--output", default="Output/Latest/placement")
+    build_fit_targets.add_argument("--object-mesh-name", default="hunyuan3d_textured.glb")
+    build_fit_targets.set_defaults(func=cmd_build_object_fit_targets)
+
+    fit_placements = subparsers.add_parser("fit-object-placements", help="Fit object meshes to explicit support records and write object_placements.json.")
+    fit_placements.add_argument("--supports", default="Output/Latest/placement/object_supports.json")
+    fit_placements.add_argument("--fit-targets", default="Output/Latest/placement/object_fit_targets.json")
+    fit_placements.add_argument("--output", default="Output/Latest/placement")
+    fit_placements.add_argument("--placement-orientation", choices=("upright", "obb"), default="upright")
+    fit_placements.add_argument("--object-scale-factor", type=float, default=0.85)
+    fit_placements.add_argument("--no-optimize-placements", action="store_true")
+    fit_placements.set_defaults(func=cmd_fit_object_placements)
+
     compose_scene = subparsers.add_parser("compose-scene", help="Combine empty-room background planes, VGGT object placements, and object meshes into one GLB scene.")
     compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_planes.glb")
     compose_scene.add_argument("--objects", default="Output/Latest/objects")
     compose_scene.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
+    compose_scene.add_argument("--placements", help="Use explicit placement/object_placements.json records instead of fitting directly from object_geometry.json.")
     compose_scene.add_argument("--output", default="Output/Latest/scene")
     compose_scene.add_argument("--output-name", default="scene.glb")
     compose_scene.add_argument("--object-mesh-name", default="hunyuan3d_textured.glb")
@@ -206,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     compose_scene.add_argument("--no-snap-objects-to-floor", action="store_true")
     compose_scene.add_argument("--no-optimize-placements", action="store_true")
     compose_scene.add_argument("--source-image")
-    compose_scene.add_argument("--background-margin", type=float, default=1.08)
+    compose_scene.add_argument("--background-margin", type=float, default=2.2)
     compose_scene.add_argument(
         "--background-depth-offset",
         type=float,
@@ -529,6 +575,34 @@ def cmd_render_blend_png(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_scene_camera_view(args: argparse.Namespace) -> int:
+    scene_path = _require_file(args.scene, "--scene")
+    script_path = ROOT / "Tools" / "Scripts" / "render_scene_camera_view.py"
+    if not script_path.is_file():
+        raise CliError(f"Render script does not exist: {script_path}")
+    script_args = [
+        str(scene_path),
+        str(args.output),
+    ]
+    if args.alignment_report:
+        script_args.extend(["--alignment-report", str(_require_file(args.alignment_report, "--alignment-report"))])
+    if args.width:
+        script_args.extend(["--width", str(args.width)])
+    if args.height:
+        script_args.extend(["--height", str(args.height)])
+    if args.fov_degrees:
+        script_args.extend(["--fov-degrees", str(args.fov_degrees)])
+    script_args.extend(["--camera-mode", str(args.camera_mode)])
+    command = _blender_script_command(
+        blender=args.blender,
+        script=script_path,
+        script_args=script_args,
+    )
+    _run_subprocess(command)
+    print(f"Wrote {Path(args.output)}")
+    return 0
+
+
 def cmd_run_vggt(args: argparse.Namespace) -> int:
     from SceneGeometry.VGGT.pipeline import run_vggt_image_geometry
 
@@ -682,6 +756,72 @@ def cmd_fit_empty_room_planes(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_choose_object_supports(args: argparse.Namespace) -> int:
+    from SceneComposition.placement import choose_object_supports
+
+    report = choose_object_supports(
+        object_geometry_path=args.object_geometry,
+        planes_path=args.planes,
+        detections_path=args.detections,
+        objects_dir=args.objects,
+        output_dir=args.output,
+        object_mesh_name=args.object_mesh_name,
+        include_review=args.include_review,
+        placement_orientation=args.placement_orientation,
+        object_scale_factor=args.object_scale_factor,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'object_supports.json'}")
+    print(
+        "Chose supports for "
+        f"{report['summary']['accepted_count']}/{report['summary']['object_count']} objects "
+        f"({report['summary']['needs_review_count']} needs review)"
+    )
+    return 0
+
+
+def cmd_build_object_fit_targets(args: argparse.Namespace) -> int:
+    from SceneComposition.placement import build_object_fit_targets
+
+    report = build_object_fit_targets(
+        object_geometry_path=args.object_geometry,
+        supports_path=args.supports,
+        objects_dir=args.objects,
+        output_dir=args.output,
+        object_mesh_name=args.object_mesh_name,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'object_fit_targets.json'}")
+    print(
+        "Built fit targets for "
+        f"{report['summary']['ready_count']}/{report['summary']['object_count']} objects "
+        f"({report['summary']['failed_count']} failed, {report['summary']['needs_review_count']} needs review)"
+    )
+    return 0
+
+
+def cmd_fit_object_placements(args: argparse.Namespace) -> int:
+    from SceneComposition.placement import fit_object_placements
+
+    report = fit_object_placements(
+        supports_path=args.supports,
+        fit_targets_path=args.fit_targets,
+        output_dir=args.output,
+        placement_orientation=args.placement_orientation,
+        object_scale_factor=args.object_scale_factor,
+        optimize_placements=not args.no_optimize_placements,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'object_placements.json'}")
+    print(f"Wrote {output_dir / 'placement_quality.json'}")
+    print(
+        "Fitted placements for "
+        f"{report['summary']['accepted_count']}/{report['summary']['placement_count']} objects "
+        f"({report['summary']['failed_count']} failed, {report['summary']['needs_review_count']} needs review)"
+    )
+    return 0
+
+
 def cmd_compose_scene(args: argparse.Namespace) -> int:
     from SceneComposition.composer import compose_scene
 
@@ -689,6 +829,7 @@ def cmd_compose_scene(args: argparse.Namespace) -> int:
         background_path=args.background,
         objects_dir=args.objects,
         object_geometry_path=args.object_geometry,
+        placements_path=args.placements,
         output_dir=args.output,
         output_name=args.output_name,
         object_mesh_name=args.object_mesh_name,

@@ -1,0 +1,11 @@
+{
+  "backend": "foreground",
+  "coverage_ratio": 0.05975341796875,
+  "foreground_pixels": 62656,
+  "image_height": 1024,
+  "image_width": 1024,
+  "mask": "artifacts/reconstruction/completed_mask.png",
+  "mask_source": "completed_neutral_background_foreground",
+  "schema_version": 1,
+  "text_prompt": "vase . foreground object ."
+}

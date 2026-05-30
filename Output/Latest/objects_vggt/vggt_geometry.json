@@ -1,0 +1,94 @@
+{
+  "artifacts": {
+    "camera": "vggt_camera.json",
+    "confidence_png": "vggt_confidence.png",
+    "depth_npy": "vggt_depth.npy",
+    "depth_png": "vggt_depth.png",
+    "mesh_glb": "vggt_mesh.glb",
+    "mesh_obj": "vggt_mesh.obj",
+    "points_npy": "vggt_points.npy",
+    "points_xyz": "vggt_points.xyz"
+  },
+  "backend": "vggt",
+  "coordinate_contract": {
+    "camera_model": "pinhole",
+    "depth": {
+      "convention": "white_close_black_far",
+      "far_depth": 8.0,
+      "format": "8bit_grayscale_png_L",
+      "near_depth": 1.0,
+      "orientation": "rgb_aligned_no_flip",
+      "schema_version": 1
+    },
+    "fov_degrees": 70.0,
+    "image_height": 1000,
+    "image_width": 1500,
+    "pixel": {
+      "coordinate_system": "image_pixel_top_left_v1",
+      "origin": "top_left_pixel_corner",
+      "sample_position": "pixel_center",
+      "schema_version": 1,
+      "x": "right",
+      "y": "down"
+    },
+    "purpose": "all_source_detection_enrichment_fit_metrics_artifacts_share_this_frame",
+    "scene": {
+      "axes": {
+        "x": "image_right",
+        "y": "depth_away_from_camera",
+        "z": "image_up"
+      },
+      "blender_world_mapping": {
+        "blender_camera_local_forward": "-Z",
+        "camera_layout_camera_forward": "+Y",
+        "camera_layout_camera_location": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "x": "+X",
+        "y": "+Y",
+        "z": "+Z"
+      },
+      "coordinate_system": "sceneforge_camera_v1",
+      "handedness": "right_handed",
+      "origin": "source_camera_center_for_camera_layout",
+      "schema_version": 1,
+      "units": "blender_units",
+      "upright_axis": "z"
+    },
+    "schema_version": 1,
+    "sensor_fit": "horizontal"
+  },
+  "image_height": 1000,
+  "image_path": "Assets/Samples/Chairs.jpg",
+  "image_width": 1500,
+  "model_info": {
+    "backend": "vggt",
+    "cache_dir": "/mnt/Projects/SceneForge/Models/Geometry/VGGT/hf-cache",
+    "checkpoint": null,
+    "device": "cpu",
+    "local_only": true,
+    "model": "facebook/VGGT-1B"
+  },
+  "schema_version": 1,
+  "summary": {
+    "depth_max": 1.4150499105453491,
+    "depth_min": 0.6137232184410095,
+    "glb_axis_transform": "gltf_x_image_right_y_image_up_z_back_toward_camera",
+    "glb_face_count": 46376,
+    "glb_point_source": "sceneforge_camera_points",
+    "glb_stride": 8,
+    "glb_vertex_colors": true,
+    "glb_vertex_count": 23500,
+    "obj_face_count": 46376,
+    "obj_point_source": "sceneforge_camera_points",
+    "obj_stride": 8,
+    "obj_vertex_count": 23500,
+    "obj_winding": "camera_facing",
+    "point_count": 1500000,
+    "valid_depth_ratio": 1.0,
+    "valid_point_ratio": 1.0
+  },
+  "timestamp_utc": "2026-05-30T00:58:41.769221+00:00"
+}

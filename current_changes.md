@@ -2,6 +2,14 @@
 
 This file tracks notable project changes while SceneForge is still small.
 
+## 2026-05-30
+
+- Added `Docs/support_plane_placement_optimization_design.md` to define the general empty-room plus support-plane placement lane: support selection, 4-DoF/5-DoF transform models, evidence contracts, loss functions, placement reports, scene alignment diagnostics, and a staged implementation plan.
+- Added `Docs/three_d_regen_model_fitting_reference.md` after inspecting 3D-RE-GEN, summarizing its VGGT point-cloud target extraction, floor-plane fitting, 4-DoF planar optimizer, regular fallback optimizer, losses, and SceneForge adaptation notes.
+- Extended the support-plane placement implementation with explicit 5-DoF unknown-support fallback records, bbox-as-silhouette proxy loss reports, software-rendered mask silhouette losses, sampled VGGT point-proximity losses, finite support-footprint checks, support penetration and object-overlap diagnostics, and placement-quality thresholds written to JSON.
+- Added `run.py render-scene-camera-view` plus `Tools/Scripts/render_scene_camera_view.py` to render composed GLB scenes from the source camera for GT-style visual checks against the input image.
+- Changed explicit placement fitting to relock tabletop objects to the final optimized support-object top surface, widened procedural room-corner backgrounds for source-camera renders, and added a fit-preview render mode for photo-like scene inspection.
+
 ## 2026-05-29
 
 - Removed retired primitive-proxy command stubs and their active CLI tests.
@@ -37,6 +45,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Changed scene composition snapping to use object support targets: floor-supported furniture stays on the floor, while small tabletop labels such as vase and flower snap to the detected table top when their 2D boxes overlap a table.
 - Added label-aware composition adjustments so chairs are scaled down, pushed slightly outward, and semantically yawed to face the detected table center before floor snapping.
 - Added a constrained support-plane placement optimizer to `compose-scene`: supported objects search only plane translation, yaw, and uniform scale, then write render-to-input projected-box losses plus `input_vs_projection_overlay.png`.
+- Added explicit support-plane placement stages: `choose-object-supports`, `build-object-fit-targets`, and `fit-object-placements` now write `placement/object_supports.json`, `placement/object_fit_targets.json`, `placement/object_placements.json`, and `placement/placement_quality.json`; `compose-scene --placements` can consume those records directly.
 - Changed `compose-scene` to fit the empty-room mesh to the object-placement bounds by default and push its near depth behind placed objects; `--background-fit raw` keeps the raw VGGT background transform for debugging.
 - Kept Hunyuan3D texture defaults on the practical 512 resolution and 6 selected views for 16 GB GPUs, with remesh enabled by default. No-remesh UV unwrapping now fails fast above 120k OBJ faces, and the direct texture helper exits nonzero when paint fails instead of silently leaving stale textures in place.
 - Added a Hunyuan3D Paint texture prompt pass-through while keeping the upstream `high quality` prompt as the default; material-specific prompts are opt-in.

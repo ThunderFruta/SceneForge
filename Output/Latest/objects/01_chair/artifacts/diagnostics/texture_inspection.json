@@ -1,0 +1,38 @@
+{
+  "comparisons": {
+    "detections": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "detections",
+      "unmatched_count": 0
+    },
+    "primitive_fits": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "primitive_fits",
+      "unmatched_count": 0
+    }
+  },
+  "detections": {
+    "count": 0,
+    "items": []
+  },
+  "fits": {
+    "count": 0,
+    "items": []
+  },
+  "format": ".obj",
+  "issues": [],
+  "model_path": "Output/Latest/objects/01_chair/hunyuan3d_textured.obj",
+  "objects": [],
+  "summary": {
+    "issues": [
+      "Failed to inspect model with trimesh: No module named 'trimesh'"
+    ],
+    "object_count": 0,
+    "total_faces": 0,
+    "total_vertices": 0
+  }
+}

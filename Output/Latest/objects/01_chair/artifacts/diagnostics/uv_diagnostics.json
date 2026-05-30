@@ -1,0 +1,30 @@
+{
+  "vertices": 23536,
+  "uvs": 23536,
+  "faces": 40000,
+  "uv_min": [
+    0.0,
+    0.0
+  ],
+  "uv_max": [
+    0.999566,
+    0.999562
+  ],
+  "zero_corner_faces": 55,
+  "degenerate_uv_faces": 55,
+  "out_of_range_uv_refs": 0,
+  "tiny_uv_area_faces": 61,
+  "huge_uv_area_faces": 0,
+  "uv_area_min": 0.0,
+  "uv_area_median": 50.813866308184515,
+  "uv_area_max": 810.9967329212595,
+  "lowres_covered_pixels": 169104,
+  "lowres_overlap_pixels": 99845,
+  "lowres_overlap_ratio_of_covered": 0.590435471662409,
+  "lowres_max_overlap": 55,
+  "artifacts": [
+    "uv_occupancy.png",
+    "uv_wireframe.png",
+    "uv_overlap_heat.png"
+  ]
+}

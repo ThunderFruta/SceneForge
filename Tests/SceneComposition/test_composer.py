@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from SceneComposition.composer import compose_scene, placement_transform_to_gltf
+from SceneComposition.placement import build_object_fit_targets, choose_object_supports, fit_object_placements
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +41,139 @@ def write_background_vggt_fixture(vggt_dir: Path) -> None:
             points[y, x] = [float(x), 10.0 + float(y), float(y) / 10.0]
     np.save(vggt_dir / "vggt_points.npy", points)
     Image.new("RGB", (4, 4), (40, 80, 120)).save(vggt_dir / "empty_room.png")
+
+
+def write_plane_report(path: Path, *, floor_z: float = 0.0) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "planes": [
+                    {
+                        "id": "floor",
+                        "plane_subtype": "floor",
+                        "normal_xyz": [0.0, 0.0, 1.0],
+                        "vertices_xyz": [[-2.0, 0.0, floor_z], [2.0, 0.0, floor_z], [2.0, 3.0, floor_z], [-2.0, 3.0, floor_z]],
+                        "support_count": 128,
+                        "fit_residual": 0.01,
+                    },
+                    {
+                        "id": "back_wall",
+                        "plane_subtype": "wall",
+                        "normal_xyz": [0.0, -1.0, 0.0],
+                        "vertices_xyz": [[-2.0, 3.0, floor_z], [2.0, 3.0, floor_z], [2.0, 3.0, 2.0], [-2.0, 3.0, 2.0]],
+                        "support_count": 64,
+                        "fit_residual": 0.02,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_tiny_floor_report(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "planes": [
+                    {
+                        "id": "floor",
+                        "plane_subtype": "floor",
+                        "normal_xyz": [0.0, 0.0, 1.0],
+                        "vertices_xyz": [[-0.1, 0.9, 0.0], [0.1, 0.9, 0.0], [0.1, 1.1, 0.0], [-0.1, 1.1, 0.0]],
+                        "support_count": 8,
+                        "fit_residual": 0.01,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_empty_plane_report(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "planes": []}), encoding="utf-8")
+
+
+def write_support_object_geometry(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {
+                    "image_width": 100,
+                    "image_height": 100,
+                    "fov_degrees": 70.0,
+                },
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [20.0, 30.0, 80.0, 90.0],
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 1.0, 1.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 2,
+                        "detector_label": "vase",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [45.0, 5.0, 55.0, 35.0],
+                        "center_xyz": [0.0, 1.0, 0.5],
+                        "extent_xyz": [0.2, 0.2, 0.2],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 3,
+                        "detector_label": "chair",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [95.0, 35.0, 130.0, 96.0],
+                        "center_xyz": [0.8, 1.1, 0.0],
+                        "extent_xyz": [0.5, 0.5, 0.5],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_single_object_geometry(path: Path, *, label: str = "unknown object") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {
+                    "image_width": 100,
+                    "image_height": 100,
+                    "fov_degrees": 70.0,
+                },
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": label,
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [42.0, 42.0, 58.0, 58.0],
+                        "center_xyz": [0.8, 1.1, 0.0],
+                        "extent_xyz": [0.5, 0.5, 0.5],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_placement_transform_maps_sceneforge_camera_box_to_gltf_axes() -> None:
@@ -107,6 +241,7 @@ def test_compose_scene_writes_scene_glb_and_alignment_report(tmp_path: Path) -> 
         output_dir=output_dir,
         object_scale_factor=1.0,
         background_fit="placement-bounds",
+        background_margin=1.08,
     )
 
     assert (output_dir / "scene.glb").is_file()
@@ -319,6 +454,337 @@ def test_compose_scene_snaps_tabletop_objects_to_table_surface(tmp_path: Path) -
     assert by_id[2]["support_detection_id"] == 1
     assert by_id[2]["floor_snap_delta"] == 0.0
     assert by_id[2]["support_snap_delta"] != 0.0
+
+
+def test_choose_object_supports_writes_floor_and_tabletop_records(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    chair_dir = objects_dir / "03_chair"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    output_dir = tmp_path / "placement"
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb")
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb")
+    write_box_glb(chair_dir / "hunyuan3d_textured.glb")
+    for object_id, object_dir in ((1, table_dir), (2, vase_dir), (3, chair_dir)):
+        object_dir.mkdir(parents=True, exist_ok=True)
+        (object_dir / "metadata.json").write_text(json.dumps({"id": object_id}), encoding="utf-8")
+    write_support_object_geometry(object_geometry)
+
+    report = choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=output_dir,
+        object_scale_factor=1.0,
+    )
+
+    by_id = {item["detection_id"]: item for item in report["objects"]}
+    assert (output_dir / "object_supports.json").is_file()
+    assert by_id[1]["support"]["mode"] == "floor_4dof"
+    assert by_id[2]["support"]["mode"] == "tabletop_4dof"
+    assert by_id[2]["support"]["support_detection_id"] == 1
+    assert by_id[3]["support"]["mode"] == "floor_4dof"
+    assert report["summary"]["support_modes"] == {"floor_4dof": 2, "tabletop_4dof": 1}
+
+
+def test_fit_object_placements_and_compose_explicit_records(tmp_path: Path) -> None:
+    background = tmp_path / "background.glb"
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    chair_dir = objects_dir / "03_chair"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    placement_dir = tmp_path / "placement"
+    scene_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb")
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb")
+    write_box_glb(chair_dir / "hunyuan3d_textured.glb")
+    for object_id, object_dir in ((1, table_dir), (2, vase_dir), (3, chair_dir)):
+        object_dir.mkdir(parents=True, exist_ok=True)
+        (object_dir / "metadata.json").write_text(json.dumps({"id": object_id}), encoding="utf-8")
+    write_support_object_geometry(object_geometry)
+    supports = choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+    targets = build_object_fit_targets(
+        object_geometry_path=object_geometry,
+        supports_path=placement_dir / "object_supports.json",
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+    )
+
+    placements = fit_object_placements(
+        supports_path=placement_dir / "object_supports.json",
+        fit_targets_path=placement_dir / "object_fit_targets.json",
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+    scene_report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=object_geometry,
+        placements_path=placement_dir / "object_placements.json",
+        output_dir=scene_dir,
+        background_fit="room-corner",
+        object_scale_factor=1.0,
+        include_review=True,
+    )
+
+    assert supports["summary"]["accepted_count"] == 3
+    assert targets["summary"]["ready_count"] == 3
+    assert placements["summary"]["accepted_count"] == 3
+    placement_by_id = {item["detection_id"]: item for item in placements["objects"]}
+    table_top = placement_by_id[1]["transformed_bounds"][1][1]
+    assert abs(placement_by_id[2]["support"]["support_y_gltf"] - table_top) < 1e-6
+    assert placements["objects"][0]["losses"]["silhouette"] is not None
+    assert placements["objects"][0]["quality"]["silhouette_proxy"]["method"] == "bbox_projection_proxy"
+    assert placements["objects"][0]["quality"]["support_footprint"]["status"] in {"accepted", "warning", "rejected"}
+    assert (placement_dir / "object_fit_targets.json").is_file()
+    assert (placement_dir / "object_placements.json").is_file()
+    assert (placement_dir / "placement_quality.json").is_file()
+    assert scene_report["placement_source"] == "object_placements_json"
+    assert scene_report["summary"]["composed_count"] == 3
+    by_id = {item["detection_id"]: item for item in scene_report["objects"]}
+    assert by_id[2]["support_kind"] == "tabletop"
+    assert by_id[2]["support_detection_id"] == 1
+
+
+def test_fit_object_placements_has_unknown_5dof_fallback(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_object"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    placement_dir = tmp_path / "placement"
+    write_empty_plane_report(planes_path)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    write_single_object_geometry(object_geometry)
+
+    supports = choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+    build_object_fit_targets(
+        object_geometry_path=object_geometry,
+        supports_path=placement_dir / "object_supports.json",
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+    )
+    placements = fit_object_placements(
+        supports_path=placement_dir / "object_supports.json",
+        fit_targets_path=placement_dir / "object_fit_targets.json",
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+
+    record = placements["objects"][0]
+    assert supports["objects"][0]["support"]["mode"] == "unknown_5dof"
+    assert record["degrees_of_freedom"]["model"] == "unknown_support_5dof"
+    assert record["render_to_input_optimization"]["method"] == "unknown_support_5dof_discrete_render_proxy_v1"
+    assert record["render_to_input_optimization"]["candidate_count"] > 0
+    assert record["needs_review"] is True
+
+
+def test_support_footprint_outside_plane_marks_review(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_chair"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    placement_dir = tmp_path / "placement"
+    write_tiny_floor_report(planes_path)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    write_single_object_geometry(object_geometry, label="chair")
+
+    choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+    build_object_fit_targets(
+        object_geometry_path=object_geometry,
+        supports_path=placement_dir / "object_supports.json",
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+    )
+    placements = fit_object_placements(
+        supports_path=placement_dir / "object_supports.json",
+        fit_targets_path=placement_dir / "object_fit_targets.json",
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+
+    record = placements["objects"][0]
+    assert record["support"]["mode"] == "floor_4dof"
+    assert record["quality"]["support_footprint"]["status"] == "rejected"
+    assert "support_footprint_rejected" in record["quality"]["warnings"]
+    assert record["needs_review"] is True
+
+
+def test_fit_object_placements_reports_vggt_point_loss(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_chair"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    points_xyz = tmp_path / "objects_vggt" / "regions" / "01_chair" / "points.xyz"
+    mask_path = tmp_path / "objects" / "01_chair" / "full_mask.png"
+    placement_dir = tmp_path / "placement"
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    points_xyz.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(points_xyz, np.asarray([[0.0, 1.0, 0.0], [0.1, 1.0, 0.1], [-0.1, 1.0, 0.1]], dtype=np.float32))
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    object_geometry.parent.mkdir(parents=True, exist_ok=True)
+    mask_pixels = np.zeros((100, 100), dtype=np.uint8)
+    mask_pixels[30:90, 35:65] = 255
+    Image.fromarray(mask_pixels).save(mask_path)
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {
+                    "image_width": 100,
+                    "image_height": 100,
+                    "fov_degrees": 70.0,
+                },
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "chair",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [35.0, 30.0, 65.0, 90.0],
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [0.5, 0.5, 0.5],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                        "mask_path": str(mask_path),
+                        "artifacts": {"points_xyz": str(points_xyz)},
+                        "point_count": 3,
+                        "valid_point_ratio": 1.0,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+    targets = build_object_fit_targets(
+        object_geometry_path=object_geometry,
+        supports_path=placement_dir / "object_supports.json",
+        objects_dir=objects_dir,
+        output_dir=placement_dir,
+    )
+    placements = fit_object_placements(
+        supports_path=placement_dir / "object_supports.json",
+        fit_targets_path=placement_dir / "object_fit_targets.json",
+        output_dir=placement_dir,
+        object_scale_factor=1.0,
+    )
+
+    record = placements["objects"][0]
+    assert Path(targets["objects"][0]["visible_points_scene_path"]).is_file()
+    assert record["losses"]["vggt_points"] is not None
+    assert record["quality"]["vggt_points"]["status"] == "accepted"
+    assert record["quality"]["silhouette_render"]["status"] == "accepted"
+    assert record["quality"]["silhouette_visibility"]["status"] == "accepted"
+
+
+def test_explicit_placement_cli_commands(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    chair_dir = objects_dir / "03_chair"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    placement_dir = tmp_path / "placement"
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb")
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb")
+    write_box_glb(chair_dir / "hunyuan3d_textured.glb")
+    for object_id, object_dir in ((1, table_dir), (2, vase_dir), (3, chair_dir)):
+        object_dir.mkdir(parents=True, exist_ok=True)
+        (object_dir / "metadata.json").write_text(json.dumps({"id": object_id}), encoding="utf-8")
+    write_support_object_geometry(object_geometry)
+
+    choose_result = run_cli(
+        [
+            "choose-object-supports",
+            "--object-geometry",
+            str(object_geometry),
+            "--planes",
+            str(planes_path),
+            "--detections",
+            "",
+            "--objects",
+            str(objects_dir),
+            "--output",
+            str(placement_dir),
+            "--object-scale-factor",
+            "1.0",
+        ]
+    )
+    build_result = run_cli(
+        [
+            "build-object-fit-targets",
+            "--object-geometry",
+            str(object_geometry),
+            "--supports",
+            str(placement_dir / "object_supports.json"),
+            "--objects",
+            str(objects_dir),
+            "--output",
+            str(placement_dir),
+        ]
+    )
+    fit_result = run_cli(
+        [
+            "fit-object-placements",
+            "--supports",
+            str(placement_dir / "object_supports.json"),
+            "--fit-targets",
+            str(placement_dir / "object_fit_targets.json"),
+            "--output",
+            str(placement_dir),
+            "--object-scale-factor",
+            "1.0",
+        ]
+    )
+
+    assert choose_result.returncode == 0, choose_result.stderr
+    assert build_result.returncode == 0, build_result.stderr
+    assert fit_result.returncode == 0, fit_result.stderr
+    assert (placement_dir / "object_supports.json").is_file()
+    assert (placement_dir / "object_fit_targets.json").is_file()
+    assert (placement_dir / "object_placements.json").is_file()
 
 
 def test_compose_scene_scales_and_spreads_chairs_from_table(tmp_path: Path) -> None:

@@ -1,0 +1,82 @@
+{
+  "comparisons": {
+    "detections": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "detections",
+      "unmatched_count": 0
+    },
+    "primitive_fits": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "primitive_fits",
+      "unmatched_count": 0
+    }
+  },
+  "detections": {
+    "count": 0,
+    "items": []
+  },
+  "fits": {
+    "count": 0,
+    "items": []
+  },
+  "format": ".glb",
+  "issues": [],
+  "model_path": "Output/Latest/objects/03_round_table/hunyuan3d_textured.glb",
+  "objects": [
+    {
+      "area": 9.7417,
+      "bounds_max": [
+        0.9953,
+        0.9951,
+        0.2973
+      ],
+      "bounds_min": [
+        -1.0007,
+        -1.0002,
+        -0.3533
+      ],
+      "center": [
+        -0.0027,
+        -0.0026,
+        -0.028
+      ],
+      "dimensions": [
+        1.9959,
+        1.9953,
+        0.6506
+      ],
+      "edges": 118945,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "hunyuan3d_textured",
+      "primitive": null,
+      "vertices": 117759
+    }
+  ],
+  "summary": {
+    "bounds_max": [
+      0.9953,
+      0.9951,
+      0.2973
+    ],
+    "bounds_min": [
+      -1.0007,
+      -1.0002,
+      -0.3533
+    ],
+    "dimensions": [
+      1.996,
+      1.9953,
+      0.6506
+    ],
+    "issues": [],
+    "object_count": 1,
+    "total_faces": 40000,
+    "total_vertices": 117759
+  }
+}

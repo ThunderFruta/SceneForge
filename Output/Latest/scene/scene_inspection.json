@@ -1,0 +1,322 @@
+{
+  "comparisons": {
+    "detections": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "detections",
+      "unmatched_count": 0
+    },
+    "primitive_fits": {
+      "count": 0,
+      "entries": [],
+      "matched_count": 0,
+      "source": "primitive_fits",
+      "unmatched_count": 0
+    }
+  },
+  "detections": {
+    "count": 0,
+    "items": []
+  },
+  "fits": {
+    "count": 0,
+    "items": []
+  },
+  "format": ".glb",
+  "issues": [],
+  "model_path": "Output/Latest/scene/scene.glb",
+  "objects": [
+    {
+      "area": 0.7208,
+      "bounds_max": [
+        0.6973,
+        0.6417,
+        -0.571
+      ],
+      "bounds_min": [
+        0.6973,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.6973,
+        0.2167,
+        -0.995
+      ],
+      "dimensions": [
+        0.0,
+        0.85,
+        0.848
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "background_000",
+      "primitive": null,
+      "vertices": 1369
+    },
+    {
+      "area": 1.0366,
+      "bounds_max": [
+        0.6973,
+        0.6417,
+        -1.4189
+      ],
+      "bounds_min": [
+        -0.5222,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.0875,
+        0.2167,
+        -1.4189
+      ],
+      "dimensions": [
+        1.2196,
+        0.85,
+        0.0
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "background_001",
+      "primitive": null,
+      "vertices": 1369
+    },
+    {
+      "area": 1.0342,
+      "bounds_max": [
+        0.6973,
+        -0.2083,
+        -0.571
+      ],
+      "bounds_min": [
+        -0.5222,
+        -0.2083,
+        -1.4189
+      ],
+      "center": [
+        0.0875,
+        -0.2083,
+        -0.995
+      ],
+      "dimensions": [
+        1.2196,
+        0.0,
+        0.848
+      ],
+      "edges": 3960,
+      "faces": 2592,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "background_002",
+      "primitive": null,
+      "vertices": 1369
+    },
+    {
+      "area": 0.7078,
+      "bounds_max": [
+        -0.0664,
+        0.2051,
+        -0.6041
+      ],
+      "bounds_min": [
+        -0.584,
+        -0.2083,
+        -1.1057
+      ],
+      "center": [
+        -0.3252,
+        -0.0016,
+        -0.8549
+      ],
+      "dimensions": [
+        0.5176,
+        0.4134,
+        0.5016
+      ],
+      "edges": 119942,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_01_chair_000",
+      "primitive": null,
+      "vertices": 119884
+    },
+    {
+      "area": 0.1542,
+      "bounds_max": [
+        0.0204,
+        0.4367,
+        -0.8512
+      ],
+      "bounds_min": [
+        -0.017,
+        0.3006,
+        -1.2697
+      ],
+      "center": [
+        0.0017,
+        0.3687,
+        -1.0604
+      ],
+      "dimensions": [
+        0.0374,
+        0.136,
+        0.4185
+      ],
+      "edges": 119988,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_02_vase_000",
+      "primitive": null,
+      "vertices": 119977
+    },
+    {
+      "area": 0.8751,
+      "bounds_max": [
+        0.3041,
+        0.3006,
+        -0.6553
+      ],
+      "bounds_min": [
+        -0.2695,
+        -0.2083,
+        -1.2576
+      ],
+      "center": [
+        0.0173,
+        0.0462,
+        -0.9564
+      ],
+      "dimensions": [
+        0.5736,
+        0.5089,
+        0.6023
+      ],
+      "edges": 22642,
+      "faces": 7565,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_03_round_table_000",
+      "primitive": null,
+      "vertices": 22582
+    },
+    {
+      "area": 0.395,
+      "bounds_max": [
+        0.0961,
+        0.5722,
+        -0.8254
+      ],
+      "bounds_min": [
+        -0.0764,
+        0.3006,
+        -1.3377
+      ],
+      "center": [
+        0.0098,
+        0.4364,
+        -1.0816
+      ],
+      "dimensions": [
+        0.1725,
+        0.2716,
+        0.5122
+      ],
+      "edges": 119984,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_04_flower_000",
+      "primitive": null,
+      "vertices": 119968
+    },
+    {
+      "area": 0.5546,
+      "bounds_max": [
+        -0.0257,
+        0.2181,
+        -0.8518
+      ],
+      "bounds_min": [
+        -0.5404,
+        -0.2083,
+        -1.2758
+      ],
+      "center": [
+        -0.2831,
+        0.0049,
+        -1.0638
+      ],
+      "dimensions": [
+        0.5147,
+        0.4263,
+        0.424
+      ],
+      "edges": 119942,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_05_chair_000",
+      "primitive": null,
+      "vertices": 119884
+    },
+    {
+      "area": 0.614,
+      "bounds_max": [
+        0.5734,
+        0.2058,
+        -0.8527
+      ],
+      "bounds_min": [
+        0.0546,
+        -0.2083,
+        -1.3564
+      ],
+      "center": [
+        0.314,
+        -0.0012,
+        -1.1045
+      ],
+      "dimensions": [
+        0.5188,
+        0.414,
+        0.5037
+      ],
+      "edges": 119929,
+      "faces": 40000,
+      "is_manifold": false,
+      "material_count": 0,
+      "name": "object_06_chair_000",
+      "primitive": null,
+      "vertices": 119858
+    }
+  ],
+  "summary": {
+    "bounds_max": [
+      0.6973,
+      0.6417,
+      -0.571
+    ],
+    "bounds_min": [
+      -0.584,
+      -0.2083,
+      -1.4189
+    ],
+    "dimensions": [
+      1.2813,
+      0.85,
+      0.8479
+    ],
+    "issues": [],
+    "object_count": 9,
+    "total_faces": 215341,
+    "total_vertices": 626260
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "backend": "foreground",
+  "coverage_ratio": 0.15901470184326172,
+  "foreground_pixels": 166739,
+  "image_height": 1024,
+  "image_width": 1024,
+  "mask": "artifacts/reconstruction/completed_mask.png",
+  "mask_source": "completed_neutral_background_foreground",
+  "schema_version": 1,
+  "text_prompt": "chair . foreground object ."
+}

@@ -1,0 +1,11 @@
+{
+  "backend": "foreground",
+  "coverage_ratio": 0.03303241729736328,
+  "foreground_pixels": 34637,
+  "image_height": 1024,
+  "image_width": 1024,
+  "mask": "artifacts/reconstruction/completed_mask.png",
+  "mask_source": "completed_neutral_background_foreground",
+  "schema_version": 1,
+  "text_prompt": "flower . foreground object ."
+}

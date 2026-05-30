@@ -1,0 +1,941 @@
+{
+  "artifacts": {
+    "input_vs_projection_overlay": "Output/Latest/scene/input_vs_projection_overlay.png",
+    "scene_alignment": "Output/Latest/scene/scene_alignment.json",
+    "scene_glb": "Output/Latest/scene/scene.glb"
+  },
+  "background": {
+    "mesh_count": 3,
+    "path": "Output/Latest/background/empty_room_planes.glb",
+    "source_bounds": [
+      [
+        -0.5222406387329102,
+        -0.20825549960136414,
+        -1.4189488887786865
+      ],
+      [
+        0.6973149180412292,
+        0.6417444944381714,
+        -0.5709750056266785
+      ]
+    ],
+    "transform_gltf": [
+      [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "transformed_bounds": [
+      [
+        -0.5222406387329102,
+        -0.20825549960136414,
+        -1.4189488887786865
+      ],
+      [
+        0.6973149180412292,
+        0.6417444944381714,
+        -0.5709750056266785
+      ]
+    ]
+  },
+  "background_clip_dilation_px": 8,
+  "background_depth_offset": 0.12,
+  "background_fit": "raw",
+  "background_margin": 1.08,
+  "background_path": "Output/Latest/background/empty_room_planes.glb",
+  "background_stride": 16,
+  "background_vggt_dir": "Output/Latest/background",
+  "clip_background_masks": true,
+  "coordinate_contract": {
+    "camera_model": "pinhole",
+    "depth": {
+      "convention": "white_close_black_far",
+      "far_depth": 8.0,
+      "format": "8bit_grayscale_png_L",
+      "near_depth": 1.0,
+      "orientation": "rgb_aligned_no_flip",
+      "schema_version": 1
+    },
+    "fov_degrees": 70.0,
+    "image_height": 1000,
+    "image_width": 1500,
+    "pixel": {
+      "coordinate_system": "image_pixel_top_left_v1",
+      "origin": "top_left_pixel_corner",
+      "sample_position": "pixel_center",
+      "schema_version": 1,
+      "x": "right",
+      "y": "down"
+    },
+    "purpose": "all_source_detection_enrichment_fit_metrics_artifacts_share_this_frame",
+    "scene": {
+      "axes": {
+        "x": "image_right",
+        "y": "depth_away_from_camera",
+        "z": "image_up"
+      },
+      "blender_world_mapping": {
+        "blender_camera_local_forward": "-Z",
+        "camera_layout_camera_forward": "+Y",
+        "camera_layout_camera_location": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "x": "+X",
+        "y": "+Y",
+        "z": "+Z"
+      },
+      "coordinate_system": "sceneforge_camera_v1",
+      "handedness": "right_handed",
+      "origin": "source_camera_center_for_camera_layout",
+      "schema_version": 1,
+      "units": "blender_units",
+      "upright_axis": "z"
+    },
+    "schema_version": 1,
+    "sensor_fit": "horizontal"
+  },
+  "floor_y": -0.20825549960136414,
+  "include_review": false,
+  "label_scale_factors": {
+    "chair": 0.78
+  },
+  "object_geometry_path": "Output/Latest/objects_vggt/object_geometry.json",
+  "object_mesh_name": "hunyuan3d_textured.glb",
+  "object_scale_factor": 0.85,
+  "objects": [
+    {
+      "box_type": "obb",
+      "detection_id": 1,
+      "detector_label": "chair",
+      "floor_snap_delta": 0.07045871109542245,
+      "label_scale_factor": 0.78,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/01_chair",
+      "object_mesh": "Output/Latest/objects/01_chair/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          0.08,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 0.7747713255131131,
+        "initial_projected_bbox_xyxy": [
+          -177.2641664678771,
+          116.11289871390699,
+          666.7244765248768,
+          889.6986802963813
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 0.4145612838885771,
+        "optimized_projected_bbox_xyxy": [
+          166.0227095842714,
+          217.90666215755243,
+          778.0483557943863,
+          841.4016147972852
+        ],
+        "target_bbox_xyxy": [
+          162.0,
+          267.0,
+          683.0,
+          974.0
+        ],
+        "uniform_scale_delta": 0.92,
+        "yaw_delta_radians": 0.175
+      },
+      "semantic_orientation_kind": "face_nearest_table",
+      "semantic_yaw_radians": 1.8605229100187834,
+      "source_bounds": [
+        [
+          -0.6595780253410339,
+          -1.0001490116119385,
+          -0.56489497423172
+        ],
+        [
+          0.6554809808731079,
+          0.9950159788131714,
+          0.5606979727745056
+        ]
+      ],
+      "spacing_delta_gltf": [
+        -0.11499864285955713,
+        0.0,
+        0.03428282573622
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": -0.20825549960136414,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "floor"
+      },
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_snap_delta": 0.07045871109542245,
+      "support_y": -0.20825549960136414,
+      "transform_gltf": [
+        [
+          -0.18266255912202198,
+          0.0,
+          0.3783031001258601,
+          -0.2584067568470609
+        ],
+        [
+          0.0,
+          0.3803328608683222,
+          0.0,
+          -0.018089069167203042
+        ],
+        [
+          -0.3643417988509386,
+          0.0,
+          -0.1896620497859907,
+          -0.9303812518270008
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          -0.5027031887261859,
+          -0.20825549960136414,
+          -1.179799466198339
+        ],
+        [
+          0.00592172320419454,
+          0.17207736126695805,
+          -0.6838913623445316
+        ]
+      ]
+    },
+    {
+      "box_type": "obb",
+      "detection_id": 2,
+      "detector_label": "vase",
+      "floor_snap_delta": 0.0,
+      "label_scale_factor": 1.0,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/02_vase",
+      "object_mesh": "Output/Latest/objects/02_vase/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          0.0,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 1.5423326056975732,
+        "initial_projected_bbox_xyxy": [
+          728.5797087153152,
+          -49.518123103790344,
+          775.6792432336372,
+          246.37874546090887
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 1.2993568991980138,
+        "optimized_projected_bbox_xyxy": [
+          732.4575133663539,
+          18.861626114979742,
+          771.3667813958175,
+          258.4149909066865
+        ],
+        "target_bbox_xyxy": [
+          748.0,
+          171.0,
+          790.0,
+          315.0
+        ],
+        "uniform_scale_delta": 0.92,
+        "yaw_delta_radians": 0.0
+      },
+      "semantic_orientation_kind": null,
+      "semantic_yaw_radians": 0.0,
+      "source_bounds": [
+        [
+          -0.3237600028514862,
+          -1.0000289678573608,
+          -0.3291029930114746
+        ],
+        [
+          0.32311999797821045,
+          0.9928309917449951,
+          0.30320999026298523
+        ]
+      ],
+      "spacing_delta_gltf": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": 0.30064323139744364,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "tabletop"
+      },
+      "support_detection_id": 3,
+      "support_kind": "tabletop",
+      "support_snap_delta": 0.18463996139541866,
+      "support_y": 0.30064323139744364,
+      "transform_gltf": [
+        [
+          0.03443385790643384,
+          0.0,
+          0.0,
+          0.0016922089402094005
+        ],
+        [
+          0.0,
+          0.12515378917729156,
+          0.0,
+          0.36322012598608944
+        ],
+        [
+          0.0,
+          0.0,
+          0.38504636025878736,
+          -1.1404331773621128
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          -0.01552472001300752,
+          0.30064323139744364,
+          -1.3329563574915064
+        ],
+        [
+          0.01890913789342632,
+          0.42579702057473523,
+          -0.9479099972327191
+        ]
+      ]
+    },
+    {
+      "box_type": "obb",
+      "detection_id": 3,
+      "detector_label": "round table",
+      "floor_snap_delta": -0.007986596903562126,
+      "label_scale_factor": 1.0,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/03_round_table",
+      "object_mesh": "Output/Latest/objects/03_round_table/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          0.0,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 0.6855283622418072,
+        "initial_projected_bbox_xyxy": [
+          309.5676751064432,
+          8.582503830621135,
+          1247.1261813864503,
+          840.4047904285386
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 0.3305379973728378,
+        "optimized_projected_bbox_xyxy": [
+          402.3010319714644,
+          133.36693254604717,
+          1146.6216001171697,
+          793.7443199940271
+        ],
+        "target_bbox_xyxy": [
+          422.0,
+          225.0,
+          1074.0,
+          803.0
+        ],
+        "uniform_scale_delta": 0.92,
+        "yaw_delta_radians": 0.0
+      },
+      "semantic_orientation_kind": null,
+      "semantic_yaw_radians": 0.0,
+      "source_bounds": [
+        [
+          -0.438634991645813,
+          -0.29724898425599594,
+          -0.4316468895043516
+        ],
+        [
+          0.4321340024471283,
+          0.35331496947479885,
+          0.4263861113810226
+        ]
+      ],
+      "spacing_delta_gltf": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": -0.20825549960136414,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "floor"
+      },
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_snap_delta": -0.007986596903562126,
+      "support_y": -0.20825549960136414,
+      "transform_gltf": [
+        [
+          0.5276999119026605,
+          0.0,
+          0.0,
+          0.017342305014849957
+        ],
+        [
+          0.0,
+          0.4681868325189032,
+          0.0,
+          0.025837916658087462
+        ],
+        [
+          0.0,
+          0.0,
+          0.5541026581568389,
+          -1.0364353998618623
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          -0.2465076509364803,
+          -0.20825549960136414,
+          -1.3134867289402816
+        ],
+        [
+          0.2811922609661802,
+          0.25993133291753906,
+          -0.7593840707834428
+        ]
+      ]
+    },
+    {
+      "box_type": "obb",
+      "detection_id": 4,
+      "detector_label": "flower",
+      "floor_snap_delta": 0.0,
+      "label_scale_factor": 1.0,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/04_flower",
+      "object_mesh": "Output/Latest/objects/04_flower/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          0.0,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 1.2142192560859117,
+        "initial_projected_bbox_xyxy": [
+          650.8538752674486,
+          -242.51071849129676,
+          874.7007508999876,
+          259.2682960989331
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 0.8689786598078878,
+        "optimized_projected_bbox_xyxy": [
+          669.5960544194584,
+          -136.79629913304302,
+          853.1852020451142,
+          269.52179636153323
+        ],
+        "target_bbox_xyxy": [
+          698.0,
+          49.0,
+          849.0,
+          272.0
+        ],
+        "uniform_scale_delta": 0.92,
+        "yaw_delta_radians": 0.0
+      },
+      "semantic_orientation_kind": null,
+      "semantic_yaw_radians": 0.0,
+      "source_bounds": [
+        [
+          -0.3558109998703003,
+          -0.9997940063476562,
+          -0.2080260068178177
+        ],
+        [
+          0.3432199954986572,
+          0.9139469861984253,
+          0.18989700078964233
+        ]
+      ],
+      "spacing_delta_gltf": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": 0.30064323139744364,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "tabletop"
+      },
+      "support_detection_id": 3,
+      "support_kind": "tabletop",
+      "support_snap_delta": 0.16003929714681703,
+      "support_y": 0.30064323139744364,
+      "transform_gltf": [
+        [
+          0.1587063117547007,
+          0.0,
+          0.0,
+          0.009846794424914554
+        ],
+        [
+          0.0,
+          0.24984460125223065,
+          0.0,
+          0.425565532023559
+        ],
+        [
+          0.0,
+          0.0,
+          0.47125437223401434,
+          -1.1615646899994299
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          -0.0695063614524358,
+          0.30064323139744364,
+          -1.397191876116437
+        ],
+        [
+          0.08919995030226491,
+          0.5504878326496743,
+          -0.9259375038824227
+        ]
+      ]
+    },
+    {
+      "box_type": "obb",
+      "detection_id": 5,
+      "detector_label": "chair",
+      "floor_snap_delta": -0.14332290074496726,
+      "label_scale_factor": 0.78,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/05_chair",
+      "object_mesh": "Output/Latest/objects/05_chair/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          0.04,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 1.1511287126748482,
+        "initial_projected_bbox_xyxy": [
+          162.54772693532834,
+          224.29026106418883,
+          732.2186892479683,
+          763.2977276997842
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 1.081474812599755,
+        "optimized_projected_bbox_xyxy": [
+          214.83061915727433,
+          224.7232253754379,
+          751.3370488679382,
+          727.3301533846303
+        ],
+        "target_bbox_xyxy": [
+          362.0,
+          99.0,
+          602.0,
+          529.0
+        ],
+        "uniform_scale_delta": 1.08,
+        "yaw_delta_radians": 0.35
+      },
+      "semantic_orientation_kind": "face_nearest_table",
+      "semantic_yaw_radians": 1.199615784624092,
+      "source_bounds": [
+        [
+          -0.5256410241127014,
+          -0.9995399713516235,
+          -0.6102129817008972
+        ],
+        [
+          0.5187559723854065,
+          0.9950879812240601,
+          0.6099770069122314
+        ]
+      ],
+      "spacing_delta_gltf": [
+        -0.11182797525063841,
+        0.0,
+        -0.04352589977636998
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": -0.20825549960136414,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "floor"
+      },
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_snap_delta": -0.14332290074496726,
+      "support_y": -0.20825549960136414,
+      "transform_gltf": [
+        [
+          0.007135843537451242,
+          0.0,
+          0.48996012893379814,
+          -0.24690263508581348
+        ],
+        [
+          0.0,
+          0.4604345500905202,
+          0.0,
+          0.021961775443895992
+        ],
+        [
+          -0.33685523085187447,
+          0.0,
+          0.010379173304862321,
+          -1.154854201066202
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          -0.49428406027713345,
+          -0.20825549960136414,
+          -1.324750305103033
+        ],
+        [
+          -0.0019208793989784478,
+          0.2521790504891561,
+          -0.9817100284702535
+        ]
+      ]
+    },
+    {
+      "box_type": "obb",
+      "detection_id": 6,
+      "detector_label": "chair",
+      "floor_snap_delta": -0.08903794988622629,
+      "label_scale_factor": 0.78,
+      "needs_review": false,
+      "object_dir": "Output/Latest/objects/06_chair",
+      "object_mesh": "Output/Latest/objects/06_chair/hunyuan3d_textured.glb",
+      "reason": null,
+      "render_to_input_optimization": {
+        "candidate_count": 375,
+        "delta_gltf": [
+          -0.04,
+          0.0,
+          -0.08
+        ],
+        "enabled": true,
+        "initial_loss": 0.6569981172366666,
+        "initial_projected_bbox_xyxy": [
+          773.1030050280074,
+          219.15506085496776,
+          1417.7856019206506,
+          784.2506542851061
+        ],
+        "method": "support_plane_discrete_render_proxy_v1",
+        "optimized_loss": 0.5075710214749306,
+        "optimized_projected_bbox_xyxy": [
+          787.4051844594048,
+          260.223634192076,
+          1307.2863001166675,
+          742.6840557301634
+        ],
+        "target_bbox_xyxy": [
+          893.0,
+          126.0,
+          1285.0,
+          709.0
+        ],
+        "uniform_scale_delta": 1.0,
+        "yaw_delta_radians": -0.35
+      },
+      "semantic_orientation_kind": "face_nearest_table",
+      "semantic_yaw_radians": -1.1791740627070242,
+      "source_bounds": [
+        [
+          -0.5002059936523438,
+          -0.9940630197525024,
+          -0.6226130127906799
+        ],
+        [
+          0.49387601017951965,
+          0.9950140118598938,
+          0.6218810081481934
+        ]
+      ],
+      "spacing_delta_gltf": [
+        0.11091492924662248,
+        0.0,
+        -0.04580260331265818
+      ],
+      "status": "composed",
+      "support_degrees_of_freedom": {
+        "free_parameters": [
+          "plane_x",
+          "plane_z",
+          "yaw_y",
+          "uniform_scale"
+        ],
+        "locked_support_y": -0.20825549960136414,
+        "locked_vertical_axis": "gltf_y",
+        "model": "support_plane_4dof",
+        "support_kind": "floor"
+      },
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_snap_delta": -0.08903794988622629,
+      "support_y": -0.20825549960136414,
+      "transform_gltf": [
+        [
+          0.01902639625195839,
+          0.0,
+          -0.42025319274772854,
+          0.2676927462588811
+        ],
+        [
+          0.0,
+          0.4140158108986598,
+          0.0,
+          -0.0012475941520342648
+        ],
+        [
+          0.45685664171020374,
+          0.0,
+          0.01750199743498734,
+          -1.1563363561378688
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "transformed_bounds": [
+        [
+          0.05116588397123245,
+          -0.20825549960136414,
+          -1.3922016762113842
+        ],
+        [
+          0.4796014311762462,
+          0.20576031129729563,
+          -0.9348760728576889
+        ]
+      ]
+    }
+  ],
+  "objects_dir": "Output/Latest/objects",
+  "optimize_placements": true,
+  "orientation_targets": {
+    "1": {
+      "front_axis_gltf": "+Z",
+      "orientation_kind": "face_nearest_table",
+      "reference": "table_center",
+      "target_direction_gltf": [
+        0.9583220238296427,
+        0.0,
+        -0.2856902144684999
+      ],
+      "yaw_radians": 1.8605229100187834
+    },
+    "5": {
+      "front_axis_gltf": "+Z",
+      "orientation_kind": "face_nearest_table",
+      "reference": "table_center",
+      "target_direction_gltf": [
+        0.9318997937553201,
+        0.0,
+        0.36271583146974956
+      ],
+      "yaw_radians": 1.199615784624092
+    },
+    "6": {
+      "front_axis_gltf": "+Z",
+      "orientation_kind": "face_nearest_table",
+      "reference": "table_center",
+      "target_direction_gltf": [
+        -0.9242910770551875,
+        0.0,
+        0.3816883609388182
+      ],
+      "yaw_radians": -1.1791740627070242
+    }
+  },
+  "placement_orientation": "upright",
+  "scale_mode": "fit-box",
+  "schema_version": 1,
+  "snap_objects_to_floor": true,
+  "source_image_path": "/mnt/Projects/SceneForge/Assets/Samples/Chairs.jpg",
+  "spacing_targets": {
+    "1": {
+      "delta_gltf": [
+        -0.11499864285955713,
+        0.0,
+        0.03428282573622
+      ],
+      "reference": "table_center",
+      "spacing_kind": "push_away_from_table"
+    },
+    "5": {
+      "delta_gltf": [
+        -0.11182797525063841,
+        0.0,
+        -0.04352589977636998
+      ],
+      "reference": "table_center",
+      "spacing_kind": "push_away_from_table"
+    },
+    "6": {
+      "delta_gltf": [
+        0.11091492924662248,
+        0.0,
+        -0.04580260331265818
+      ],
+      "reference": "table_center",
+      "spacing_kind": "push_away_from_table"
+    }
+  },
+  "summary": {
+    "composed_count": 6,
+    "failed_count": 0,
+    "placement_count": 6,
+    "skipped_count": 0
+  },
+  "support_targets": {
+    "1": {
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_y": -0.20825549960136414
+    },
+    "2": {
+      "support_detection_id": 3,
+      "support_kind": "tabletop",
+      "support_y": 0.30064323139744364
+    },
+    "3": {
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_y": -0.20825549960136414
+    },
+    "4": {
+      "support_detection_id": 3,
+      "support_kind": "tabletop",
+      "support_y": 0.30064323139744364
+    },
+    "5": {
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_y": -0.20825549960136414
+    },
+    "6": {
+      "support_detection_id": null,
+      "support_kind": "floor",
+      "support_y": -0.20825549960136414
+    }
+  },
+  "timestamp_utc": "2026-05-30T02:34:34.899046+00:00"
+}

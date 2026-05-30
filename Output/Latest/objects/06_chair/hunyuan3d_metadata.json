@@ -1,16 +1,21 @@
 {
-  "glb": "hunyuan3d_mesh.glb",
-  "hunyuan3d_input": "hunyuan3d_input.png",
-  "hunyuan3d_mask": "hunyuan3d_mask.png",
-  "mesh": "hunyuan3d_mesh.obj",
+  "completed_mask": "artifacts/reconstruction/completed_mask.png",
+  "completed_mask_prompt": "chair . foreground object .",
+  "glb": "artifacts/reconstruction/hunyuan3d_mesh.glb",
+  "hunyuan3d_input": "artifacts/reconstruction/hunyuan3d_input.png",
+  "hunyuan3d_mask": "artifacts/reconstruction/hunyuan3d_mask.png",
+  "mask_source": "completed_mask",
+  "mesh": "artifacts/reconstruction/hunyuan3d_mesh.obj",
   "object_dir": "Output/Latest/objects/06_chair",
   "order_index": 6,
+  "paint_input": "artifacts/reconstruction/hunyuan3d_paint_input.png",
+  "paint_matte_source": "hunyuan3d_mask",
   "reason": null,
   "source": "completed",
   "source_image": "completed_crop.png",
   "status": "ok",
   "texture_reason": null,
   "texture_status": "ok",
-  "textured_glb": null,
-  "textured_mesh": "hunyuan3d_textured.obj"
+  "textured_glb": "hunyuan3d_textured.glb",
+  "textured_mesh": "artifacts/textures/hunyuan3d_textured.obj"
 }
