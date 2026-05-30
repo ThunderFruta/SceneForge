@@ -94,6 +94,132 @@ def build_parser() -> argparse.ArgumentParser:
     render_png.add_argument("--gamma", type=float, default=1.0)
     render_png.set_defaults(func=cmd_render_blend_png)
 
+    run_vggt = subparsers.add_parser("run-vggt", help="Run VGGT geometry capture for one RGB image.")
+    run_vggt.add_argument("--image", required=True)
+    run_vggt.add_argument("--output", default="Output/Latest/objects_vggt")
+    run_vggt.add_argument("--backend", choices=("vggt", "fake"), default="vggt")
+    run_vggt.add_argument("--model", default="facebook/VGGT-1B")
+    run_vggt.add_argument("--vggt-repo-dir")
+    run_vggt.add_argument("--vggt-checkpoint")
+    run_vggt.add_argument("--vggt-cache-dir", default="Models/Geometry/VGGT/hf-cache")
+    run_vggt.add_argument(
+        "--vggt-local-only",
+        action="store_true",
+        help="Load VGGT only from the local Hugging Face cache without checking the Hub.",
+    )
+    run_vggt.add_argument("--obj-stride", type=int, default=8, help="Pixel stride for the sampled VGGT OBJ mesh.")
+    run_vggt.add_argument("--mesh-stem", default="vggt_mesh", help="Base filename for sampled OBJ/GLB mesh outputs.")
+    run_vggt.add_argument("--device", default="auto")
+    run_vggt.set_defaults(func=cmd_run_vggt)
+
+    empty_room = subparsers.add_parser("generate-empty-room", help="Create an empty-room image and foreground removal artifacts.")
+    empty_room.add_argument("--image", required=True)
+    empty_room.add_argument("--detections", required=True)
+    empty_room.add_argument("--objects", default="Output/Latest/objects")
+    empty_room.add_argument("--output", default="Output/Latest/background")
+    empty_room.add_argument("--empty-room-backend", choices=("openai-image", "fake"), default="openai-image")
+    empty_room.add_argument("--empty-room-model", default="gpt-image-1.5")
+    empty_room.add_argument("--fill-mode", choices=("transparent", "neutral", "black"), default="transparent")
+    empty_room.add_argument("--mask-dilation-px", type=int, default=10)
+    empty_room.add_argument("--mask-feather-px", type=int, default=0)
+    empty_room.add_argument("--include-detection-id", dest="include_detection_ids", action="append", default=[])
+    empty_room.add_argument("--exclude-detection-id", dest="exclude_detection_ids", action="append", default=[])
+    empty_room.add_argument("--allow-rectangular-fallback-masks", action="store_true")
+    empty_room.add_argument("--max-mask-coverage", type=float, default=0.55)
+    empty_room.set_defaults(func=cmd_generate_empty_room)
+
+    empty_room_vggt = subparsers.add_parser(
+        "construct-empty-room",
+        aliases=("run-empty-room-vggt",),
+        help="Generate an empty room, run VGGT on it, and export OBJ/GLB background mesh artifacts.",
+    )
+    empty_room_vggt.add_argument("--image", required=True)
+    empty_room_vggt.add_argument("--detections", required=True)
+    empty_room_vggt.add_argument("--objects", default="Output/Latest/objects")
+    empty_room_vggt.add_argument("--output", default="Output/Latest/background")
+    empty_room_vggt.add_argument("--empty-room-backend", choices=("openai-image", "fake"), default="openai-image")
+    empty_room_vggt.add_argument("--empty-room-model", default="gpt-image-1.5")
+    empty_room_vggt.add_argument("--fill-mode", choices=("transparent", "neutral", "black"), default="transparent")
+    empty_room_vggt.add_argument("--mask-dilation-px", type=int, default=10)
+    empty_room_vggt.add_argument("--mask-feather-px", type=int, default=0)
+    empty_room_vggt.add_argument("--include-detection-id", dest="include_detection_ids", action="append", default=[])
+    empty_room_vggt.add_argument("--exclude-detection-id", dest="exclude_detection_ids", action="append", default=[])
+    empty_room_vggt.add_argument("--allow-rectangular-fallback-masks", action="store_true")
+    empty_room_vggt.add_argument("--max-mask-coverage", type=float, default=0.55)
+    empty_room_vggt.add_argument("--vggt-backend", choices=("vggt", "fake"), default="vggt")
+    empty_room_vggt.add_argument("--vggt-model", default="facebook/VGGT-1B")
+    empty_room_vggt.add_argument("--vggt-repo-dir")
+    empty_room_vggt.add_argument("--vggt-checkpoint")
+    empty_room_vggt.add_argument("--vggt-cache-dir", default="Models/Geometry/VGGT/hf-cache")
+    empty_room_vggt.add_argument("--vggt-local-only", action="store_true")
+    empty_room_vggt.add_argument("--obj-stride", type=int, default=8)
+    empty_room_vggt.add_argument("--mesh-stem", default="empty_room_mesh")
+    empty_room_vggt.add_argument("--device", default="auto")
+    empty_room_vggt.set_defaults(func=cmd_run_empty_room_vggt)
+
+    fit_vggt_boxes = subparsers.add_parser("fit-vggt-boxes", help="Split VGGT geometry by SAM regions and fit per-object boxes.")
+    fit_vggt_boxes.add_argument("--detections", default="Output/Latest/detect/detections.json")
+    fit_vggt_boxes.add_argument("--objects", default="Output/Latest/objects")
+    fit_vggt_boxes.add_argument("--vggt", default="Output/Latest/objects_vggt")
+    fit_vggt_boxes.add_argument("--output", default="Output/Latest/objects_vggt")
+    fit_vggt_boxes.add_argument("--box-mode", choices=("auto", "aabb", "obb"), default="auto")
+    fit_vggt_boxes.add_argument("--min-valid-points", type=int, default=64)
+    fit_vggt_boxes.set_defaults(func=cmd_fit_vggt_boxes)
+
+    fit_empty_room_planes = subparsers.add_parser("fit-empty-room-planes", help="Fit XYZ-aligned structural planes from empty-room VGGT points.")
+    fit_empty_room_planes.add_argument("--background", default="Output/Latest/background")
+    fit_empty_room_planes.add_argument("--output", default="Output/Latest/background")
+    fit_empty_room_planes.add_argument("--stride", type=int, default=8)
+    fit_empty_room_planes.add_argument("--mesh-name", default="empty_room_planes.glb")
+    fit_empty_room_planes.add_argument("--padding-ratio", type=float, default=0.08)
+    fit_empty_room_planes.set_defaults(func=cmd_fit_empty_room_planes)
+
+    compose_scene = subparsers.add_parser("compose-scene", help="Combine empty-room background planes, VGGT object placements, and object meshes into one GLB scene.")
+    compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_planes.glb")
+    compose_scene.add_argument("--objects", default="Output/Latest/objects")
+    compose_scene.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
+    compose_scene.add_argument("--output", default="Output/Latest/scene")
+    compose_scene.add_argument("--output-name", default="scene.glb")
+    compose_scene.add_argument("--object-mesh-name", default="hunyuan3d_textured.glb")
+    compose_scene.add_argument(
+        "--placement-orientation",
+        choices=("upright", "obb"),
+        default="upright",
+        help="Use upright visual object meshes by default; obb preserves raw VGGT PCA box rotation.",
+    )
+    compose_scene.add_argument(
+        "--object-scale-factor",
+        type=float,
+        default=0.85,
+        help="Scale placed object detail meshes inside their VGGT boxes.",
+    )
+    compose_scene.add_argument(
+        "--background-fit",
+        choices=("room-corner", "camera-clipped", "placement-bounds", "raw"),
+        default="room-corner",
+        help="Use a structural room corner, clipped camera background, fitted background mesh, or raw VGGT background.",
+    )
+    compose_scene.add_argument("--background-vggt-dir")
+    compose_scene.add_argument("--background-stride", type=int, default=16)
+    compose_scene.add_argument("--no-clip-background-masks", action="store_true")
+    compose_scene.add_argument("--background-clip-dilation-px", type=int, default=8)
+    compose_scene.add_argument("--no-snap-objects-to-floor", action="store_true")
+    compose_scene.add_argument("--no-optimize-placements", action="store_true")
+    compose_scene.add_argument("--source-image")
+    compose_scene.add_argument("--background-margin", type=float, default=1.08)
+    compose_scene.add_argument(
+        "--background-depth-offset",
+        type=float,
+        default=0.12,
+        help="Push the fitted background behind the nearest placed objects in GLB depth units.",
+    )
+    compose_scene.add_argument(
+        "--include-review",
+        action="store_true",
+        help="Include placements marked needs_review instead of skipping them.",
+    )
+    compose_scene.set_defaults(func=cmd_compose_scene)
+
     detect = subparsers.add_parser("detect-shapes", help="Write object proposal detections.json and overlay.png.")
     detect.add_argument("--image", required=True)
     detect.add_argument("--depth")
@@ -135,11 +261,50 @@ def build_parser() -> argparse.ArgumentParser:
     reconstruct_objects.add_argument("--model", default="tencent/Hunyuan3D-2.1")
     reconstruct_objects.add_argument("--device", default="auto")
     reconstruct_objects.add_argument("--source", choices=("auto", "completed", "masked"), default="completed")
+    reconstruct_objects.add_argument(
+        "--completed-mask-backend",
+        choices=("auto", "sam3", "foreground", "original-alpha"),
+        default="auto",
+        help="How to build completed_mask.png for completed object crops before 3D reconstruction.",
+    )
+    reconstruct_objects.add_argument("--completed-mask-prompt", help="Override the per-object SAM3 prompt used for completed masks.")
+    reconstruct_objects.add_argument("--completed-mask-score-threshold", type=float, default=0.25)
+    reconstruct_objects.add_argument("--completed-mask-sam3-repo-dir", default="Models/OpenVocabulary/SAM3/repo")
+    reconstruct_objects.add_argument("--completed-mask-sam3-model-dir", default="Models/OpenVocabulary/SAM3/hf")
     reconstruct_objects.add_argument("--max-objects", type=int, default=0)
-    reconstruct_objects.add_argument("--with-texture", action="store_true", help="Run Hunyuan3D paint after shape reconstruction.")
+    reconstruct_objects.add_argument(
+        "--with-texture",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run Hunyuan3D paint after shape reconstruction (default: enabled).",
+    )
     reconstruct_objects.add_argument("--texture-resolution", type=int, default=512)
     reconstruct_objects.add_argument("--texture-views", type=int, default=6)
-    reconstruct_objects.add_argument("--no-texture-remesh", action="store_true")
+    reconstruct_objects.add_argument(
+        "--texture-prompt",
+        help="Prompt passed to Hunyuan3D Paint for material and texture guidance.",
+    )
+    reconstruct_objects.add_argument(
+        "--texture-reference-mode",
+        choices=("original", "masked-crop"),
+        default="original",
+        help="Image reference passed to Hunyuan3D Paint. original matches the upstream-style input; masked-crop uses SceneForge's masked reference crop.",
+    )
+    reconstruct_objects.add_argument(
+        "--texture-remesh",
+        dest="texture_remesh",
+        action="store_true",
+        default=True,
+        help="Let Hunyuan3D Paint remesh before UV wrapping (default).",
+    )
+    reconstruct_objects.add_argument(
+        "--no-texture-remesh",
+        dest="texture_remesh",
+        action="store_false",
+        help="Preserve the reconstructed mesh before Hunyuan3D Paint UV wrapping. This can hang on high-poly meshes.",
+    )
+    reconstruct_objects.add_argument("--texture-matte-backend", choices=("auto", "bria-rmbg", "mask"), default="auto")
+    reconstruct_objects.add_argument("--texture-matte-model-dir", default="Models/Segmentation/BRIA/RMBG-2.0")
     reconstruct_objects.set_defaults(func=cmd_reconstruct_objects)
 
 
@@ -364,6 +529,196 @@ def cmd_render_blend_png(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_vggt(args: argparse.Namespace) -> int:
+    from SceneGeometry.VGGT.pipeline import run_vggt_image_geometry
+
+    report = run_vggt_image_geometry(
+        image_path=args.image,
+        output_dir=args.output,
+        backend=args.backend,
+        model=args.model,
+        repo_dir=args.vggt_repo_dir,
+        checkpoint=args.vggt_checkpoint,
+        device=args.device,
+        local_only=args.vggt_local_only,
+        cache_dir=args.vggt_cache_dir,
+        obj_stride=args.obj_stride,
+        mesh_stem=args.mesh_stem,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'vggt_geometry.json'}")
+    print(f"Wrote {output_dir / report['artifacts']['depth_png']}")
+    print(f"Wrote {output_dir / report['artifacts']['points_xyz']}")
+    print(f"Wrote {output_dir / report['artifacts']['mesh_obj']}")
+    print(f"Wrote {output_dir / report['artifacts']['mesh_glb']}")
+    return 0
+
+
+def cmd_generate_empty_room(args: argparse.Namespace) -> int:
+    from BackgroundReconstruction.empty_room import generate_empty_room, parse_detection_id_set
+
+    include_ids = set()
+    for value in args.include_detection_ids:
+        include_ids.update(parse_detection_id_set(value))
+    exclude_ids = set()
+    for value in args.exclude_detection_ids:
+        exclude_ids.update(parse_detection_id_set(value))
+    report = generate_empty_room(
+        image_path=args.image,
+        detections_path=args.detections,
+        objects_dir=args.objects,
+        output_dir=args.output,
+        backend=args.empty_room_backend,
+        model=args.empty_room_model,
+        fill_mode=args.fill_mode,
+        mask_dilation_px=args.mask_dilation_px,
+        mask_feather_px=args.mask_feather_px,
+        include_detection_ids=include_ids,
+        exclude_detection_ids=exclude_ids,
+        allow_rectangular_fallback_masks=args.allow_rectangular_fallback_masks,
+        max_mask_coverage=args.max_mask_coverage,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'empty_room_metadata.json'}")
+    print(f"Wrote {output_dir / 'empty_room_mask.png'}")
+    print(f"Wrote {output_dir / 'empty_room_openai_input.png'}")
+    print(f"Wrote {output_dir / 'empty_room.png'}")
+    if report.get("needs_review"):
+        print(f"Empty-room output needs review: {', '.join(report.get('warnings', []))}")
+    return 0
+
+
+def cmd_run_empty_room_vggt(args: argparse.Namespace) -> int:
+    from BackgroundReconstruction.empty_room import generate_empty_room
+    from SceneGeometry.VGGT.pipeline import run_vggt_image_geometry
+
+    include_ids, exclude_ids = _parse_detection_id_args(args)
+    output_dir = Path(args.output)
+    empty_room_report = generate_empty_room(
+        image_path=args.image,
+        detections_path=args.detections,
+        objects_dir=args.objects,
+        output_dir=output_dir,
+        backend=args.empty_room_backend,
+        model=args.empty_room_model,
+        fill_mode=args.fill_mode,
+        mask_dilation_px=args.mask_dilation_px,
+        mask_feather_px=args.mask_feather_px,
+        include_detection_ids=include_ids,
+        exclude_detection_ids=exclude_ids,
+        allow_rectangular_fallback_masks=args.allow_rectangular_fallback_masks,
+        max_mask_coverage=args.max_mask_coverage,
+    )
+    vggt_report = run_vggt_image_geometry(
+        image_path=output_dir / "empty_room.png",
+        output_dir=output_dir,
+        backend=args.vggt_backend,
+        model=args.vggt_model,
+        repo_dir=args.vggt_repo_dir,
+        checkpoint=args.vggt_checkpoint,
+        device=args.device,
+        local_only=args.vggt_local_only,
+        cache_dir=args.vggt_cache_dir,
+        obj_stride=args.obj_stride,
+        mesh_stem=args.mesh_stem,
+    )
+    print(f"Wrote {output_dir / 'empty_room_metadata.json'}")
+    print(f"Wrote {output_dir / 'empty_room.png'}")
+    print(f"Wrote {output_dir / 'vggt_geometry.json'}")
+    print(f"Wrote {output_dir / vggt_report['artifacts']['mesh_obj']}")
+    print(f"Wrote {output_dir / vggt_report['artifacts']['mesh_glb']}")
+    if empty_room_report.get("needs_review"):
+        print(f"Empty-room output needs review: {', '.join(empty_room_report.get('warnings', []))}")
+    return 0
+
+
+def _parse_detection_id_args(args: argparse.Namespace) -> tuple[set[int], set[int]]:
+    from BackgroundReconstruction.empty_room import parse_detection_id_set
+
+    include_ids = set()
+    for value in getattr(args, "include_detection_ids", []):
+        include_ids.update(parse_detection_id_set(value))
+    exclude_ids = set()
+    for value in getattr(args, "exclude_detection_ids", []):
+        exclude_ids.update(parse_detection_id_set(value))
+    return include_ids, exclude_ids
+
+
+def cmd_fit_vggt_boxes(args: argparse.Namespace) -> int:
+    from SceneGeometry.VGGT.regions import fit_vggt_boxes
+
+    report = fit_vggt_boxes(
+        detections_path=args.detections,
+        objects_dir=args.objects,
+        vggt_dir=args.vggt,
+        output_dir=args.output,
+        box_mode=args.box_mode,
+        min_valid_points=args.min_valid_points,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {output_dir / 'object_geometry.json'}")
+    print(f"Wrote {report['artifacts']['boxes_obj']}")
+    print(
+        "Fitted "
+        f"{report['summary']['fit_count']}/{report['summary']['detection_count']} objects "
+        f"({report['summary']['failed_count']} failed, {report['summary']['needs_review_count']} needs review)"
+    )
+    return 0
+
+
+def cmd_fit_empty_room_planes(args: argparse.Namespace) -> int:
+    from SceneGeometry.Planes.empty_room import fit_empty_room_planes
+
+    report = fit_empty_room_planes(
+        background_dir=args.background,
+        output_dir=args.output,
+        stride=args.stride,
+        mesh_name=args.mesh_name,
+        padding_ratio=args.padding_ratio,
+    )
+    print(f"Wrote {Path(args.output) / 'plane_detections.json'}")
+    print(f"Wrote {report['artifacts']['planes_glb']}")
+    print(f"Fitted {len(report['planes'])} XYZ-aligned empty-room planes")
+    return 0
+
+
+def cmd_compose_scene(args: argparse.Namespace) -> int:
+    from SceneComposition.composer import compose_scene
+
+    report = compose_scene(
+        background_path=args.background,
+        objects_dir=args.objects,
+        object_geometry_path=args.object_geometry,
+        output_dir=args.output,
+        output_name=args.output_name,
+        object_mesh_name=args.object_mesh_name,
+        include_review=args.include_review,
+        placement_orientation=args.placement_orientation,
+        object_scale_factor=args.object_scale_factor,
+        background_fit=args.background_fit,
+        background_margin=args.background_margin,
+        background_depth_offset=args.background_depth_offset,
+        background_vggt_dir=args.background_vggt_dir,
+        background_stride=args.background_stride,
+        clip_background_masks=not args.no_clip_background_masks,
+        background_clip_dilation_px=args.background_clip_dilation_px,
+        snap_objects_to_floor=not args.no_snap_objects_to_floor,
+        optimize_placements=not args.no_optimize_placements,
+        source_image_path=args.source_image,
+    )
+    output_dir = Path(args.output)
+    print(f"Wrote {report['artifacts']['scene_glb']}")
+    print(f"Wrote {output_dir / 'scene_alignment.json'}")
+    if report["artifacts"].get("input_vs_projection_overlay"):
+        print(f"Wrote {report['artifacts']['input_vs_projection_overlay']}")
+    print(
+        "Composed "
+        f"{report['summary']['composed_count']}/{report['summary']['placement_count']} objects "
+        f"({report['summary']['skipped_count']} skipped, {report['summary']['failed_count']} failed)"
+    )
+    return 0
+
+
 def cmd_detect_shapes(args: argparse.Namespace) -> int:
     from Segmentation.factory import DetectShapesBackendConfig, build_detect_shapes_runtime
     from ShapeDetection.pipeline import run_shape_detection
@@ -453,7 +808,16 @@ def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
             with_texture=args.with_texture,
             texture_resolution=args.texture_resolution,
             texture_views=args.texture_views,
-            texture_use_remesh=not args.no_texture_remesh,
+            texture_use_remesh=args.texture_remesh,
+            texture_prompt=args.texture_prompt,
+            texture_reference_mode=args.texture_reference_mode,
+            texture_matte_backend=args.texture_matte_backend,
+            texture_matte_model_dir=args.texture_matte_model_dir,
+            completed_mask_backend=args.completed_mask_backend,
+            completed_mask_sam3_repo_dir=args.completed_mask_sam3_repo_dir,
+            completed_mask_sam3_model_dir=args.completed_mask_sam3_model_dir,
+            completed_mask_prompt=args.completed_mask_prompt,
+            completed_mask_score_threshold=args.completed_mask_score_threshold,
         )
         print(f"Wrote {Path(args.objects) / 'hunyuan3d_manifest.json'}")
         return 0
@@ -467,6 +831,8 @@ def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
             device=args.device,
             source=args.source,
             max_objects=args.max_objects,
+            completed_mask_backend=args.completed_mask_backend,
+            completed_mask_prompt=args.completed_mask_prompt,
         )
         print(f"Wrote {Path(args.objects) / 'triposr_manifest.json'}")
         return 0

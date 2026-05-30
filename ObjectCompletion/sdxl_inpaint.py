@@ -11,9 +11,12 @@ from skimage.filters import threshold_otsu
 
 DEFAULT_PROMPT_TEMPLATE = (
     "complete the marked {label} only, remove occluders, preserve perspective and material, "
-    "return the target object only"
+    "return the target object only, no floor, no ground plane, no base slab, no platform under the object"
 )
-DEFAULT_NEGATIVE_PROMPT = "full room, full scene, furniture set, background scene, text, watermark, duplicate object, extra object, distorted, low quality"
+DEFAULT_NEGATIVE_PROMPT = (
+    "full room, full scene, furniture set, background scene, floor, ground plane, base slab, platform, display stand, "
+    "text, watermark, duplicate object, extra object, distorted, low quality"
+)
 
 
 def run_sdxl_object_completion(
@@ -271,22 +274,30 @@ def paste_reference_context(
 
 
 def load_context_reference(object_dir: Path) -> tuple[Image.Image | None, str | None]:
+    artifacts_dir = object_dir / "artifacts" / "segmentation"
     focus_path = object_dir / "context_focus_crop.png"
+    if not focus_path.is_file():
+        focus_path = artifacts_dir / "context_focus_crop.png"
     if focus_path.is_file():
-        return Image.open(focus_path).convert("RGB"), "context_focus_crop.png"
+        return Image.open(focus_path).convert("RGB"), focus_path.relative_to(object_dir).as_posix()
     context_path = object_dir / "context_crop.png"
+    if not context_path.is_file():
+        context_path = artifacts_dir / "context_crop.png"
     if not context_path.is_file():
         return None, None
     context = Image.open(context_path).convert("RGB")
     mask_path = object_dir / "context_mask.png"
+    if not mask_path.is_file():
+        mask_path = artifacts_dir / "context_mask.png"
     if mask_path.is_file():
         focused = dim_context_outside_mask(context, Image.open(mask_path).convert("L"))
         try:
+            focus_path.parent.mkdir(parents=True, exist_ok=True)
             focused.save(focus_path)
         except OSError:
             pass
-        return focused, "context_focus_crop.png"
-    return context, "context_crop.png"
+        return focused, focus_path.relative_to(object_dir).as_posix()
+    return context, context_path.relative_to(object_dir).as_posix()
 
 
 def dim_context_outside_mask(context_crop: Image.Image, context_mask: Image.Image) -> Image.Image:

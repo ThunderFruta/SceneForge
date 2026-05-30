@@ -24,6 +24,8 @@ def write_object_masks(
     for item in sorted(objects, key=lambda object_item: object_item.id):
         object_dir = root / object_folder_name(item)
         object_dir.mkdir(parents=True, exist_ok=True)
+        segmentation_dir = object_dir / "artifacts" / "segmentation"
+        segmentation_dir.mkdir(parents=True, exist_ok=True)
         box = crop_box(item, image.width, image.height)
         context_box = expanded_crop_box(box, image.width, image.height)
         mask = polygon_to_mask(item.mask_polygon, image.width, image.height)
@@ -38,14 +40,14 @@ def write_object_masks(
         context_masked_crop.putalpha(context_mask)
         context_focus_crop = dim_context_outside_mask(context_crop, context_mask)
 
-        full_mask.save(object_dir / "full_mask.png")
-        rgb_crop.save(object_dir / "rgb_crop.png")
-        mask_crop.save(object_dir / "mask.png")
+        full_mask.save(segmentation_dir / "full_mask.png")
+        rgb_crop.save(segmentation_dir / "rgb_crop.png")
+        mask_crop.save(segmentation_dir / "mask.png")
         masked_crop.save(object_dir / "masked_crop.png")
-        context_crop.save(object_dir / "context_crop.png")
-        context_mask.save(object_dir / "context_mask.png")
-        context_masked_crop.save(object_dir / "context_masked_crop.png")
-        context_focus_crop.save(object_dir / "context_focus_crop.png")
+        context_crop.save(segmentation_dir / "context_crop.png")
+        context_mask.save(segmentation_dir / "context_mask.png")
+        context_masked_crop.save(segmentation_dir / "context_masked_crop.png")
+        context_focus_crop.save(segmentation_dir / "context_focus_crop.png")
         (object_dir / "metadata.json").write_text(
             json.dumps(
                 {

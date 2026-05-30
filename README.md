@@ -21,8 +21,7 @@ Original image
 Original image + SAM3 masks
   -> foreground mask removal
   -> OpenAI empty-room inpaint
-  -> VGGT empty-room background model
-  -> structural planes/background mesh
+  -> VGGT empty-room background OBJ/GLB mesh
 
 Original image + SAM3 masks
   -> VGGT object placement
@@ -34,8 +33,14 @@ Currently active public pieces:
 
 - open-vocabulary proposal setup and readiness checks for GroundingDINO/SAM3;
 - `detect-shapes` for proposal-only `detections.json` and `overlay.png`;
+- `generate-empty-room` for empty-room mask/input/image artifacts;
+- `construct-empty-room` / `run-empty-room-vggt` for OpenAI/fake empty-room generation plus VGGT OBJ/GLB export;
+- `fit-empty-room-planes` for XYZ-aligned floor/wall planes from empty-room VGGT points;
+- `run-vggt` for empty-room or original-image VGGT depth, points, OBJ, and GLB mesh artifacts;
+- `fit-vggt-boxes` for original-image VGGT object placement boxes;
 - `complete-objects` for object crop completion;
-- `reconstruct-objects` for Hunyuan3D or TripoSR object meshes.
+- `reconstruct-objects` for Hunyuan3D or TripoSR object meshes;
+- `compose-scene` for the first combined background plus placed-object GLB scene.
 
 Retired primitive-proxy public calls have been removed from the active CLI.
 
@@ -104,13 +109,35 @@ Run object-level mesh reconstruction:
   --source completed
 ```
 
-The planned background lane is documented, not fully implemented yet:
+Run the empty-room background mesh lane after detection:
 
-```text
-SAM3 masks -> empty-room OpenAI input -> OpenAI inpaint -> VGGT background model -> planes/background mesh
+```bash
+.venv/bin/python run.py construct-empty-room \
+  --image path/to/image.png \
+  --detections Output/Latest/detect/detections.json \
+  --objects Output/Latest/objects \
+  --output Output/Latest/background \
+  --empty-room-backend openai-image \
+  --mesh-stem empty_room_mesh \
+  --device auto
 ```
 
-See `Docs/empty_room_vggt_background_design.md` and `Docs/plane_detection_design.md`.
+See `Docs/empty_room_vggt_background_design.md`. Later plane detection is tracked separately in `Docs/plane_detection_design.md`.
+
+Compose the current background, VGGT object placements, and object meshes into one GLB:
+
+```bash
+.venv/bin/python run.py fit-empty-room-planes \
+  --background Output/Latest/background \
+  --output Output/Latest/background
+
+.venv/bin/python run.py compose-scene \
+  --background Output/Latest/background/empty_room_planes.glb \
+  --objects Output/Latest/objects \
+  --object-geometry Output/Latest/objects_vggt/object_geometry.json \
+  --output Output/Latest/scene \
+  --background-fit raw
+```
 
 
 ## Development

@@ -18,20 +18,71 @@ def run_cli(args: list[str], stdin: str = "") -> subprocess.CompletedProcess[str
     )
 
 
-def test_run_py_no_args_can_show_recipes_without_heavy_imports() -> None:
-    result = run_cli(["run.py"], "9\n")
-
-    assert result.returncode == 0
-    assert "SceneForge guided mode" in result.stdout
-    assert "run-open-vocab-smoke" in result.stdout
-
-
-def test_run_py_guided_readiness_can_print_command_without_running() -> None:
+def test_run_py_no_args_shows_concise_core_guided_menu() -> None:
     result = run_cli(["run.py"], "4\n\nn\n")
 
     assert result.returncode == 0
-    assert "audit-open-vocab-readiness" in result.stdout
+    assert "SceneForge guided mode" in result.stdout
+    assert "Process image" in result.stdout
+    assert "construct empty room" in result.stdout
+    assert "Construct empty room" in result.stdout
+    assert "Generate empty-room image and VGGT background mesh" in result.stdout
+    assert "Render .blend to PNG" in result.stdout
+    assert "Complete object crops" in result.stdout
+    assert "Reconstruct object meshes" in result.stdout
+    assert "run-open-vocab-smoke" not in result.stdout
+    assert "Check DINO/SAM readiness" not in result.stdout
+    assert "Show command recipes" not in result.stdout
+
+
+def test_run_py_no_args_does_not_execute_on_eof() -> None:
+    result = run_cli(["run.py"], "")
+
+    assert result.returncode == 0
+    assert "SceneForge guided mode" in result.stdout
     assert "Equivalent command" in result.stdout
+    assert "Running detection in an isolated process" not in result.stdout
+
+
+def test_run_py_guided_render_can_print_command_without_running() -> None:
+    result = run_cli(["run.py"], "3\n\n\n\n\nn\n")
+
+    assert result.returncode == 0
+    assert "render-blend-png" in result.stdout
+    assert "Equivalent command" in result.stdout
+
+
+def test_run_py_guided_reconstruct_defaults_to_textures_without_running() -> None:
+    result = run_cli(["run.py"], "5\n\nn\n")
+
+    assert result.returncode == 0
+    assert "reconstruct-objects" in result.stdout
+    assert "--with-texture" in result.stdout
+    assert "--texture-resolution 512" in result.stdout
+    assert "--texture-views 6" in result.stdout
+    assert "--texture-reference-mode original" in result.stdout
+    assert "--texture-remesh" in result.stdout
+
+
+def test_run_py_guided_empty_room_can_print_command_without_running(monkeypatch) -> None:
+    monkeypatch.setenv("SCENEFORGE_EMPTY_ROOM_BACKEND", "fake")
+    result = run_cli(["run.py"], "2\n\n\n\n\nn\n")
+
+    assert result.returncode == 0
+    assert "construct-empty-room" in result.stdout
+    assert "--detections Output/Latest/detect/detections.json" in result.stdout
+    assert "--objects Output/Latest/objects" in result.stdout
+    assert "--output Output/Latest/background" in result.stdout
+    assert "--empty-room-backend fake" in result.stdout
+
+
+def test_guided_process_image_includes_empty_room_when_run(monkeypatch) -> None:
+    monkeypatch.setenv("SCENEFORGE_EMPTY_ROOM_BACKEND", "fake")
+    result = run_cli(["run.py"], "1\n\n\nn\n")
+
+    assert "construct-empty-room" in result.stdout
+    assert "--empty-room-backend fake" in result.stdout
+    assert "Automated follow-up after detection:" in result.stdout
 
 
 def test_explicit_run_py_command_bypasses_guided_mode() -> None:

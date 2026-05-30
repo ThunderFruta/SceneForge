@@ -7,9 +7,44 @@ This file tracks notable project changes while SceneForge is still small.
 - Removed retired primitive-proxy command stubs and their active CLI tests.
 - Moved the retired primitive-proxy implementation and tests into a local ignored archive, then removed archive paths from Git tracking.
 - Tightened active docs around the SAM3/object/Hunyuan plus empty-room VGGT direction.
-- Added `Docs/empty_room_vggt_background_design.md` to define the OpenAI empty-room inpaint, dual-VGGT background/object geometry, plane extraction, and object-to-plane snapping plan.
+- Added `Docs/empty_room_vggt_background_design.md` to define the narrower V1 goal of producing a good empty-room image and VGGT background mesh, leaving placement, snapping, and plane extraction to separate docs.
+- Added `run.py generate-empty-room` for full-frame foreground mask removal, empty-room edit inputs, fake/OpenAI empty-room outputs, and `empty_room_metadata.json`.
+- Added `run.py run-empty-room-vggt` to run empty-room image editing and VGGT OBJ/GLB export as one public command.
+- Added `construct-empty-room` as the user-facing alias for the combined empty-room construction command.
+- Added `empty_room_openai_mask.png` and pass it to the OpenAI image edit API as the explicit edit mask.
+- Added VGGT GLB export and `run-vggt --mesh-stem` so the background lane can write `empty_room_mesh.obj` and `empty_room_mesh.glb`.
+- Converted real VGGT point maps from OpenCV-style `x, image-vertical, depth` coordinates into the SceneForge camera contract before writing points, OBJ/GLB meshes, and object placement boxes.
+- Added `run.py fit-empty-room-planes` to fit empty-room VGGT point evidence and export XYZ-regularized structural `floor`, `back_wall`, and `right_wall` planes in `plane_detections.json` and `empty_room_planes.glb`.
+- Changed empty-room plane export from one flat median color per plane to a subdivided UV-mapped GLB material projected from `empty_room.png`, with a vertex-color fallback and double-sided emissive PBR material for Blender inspection.
 - Added `Docs/plane_detection_design.md` to define the additive geometry-first path for large structural planes, including subtype metadata, optional `plane_detections.json`, future CLI flags, quality policy, and fit-contract compatibility.
 - Added `Docs/vggt_bounding_box_only_design.md` to define a smaller original-image VGGT path that fits per-object bounding boxes without empty-room generation, plane detection, or snapping.
+- Added completed-crop mask regeneration for object reconstruction: `reconstruct-objects` can now write `completed_mask.png` with a SAM3 pass before Hunyuan3D consumes the crop, preventing stale original masks from hiding OpenAI-completed object parts.
+- Changed object reconstruction reruns to clean stale generated mesh/mask/texture artifacts first, and made Hunyuan3D texture generation enabled by default with `--no-with-texture` as the opt-out.
+- Isolated Hunyuan3D paint Hugging Face and Diffusers caches from SAM3 caches so texture subprocesses do not inherit relative SAM3 cache paths and create recursive `hf/modules/...` paths.
+- Changed OpenAI object completion to request and preserve transparent PNG backgrounds for `completed_crop.png`, with an opaque-output fallback that removes neutral background pixels.
+- Simplified no-argument guided mode to the main run actions only: process image, render `.blend`, complete crops, and reconstruct meshes. Setup, smoke tests, inspection, and recipes remain explicit commands.
+- Added the first VGGT image-geometry stage: `run.py run-vggt` writes depth, point-map, camera, and geometry-report artifacts under `Output/Latest/objects_vggt` with lazy real VGGT loading and a deterministic fake backend for contract tests.
+- Added `run-vggt --vggt-cache-dir` and `--vggt-local-only` so local VGGT installs can run from the repo-local Hugging Face cache without silent global-cache dependence.
+- Added sampled VGGT OBJ export: `run-vggt` now writes `vggt_mesh.obj` from the point map, with `--obj-stride` controlling mesh density.
+- Changed VGGT OBJ export to convert VGGT/OpenCV point-map axes into SceneForge/Blender axes so imported meshes are upright and forward-facing.
+- Fixed VGGT OBJ triangle winding so the sampled surface normals face the source camera instead of being back-facing in Blender.
+- Adjusted VGGT OBJ vertices for Blender's default OBJ importer axis conversion, so importing the file with default settings lands depth on Blender Y and image-up on Blender Z.
+- Reverted VGGT OBJ generation to use VGGT `world_points`; orientation fixes should operate on the whole exported mesh transform rather than replacing the geometry source with camera-space depth.
+- Changed the VGGT world-points OBJ export transform so Blender's default OBJ importer lands the whole mesh in SceneForge axes instead of VGGT raw axes.
+- Added `run.py fit-vggt-boxes` to split an existing VGGT point map by SAM object masks, write visible per-object region surface OBJs, export `vggt_boxes.obj` box face meshes, write debug PNGs for masks/valid points/distance/overlay, and fit per-object AABB/OBB records in `object_geometry.json` without plane detection or snapping.
+- Added `run.py compose-scene` to combine `empty_room_mesh.glb`, `objects_vggt/object_geometry.json`, and per-object Hunyuan/TripoSR meshes into `Output/Latest/scene/scene.glb` plus `scene_alignment.json`.
+- Changed the recommended composed-scene background to `empty_room_planes.glb` so final geometry uses fitted XYZ-aligned structural planes instead of the raw empty-room VGGT relief mesh.
+- Changed scene composition snapping to use object support targets: floor-supported furniture stays on the floor, while small tabletop labels such as vase and flower snap to the detected table top when their 2D boxes overlap a table.
+- Added label-aware composition adjustments so chairs are scaled down, pushed slightly outward, and semantically yawed to face the detected table center before floor snapping.
+- Added a constrained support-plane placement optimizer to `compose-scene`: supported objects search only plane translation, yaw, and uniform scale, then write render-to-input projected-box losses plus `input_vs_projection_overlay.png`.
+- Changed `compose-scene` to fit the empty-room mesh to the object-placement bounds by default and push its near depth behind placed objects; `--background-fit raw` keeps the raw VGGT background transform for debugging.
+- Kept Hunyuan3D texture defaults on the practical 512 resolution and 6 selected views for 16 GB GPUs, with remesh enabled by default. No-remesh UV unwrapping now fails fast above 120k OBJ faces, and the direct texture helper exits nonzero when paint fails instead of silently leaving stale textures in place.
+- Added a Hunyuan3D Paint texture prompt pass-through while keeping the upstream `high quality` prompt as the default; material-specific prompts are opt-in.
+- Added `--texture-reference-mode original|masked-crop` for Hunyuan3D Paint and defaulted it to `original` so SceneForge can reproduce the upstream-style reference image path when masked-crop preprocessing regresses texture quality.
+- Restored Hunyuan3D Paint GLB export for textured objects and added `Tools/Scripts/render_mesh_preview.py` for quick OBJ/GLB texture import previews.
+- Reduced per-object output clutter by moving segmentation, completion, reconstruction, texture OBJ-bundle, and diagnostic byproducts under per-object `artifacts/` subfolders while keeping the final crop/metadata/textured GLB at the object root.
+- Tightened object completion and Hunyuan texture prompts to request object-only outputs with no floor, ground plane, base slab, or platform under the target object.
+- Added automatic Hunyuan support-sheet cleanup for table-like textured outputs so generated table meshes drop the large floor/base slab before the root `hunyuan3d_textured.glb` is written.
 
 ## 2026-05-27
 
@@ -128,7 +163,7 @@ This file tracks notable project changes while SceneForge is still small.
 
 ## Current State
 
-SceneForge is shifting to the staged SAM3/GroundingDINO-SAM3 object proposal, object completion, object-mesh reconstruction, and empty-room VGGT background direction. `detect-shapes` writes proposal artifacts such as `detections.json`, `overlay.png`, and object workspaces; `complete-objects` and `reconstruct-objects` continue the object lane with OpenAI/FLUX completion and Hunyuan3D or TripoSR meshes.
+SceneForge is shifting to the staged SAM3/GroundingDINO-SAM3 object proposal, object completion, object-mesh reconstruction, and empty-room VGGT background direction. `detect-shapes` writes proposal artifacts such as `detections.json`, `overlay.png`, and object workspaces; `complete-objects` and `reconstruct-objects` continue the object lane with OpenAI/FLUX completion and Hunyuan3D or TripoSR meshes. `run-vggt` captures direct RGB-image VGGT depth, point, camera, and report artifacts, and `fit-vggt-boxes` now splits those points by SAM masks into per-object box geometry before any empty-room plane snapping.
 
 The primitive-proxy enrichment/fitting path is retired from public execution. Its old public commands have been removed from the active CLI and should not produce `object_enrichment.json`, `primitive_fits.json`, `fit_overlay.png`, or `fitted_scene.blend` as active deliverables. Reusable implementation ideas are preserved in git history or a local ignored archive while new work targets empty-room VGGT planes, object OBB/contact placement, mesh snapping, and explicit alignment reports.
 

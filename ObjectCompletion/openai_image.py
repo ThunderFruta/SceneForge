@@ -8,14 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
-from ObjectCompletion.sdxl_inpaint import (
-    DEFAULT_NEGATIVE_PROMPT,
-    load_context_reference,
-    read_metadata,
-    write_manifest,
-)
+from PIL import Image, ImageFilter
 
 
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-5.5"
@@ -24,6 +17,10 @@ DEFAULT_OPENAI_IMAGE_QUALITY = os.environ.get("SCENEFORGE_OPENAI_IMAGE_QUALITY",
 DEFAULT_OPENAI_TIMEOUT_SECONDS = float(os.environ.get("SCENEFORGE_OPENAI_TIMEOUT_SECONDS", "180"))
 DEFAULT_OPENAI_COMPLETION_WORKERS = int(
     os.environ.get("SCENEFORGE_OPENAI_COMPLETION_WORKERS", os.environ.get("SCENEFORGE_COMPLETION_WORKERS", "2"))
+)
+DEFAULT_NEGATIVE_PROMPT = (
+    "full room, full scene, furniture set, background scene, floor, ground plane, base slab, platform, display stand, "
+    "text, watermark, duplicate object, extra object, distorted, low quality"
 )
 
 
@@ -145,7 +142,8 @@ def complete_object_dir(
         reference_path=reference_path,
         canvas_size=canvas_size,
     )
-    result_image.convert("RGBA").save(object_dir / "completed_crop.png")
+    result_image = ensure_transparent_completed_image(result_image)
+    result_image.save(object_dir / "completed_crop.png")
 
     record = {
         "object_dir": str(object_dir),
@@ -164,6 +162,7 @@ def complete_object_dir(
         "context_crop": context_reference_name,
         "openai_input": input_path.name,
         "openai_reference": reference_path.name if reference_path is not None else None,
+        "background": "transparent",
         "order_index": index,
     }
     if backend_warning:
@@ -186,7 +185,9 @@ def build_openai_prompt(label: str) -> str:
         "Do not copy the reference background, other furniture, or reference layout into the final crop. "
         f"{constraints} "
         "Do not add a room, full scene, extra furniture, text, watermark, or new objects. "
-        "Use a plain neutral background. Return one clean square product-style image of the single completed target object."
+        "No floor under the object. Do not add a floor, ground plane, base slab, platform, plinth, shadow catcher, or support surface under the object; keep only geometry that is part of the target object itself. "
+        "Return one clean square product-style PNG of the single completed target object on a transparent background. "
+        "Keep every non-object background pixel fully transparent."
     )
 
 
@@ -195,7 +196,8 @@ def label_specific_constraints(label: str) -> str:
         return (
             "For a table, preserve the round/elliptical tabletop silhouette, continue the tabletop as one smooth uninterrupted surface, "
             "keep the rim thickness consistent, continue the wood grain naturally, and complete the pedestal as one vertical cylindrical support. "
-            "Do not leave a vase stem, flower stem, black hole, cut-out notch, or extra wooden post on top of the tabletop."
+            "Do not leave a vase stem, flower stem, black hole, cut-out notch, or extra wooden post on top of the tabletop. "
+            "Do not create a rectangular floor sheet, ground plane, base slab, or platform under the table."
         )
     if "chair" in label:
         return (
@@ -296,6 +298,7 @@ def call_responses_image_tool(
                     "type": "image_generation",
                     "quality": DEFAULT_OPENAI_IMAGE_QUALITY,
                     "size": f"{canvas_size}x{canvas_size}",
+                    "background": "transparent",
                 }
             ],
             timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
@@ -334,7 +337,7 @@ def call_image_edit_api(
                 size=f"{canvas_size}x{canvas_size}",
                 quality=DEFAULT_OPENAI_IMAGE_QUALITY,
                 output_format="png",
-                background="opaque",
+                background="transparent",
                 timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
             )
         finally:
@@ -345,7 +348,7 @@ def call_image_edit_api(
     output_path = os.environ.get("SCENEFORGE_OPENAI_LAST_IMAGE")
     if output_path:
         Path(output_path).write_bytes(image_bytes)
-    return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return Image.open(io.BytesIO(image_bytes)).convert("RGBA")
 
 
 def valid_openai_image_size(canvas_size: int) -> int:
@@ -357,10 +360,10 @@ def valid_openai_image_size(canvas_size: int) -> int:
 def render_target_square(masked_crop: Image.Image, *, canvas_size: int) -> Image.Image:
     source = masked_crop.convert("RGBA")
     source.thumbnail((int(canvas_size * 0.88), int(canvas_size * 0.88)), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", (canvas_size, canvas_size), (245, 245, 240))
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
     x = (canvas_size - source.width) // 2
     y = (canvas_size - source.height) // 2
-    canvas.paste(source.convert("RGB"), (x, y), source.getchannel("A"))
+    canvas.paste(source, (x, y), source.getchannel("A"))
     return canvas
 
 
@@ -405,6 +408,68 @@ def delete_openai_file(client, file_id: str | None) -> None:
         pass
 
 
+def load_context_reference(object_dir: Path) -> tuple[Image.Image | None, str | None]:
+    artifacts_dir = object_dir / "artifacts" / "segmentation"
+    focus_path = object_dir / "context_focus_crop.png"
+    if not focus_path.is_file():
+        focus_path = artifacts_dir / "context_focus_crop.png"
+    if focus_path.is_file():
+        return Image.open(focus_path).convert("RGB"), focus_path.relative_to(object_dir).as_posix()
+    context_path = object_dir / "context_crop.png"
+    if not context_path.is_file():
+        context_path = artifacts_dir / "context_crop.png"
+    if not context_path.is_file():
+        return None, None
+    context = Image.open(context_path).convert("RGB")
+    mask_path = object_dir / "context_mask.png"
+    if not mask_path.is_file():
+        mask_path = artifacts_dir / "context_mask.png"
+    if mask_path.is_file():
+        focused = dim_context_outside_mask(context, Image.open(mask_path).convert("L"))
+        try:
+            focus_path.parent.mkdir(parents=True, exist_ok=True)
+            focused.save(focus_path)
+        except OSError:
+            pass
+        return focused, focus_path.relative_to(object_dir).as_posix()
+    return context, context_path.relative_to(object_dir).as_posix()
+
+
+def dim_context_outside_mask(context_crop: Image.Image, context_mask: Image.Image) -> Image.Image:
+    base = context_crop.convert("RGB")
+    mask = context_mask.convert("L").filter(ImageFilter.MaxFilter(25)).filter(ImageFilter.GaussianBlur(4.0))
+    gray = base.convert("L").convert("RGB")
+    dim = Image.blend(gray, Image.new("RGB", base.size, (20, 20, 20)), 0.58)
+    focused = dim.copy()
+    focused.paste(base, (0, 0), mask)
+    return focused
+
+
+def read_metadata(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_manifest(root: Path, records: list[dict[str, Any]], status: str, backend: str = "openai-image") -> dict[str, Any]:
+    root.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "backend": backend,
+        "status": status,
+        "object_count": len(records),
+        "objects": records,
+    }
+    (root / "completion_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
 def decode_image_response(response) -> Image.Image:
     image_data = []
     for output in getattr(response, "output", []) or []:
@@ -422,4 +487,55 @@ def decode_image_response(response) -> Image.Image:
     output_path = os.environ.get("SCENEFORGE_OPENAI_LAST_IMAGE")
     if output_path:
         Path(output_path).write_bytes(image_bytes)
-    return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+
+
+def ensure_transparent_completed_image(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    if alpha.getextrema()[0] < 255:
+        return rgba
+    return remove_neutral_background_alpha(rgba)
+
+
+def remove_neutral_background_alpha(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    rgb = rgba.convert("RGB")
+    background = estimate_border_background(rgb)
+    alpha = foreground_alpha_from_background(rgb, background)
+    rgba.putalpha(alpha)
+    return clear_transparent_rgb(rgba)
+
+
+def estimate_border_background(image: Image.Image) -> tuple[int, int, int]:
+    pixels = image.load()
+    width, height = image.size
+    samples: list[tuple[int, int, int]] = []
+    for x in range(width):
+        samples.append(pixels[x, 0])
+        samples.append(pixels[x, height - 1])
+    for y in range(height):
+        samples.append(pixels[0, y])
+        samples.append(pixels[width - 1, y])
+    channels = list(zip(*samples))
+    return tuple(sorted(channel)[len(channel) // 2] for channel in channels)
+
+
+def foreground_alpha_from_background(image: Image.Image, background: tuple[int, int, int]) -> Image.Image:
+    import numpy as np
+
+    rgb = np.asarray(image.convert("RGB"), dtype=np.int16)
+    bg = np.asarray(background, dtype=np.int16).reshape(1, 1, 3)
+    distance = np.linalg.norm(rgb - bg, axis=2)
+    threshold = min(64.0, max(18.0, float(np.percentile(distance, 82))))
+    alpha = (distance > threshold).astype(np.uint8) * 255
+    return Image.fromarray(alpha, mode="L")
+
+
+def clear_transparent_rgb(image: Image.Image) -> Image.Image:
+    import numpy as np
+
+    rgba = image.convert("RGBA")
+    array = np.asarray(rgba, dtype=np.uint8).copy()
+    array[array[..., 3] == 0, :3] = 0
+    return Image.fromarray(array, mode="RGBA")

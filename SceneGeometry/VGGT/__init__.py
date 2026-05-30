@@ -1,0 +1,2 @@
+"""VGGT geometry capture stage."""
+

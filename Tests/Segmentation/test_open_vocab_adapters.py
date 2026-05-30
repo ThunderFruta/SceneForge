@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -110,6 +111,22 @@ def test_sam3_segmenter_text_prompt_outputs_segment_detection(tmp_path: Path) ->
     assert detections[0].detector_label == "box ."
     assert detections[0].detector_confidence == 0.91
     assert detections[0].bbox_xyxy == (1.0, 1.0, 3.0, 3.0)
+
+
+def test_sam3_segmenter_replaces_relative_cache_env(tmp_path: Path, monkeypatch) -> None:
+    clear_modules()
+    repo, model_dir = make_sam3_repo(tmp_path)
+    monkeypatch.setenv("HF_HOME", "Models/OpenVocabulary/SAM3/hf")
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", "Models/OpenVocabulary/SAM3/hf/hub")
+    monkeypatch.setenv("TRANSFORMERS_CACHE", "Models/OpenVocabulary/SAM3/hf/transformers")
+    segmenter = Sam3Segmenter(repo_dir=repo, model_dir=model_dir, text_prompt="box .", device="cpu")
+
+    segmenter.detect(Image.new("RGB", (4, 4), "white"))
+
+    assert Path(os.environ["HF_HOME"]).is_absolute()
+    assert Path(os.environ["HUGGINGFACE_HUB_CACHE"]).is_absolute()
+    assert Path(os.environ["TRANSFORMERS_CACHE"]).is_absolute()
+    assert Path(os.environ["HF_HOME"]) == model_dir.resolve()
 
 
 def test_groundingdino_sam3_segmenter_refines_boxes_to_masks(tmp_path: Path) -> None:

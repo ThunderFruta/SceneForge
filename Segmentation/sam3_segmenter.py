@@ -151,9 +151,9 @@ class Sam3Segmenter:
             return self._processor
         if str(self.repo_dir) not in sys.path:
             sys.path.insert(0, str(self.repo_dir))
-        os.environ.setdefault("HF_HOME", str(self.model_dir))
-        os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(self.model_dir / "hub"))
-        os.environ.setdefault("TRANSFORMERS_CACHE", str(self.model_dir / "transformers"))
+        set_cache_env_if_unset_or_relative("HF_HOME", self.model_dir.resolve())
+        set_cache_env_if_unset_or_relative("HUGGINGFACE_HUB_CACHE", (self.model_dir / "hub").resolve())
+        set_cache_env_if_unset_or_relative("TRANSFORMERS_CACHE", (self.model_dir / "transformers").resolve())
         from sam3.model_builder import build_sam3_image_model
         from sam3.model.sam3_image_processor import Sam3Processor
 
@@ -173,6 +173,12 @@ class Sam3Segmenter:
         except TypeError:
             self._processor = Sam3Processor(model)
         return self._processor
+
+
+def set_cache_env_if_unset_or_relative(name: str, path: Path) -> None:
+    current = os.environ.get(name)
+    if not current or not Path(current).expanduser().is_absolute():
+        os.environ[name] = str(path)
 
 
 @contextmanager
@@ -321,6 +327,8 @@ def polygon_from_mask_bbox(
 ) -> list[tuple[float, float]]:
     if bbox is None or mask.size == 0 or not bool(mask.any()):
         return []
+    if mask_is_solid_bbox(mask, bbox):
+        return rectangle_polygon(bbox)
     try:
         from skimage import measure
     except ImportError:
@@ -338,6 +346,17 @@ def polygon_from_mask_bbox(
     if len(points) < 3:
         return rectangle_polygon(bbox)
     return points[:128]
+
+
+def mask_is_solid_bbox(mask: np.ndarray, bbox: tuple[float, float, float, float]) -> bool:
+    left, top, right, bottom = bbox
+    height, width = mask.shape[:2]
+    x0 = max(0, min(width, int(np.floor(left))))
+    y0 = max(0, min(height, int(np.floor(top))))
+    x1 = max(x0 + 1, min(width, int(np.ceil(right))))
+    y1 = max(y0 + 1, min(height, int(np.ceil(bottom))))
+    crop = mask[y0:y1, x0:x1]
+    return bool(crop.size) and float(crop.mean()) >= 0.98
 
 
 def simplify_polygon(points: list[tuple[float, float]], tolerance: float) -> list[tuple[float, float]]:

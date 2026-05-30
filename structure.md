@@ -40,6 +40,9 @@ SceneForge/
   ShapeDetection/
 
   SceneGeometry/
+    VGGT/
+
+  BackgroundReconstruction/
 
   ObjectCompletion/
 
@@ -58,6 +61,8 @@ SceneForge/
     Mesh/
       Hunyuan3D/
       TripoSR/
+    Geometry/
+      VGGT/
     OpenVocabulary/
       GroundingDINO/
       SAM3/
@@ -70,6 +75,7 @@ SceneForge/
     CLI/
     Input/
     Pipeline/
+    SceneGeometry/
     ShapeDetection/
 ```
 
@@ -84,12 +90,14 @@ Do not assume any of the old CLI, package metadata, output formats, or module bo
 - `Input/`: load and validate RGB images.
 - `Segmentation/`: open-vocabulary proposal adapters for SAM3, GroundingDINO-SAM3, and RAM/GroundingDINO-SAM3. Retired depth-edge, Primitive3D, RGB YOLO, and RGBD YOLO detector paths are not active.
 - `ShapeDetection/`: build proposal reports with detector-neutral object fields and unassigned primitive labels by default.
-- `SceneGeometry/`: shared coordinate/FOV/depth contracts for current and future VGGT placement reports.
+- `SceneGeometry/`: shared coordinate/FOV/depth contracts for current and future VGGT placement reports, plus the first direct image-to-VGGT geometry export stage.
+- `BackgroundReconstruction/`: empty-room foreground mask generation, edit-input construction, fake/OpenAI empty-room output, and metadata for the background mesh lane.
+- `SceneComposition/`: combine empty-room background meshes, VGGT placement boxes, and per-object detail meshes into final scene artifacts.
 - `ObjectCompletion/`: complete object crops for downstream object mesh reconstruction.
 - `ObjectReconstruction/`: run object-level 3D reconstruction stages such as Hunyuan3D and completed-crop TripoSR mesh export.
 - `Runtime/`: backend-neutral runtime helpers such as torch device resolution shared by detector and future 3D model paths.
 - `OutputWriter/`: write stable JSON reports, annotated overlay images, depth previews, and metric comparison summaries.
-- `Docs/`: preserve active design contracts for SAM3 proposals, empty-room VGGT background reconstruction, and plane detection from the empty-room VGGT model.
+- `Docs/`: preserve active design contracts for SAM3 proposals, empty-room VGGT mesh reconstruction, and later plane detection from the empty-room VGGT model.
 - `Archives/`: ignored local-only storage for retired code snapshots, if needed.
 - `Output/Latest/`: ignored active run output.
 - `Output/Archive/`: ignored timestamped run folders only.

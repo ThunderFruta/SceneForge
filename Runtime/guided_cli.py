@@ -42,11 +42,19 @@ def ask_text(label: str, default: str | Path | None = None, *, required: bool = 
         print("Required.")
 
 
-def ask_choice(title: str, choices: Sequence[tuple[str, str]], *, default_index: int = 0) -> int:
+def ask_choice(
+    title: str,
+    choices: Sequence[tuple[str, str]],
+    *,
+    default_index: int = 0,
+    footer_lines: Sequence[str] = (),
+) -> int:
     print(title)
     for index, (label, detail) in enumerate(choices, start=1):
         marker = " [default]" if index - 1 == default_index else ""
         print(f"  {index}. {label}{marker} - {detail}")
+    for line in footer_lines:
+        print(line)
     while True:
         raw = ask_text("Choose", str(default_index + 1))
         try:
@@ -63,6 +71,8 @@ def confirm(label: str, *, default: bool = True) -> bool:
     suffix = "Y/n" if default else "y/N"
     raw = ask_text(f"{label} ({suffix})", "" if default else "n").lower()
     if raw == "":
+        if not sys.stdin.isatty():
+            return False
         return default
     return raw in {"y", "yes", "1", "true"}
 
@@ -106,20 +116,6 @@ def guided_blender_tool_main(
     command.extend(["--python", str(script_path), "--", *[str(part) for part in script_args]])
     print(description)
     return run_after_confirmation(command)
-
-
-def likely_open_vocab_ready(root: Path | None = None) -> bool:
-    root = root or repo_root() / "Models" / "OpenVocabulary"
-    return all(
-        path.exists()
-        for path in (
-            root / "open_vocab_setup_manifest.json",
-            root / "GroundingDINO" / "repo",
-            root / "GroundingDINO" / "weights" / "groundingdino_swint_ogc.pth",
-            root / "SAM3" / "repo",
-            root / "SAM3" / "hf",
-        )
-    )
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -216,12 +212,21 @@ def object_reconstruction_args_if_available() -> list[str]:
             "--source", os.environ.get("SCENEFORGE_OBJECT_RECON_SOURCE", "completed"),
             "--max-objects", os.environ.get("SCENEFORGE_OBJECT_RECON_MAX_OBJECTS", "0"),
         ]
-        if os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        texture_setting = os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE", "1").strip().lower()
+        if texture_setting in {"", "1", "true", "yes", "on"}:
             args.extend([
                 "--with-texture",
                 "--texture-resolution", os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE_RESOLUTION", "512"),
                 "--texture-views", os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE_VIEWS", "6"),
+                "--texture-prompt", os.environ.get(
+                    "SCENEFORGE_HUNYUAN3D_TEXTURE_PROMPT",
+                    "high quality object only, no floor, no ground plane, no base slab, no platform",
+                ),
+                "--texture-reference-mode", os.environ.get("SCENEFORGE_HUNYUAN3D_TEXTURE_REFERENCE_MODE", "original"),
+                "--texture-remesh",
             ])
+        elif texture_setting in {"0", "false", "no", "off"}:
+            args.append("--no-with-texture")
         return args
     if preferred_backend != "triposr":
         print(f"Info: SCENEFORGE_OBJECT_RECON_BACKEND={preferred_backend} is ignored; use hunyuan3d or triposr.")
@@ -235,21 +240,72 @@ def object_reconstruction_args_if_available() -> list[str]:
     ]
 
 
+def empty_room_construction_args_if_available(image: str | Path, detect_output: str | Path) -> list[str]:
+    output = Path(detect_output)
+    return empty_room_construction_args_for_paths(
+        image=image,
+        detections=output / "detections.json",
+        objects=object_masks_dir_for_detect_output(output),
+        output=os.environ.get("SCENEFORGE_EMPTY_ROOM_OUTPUT", "Output/Latest/background"),
+    )
+
+
+def empty_room_construction_args_for_paths(
+    *,
+    image: str | Path,
+    detections: str | Path,
+    objects: str | Path,
+    output: str | Path,
+) -> list[str]:
+    preferred_backend = os.environ.get("SCENEFORGE_EMPTY_ROOM_BACKEND", "openai-image").strip().lower()
+    disabled_values = {"", "none", "0", "false", "off"}
+    if preferred_backend in disabled_values:
+        print("SceneForge empty-room construction is disabled by SCENEFORGE_EMPTY_ROOM_BACKEND.")
+        return []
+    if preferred_backend not in {"openai", "openai-image", "fake"}:
+        print(f"Info: SCENEFORGE_EMPTY_ROOM_BACKEND={preferred_backend} is ignored; use openai-image, fake, or none.")
+        return []
+    backend = "openai-image" if preferred_backend == "openai" else preferred_backend
+    args = [
+        "construct-empty-room",
+        "--image", str(image),
+        "--detections", str(detections),
+        "--objects", str(objects),
+        "--output", str(output),
+        "--empty-room-backend", backend,
+        "--empty-room-model", os.environ.get("SCENEFORGE_EMPTY_ROOM_MODEL", "gpt-image-1.5"),
+        "--mask-dilation-px", os.environ.get("SCENEFORGE_EMPTY_ROOM_MASK_DILATION_PX", "10"),
+        "--mask-feather-px", os.environ.get("SCENEFORGE_EMPTY_ROOM_MASK_FEATHER_PX", "0"),
+        "--vggt-backend", os.environ.get("SCENEFORGE_VGGT_BACKEND", "vggt"),
+        "--vggt-model", os.environ.get("SCENEFORGE_VGGT_MODEL", "facebook/VGGT-1B"),
+        "--vggt-cache-dir", os.environ.get("SCENEFORGE_VGGT_CACHE_DIR", "Models/Geometry/VGGT/hf-cache"),
+        "--obj-stride", os.environ.get("SCENEFORGE_EMPTY_ROOM_OBJ_STRIDE", "16"),
+        "--mesh-stem", os.environ.get("SCENEFORGE_EMPTY_ROOM_MESH_STEM", "empty_room_mesh"),
+        "--device", os.environ.get("SCENEFORGE_VGGT_DEVICE", "auto"),
+    ]
+    repo_dir = os.environ.get("SCENEFORGE_VGGT_REPO_DIR", "Models/Geometry/VGGT/repo")
+    if repo_dir:
+        args.extend(["--vggt-repo-dir", repo_dir])
+    local_only = os.environ.get("SCENEFORGE_VGGT_LOCAL_ONLY", "1").strip().lower()
+    if local_only not in disabled_values:
+        args.append("--vggt-local-only")
+    return args
+
+
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     root = repo_root()
-    default_choice = 1 if likely_open_vocab_ready() else 2
     choices = [
-        ("Detect objects from image", "DINO/SAM proposal masks to detections.json and overlay.png"),
-        ("Detect objects from image", "Use SAM3/GroundingDINO-SAM3 proposals for the new object lane"),
-        ("Turn .blend into PNG", "Render the active Blender camera to one PNG without depth or detection"),
-        ("Check DINO/SAM readiness", "Run non-inference setup/import/auth audit"),
-        ("Run DINO/SAM smoke test", "Run guarded smoke fixture through real DINO/SAM"),
-        ("Inspect a .blend file", "Render preview views from a selected Blender file"),
-        ("Complete latest object crops", "Run OpenAI or FLUX completion over Output/Latest/objects"),
-        ("Reconstruct latest object meshes", "Run Hunyuan3D/TripoSR over Output/Latest/objects crops"),
-        ("Show command recipes", "Print common explicit commands and exit"),
+        ("Process image", "Detect objects, construct empty room, complete object crops, and reconstruct meshes"),
+        ("Construct empty room", "Generate empty-room image and VGGT background mesh"),
+        ("Render .blend to PNG", "Render the active Blender camera to one PNG"),
+        ("Complete object crops", "Run OpenAI or FLUX completion over an objects directory"),
+        ("Reconstruct object meshes", "Run Hunyuan3D or TripoSR over completed object crops"),
     ]
-    selected = ask_choice("SceneForge guided mode", choices, default_index=default_choice)
+    selected = ask_choice(
+        "SceneForge guided mode",
+        choices,
+        default_index=0,
+    )
     if selected == 0:
         image = ask_text("Image path", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
         if is_blend_path(image):
@@ -264,17 +320,18 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         args = detect_args_for_image(image, output)
         return _run_detection_then_completion(args, output)
     if selected == 1:
-        source = ask_text("Reference .blend or image", root / "Assets" / "Samples" / "roomScene.blend", required=True)
-        if is_image_path(source):
-            print("Image input has no depth source, so guided mode will run RAM/DINO/SAM image detection.")
-            output = ask_text("Output directory", "Output/Latest/detect", required=True)
-            args = detect_args_for_image(source, output)
-            return _run_detection_then_completion(args, output)
-        if not is_blend_path(source):
-            print("Option 2 needs a .blend or image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
-            return 2
-        output = ask_text("PNG output", "Output/Latest/render/image.png", required=True)
-        args = render_args_for_blend(source, output)
+        image = ask_text("Image path", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
+        detections = ask_text("Detections JSON", "Output/Latest/detect/detections.json", required=True)
+        objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
+        output = ask_text("Background output directory", "Output/Latest/background", required=True)
+        args = empty_room_construction_args_for_paths(
+            image=image,
+            detections=detections,
+            objects=objects,
+            output=output,
+        )
+        if not args:
+            return 0
         return _run_scene_args(args, execute)
     if selected == 2:
         blend = ask_text("Reference .blend", root / "Assets" / "Samples" / "roomScene.blend", required=True)
@@ -295,29 +352,13 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             "--exposure", exposure,
         ], execute)
     if selected == 3:
-        root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        backend, ram_args = open_vocab_backend_with_ram_fallback()
-        args = ["audit-open-vocab-readiness", "--root", root_dir, "--backend", backend]
-        args.extend(ram_args)
-        return _run_scene_args(args, execute)
-    if selected == 4:
-        root_dir = ask_text("Open vocabulary root", "Models/OpenVocabulary", required=True)
-        args = ["run-open-vocab-smoke", "--root", root_dir, "--backend", "groundingdino-sam3"]
-        backend, ram_args = open_vocab_backend_with_ram_fallback()
-        args[4] = backend
-        args.extend(ram_args)
-        return _run_scene_args(args, execute)
-    if selected == 5:
-        blend = ask_text("Blend to inspect", "path/to/output.blend", required=True)
-        return run_after_confirmation([sys.executable, "Tools/Scripts/view_blend.py", "--blend", blend, "--views", "front,iso", "--no-gltf"])
-    if selected == 6:
         objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
         args = ["complete-objects", "--objects", objects]
         completion_args = completion_args_if_available()
         if completion_args:
             args.extend(completion_args)
         return _run_scene_args(args, execute)
-    if selected == 7:
+    if selected == 4:
         objects = ask_text("Objects directory", "Output/Latest/objects", required=True)
         args = [
             "reconstruct-objects",
@@ -325,8 +366,7 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             *object_reconstruction_args_if_available(),
         ]
         return _run_scene_args(args, execute)
-    print_recipes()
-    return 0
+    return 2
 
 
 def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int:
@@ -337,12 +377,25 @@ def _run_scene_args(args: list[str], execute: Callable[[list[str]], int]) -> int
 
 
 def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
+    image = option_value(args, "--image") or ""
+    empty_room_args = empty_room_construction_args_if_available(image, output)
     print_command([sys.executable, "run.py", *args])
+    if empty_room_args:
+        print("Automated follow-up after detection:")
+        print_command([sys.executable, "run.py", *empty_room_args])
     if not confirm("Run now", default=True):
         return 0
     status = _run_completion_process([sys.executable, "run.py", *args], banner="Running detection in an isolated process to release resources.")
     if status != 0:
         return status
+    if empty_room_args:
+        print("Constructing empty-room background mesh from detection masks.")
+        status = _run_completion_process(
+            [sys.executable, "run.py", *empty_room_args],
+            banner="Running empty-room construction in a fresh process.",
+        )
+        if status != 0:
+            return status
     completion_args = completion_args_if_available()
     if not completion_args:
         return 0
@@ -396,27 +449,19 @@ def replace_option_value(args: list[str], option: str, value: str) -> list[str]:
     return [*args, option, value]
 
 
+def option_value(args: list[str], option: str) -> str | None:
+    if option not in args:
+        return None
+    index = args.index(option)
+    if index + 1 >= len(args):
+        return None
+    return str(args[index + 1])
+
+
 def object_masks_dir_for_detect_output(output: Path) -> Path:
     if output.name == "detect":
         return output.parent / "objects"
     return output / "objects"
-
-
-def print_recipes() -> None:
-    backend, ram_args = open_vocab_backend_with_ram_fallback()
-    detect_prompt_args = [] if backend == "ram-groundingdino-sam3" else ["--text-prompt-preset", "scene-primitives-v1"]
-    completion_args = completion_args_if_available()
-    reconstruction_args = object_reconstruction_args_if_available()
-    recipes = [
-        [sys.executable, "run.py", "audit-open-vocab-readiness", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
-        [sys.executable, "run.py", "run-open-vocab-smoke", "--root", "Models/OpenVocabulary", "--backend", backend] + ram_args,
-        [sys.executable, "run.py", "detect-shapes", "--backend", backend, "--image", "path/to/image.png", "--open-vocab-root", "Models/OpenVocabulary"] + detect_prompt_args + ["--output", "Output/Latest/detect", "--device", "auto"] + ram_args,
-        [sys.executable, "run.py", "complete-objects", "--objects", "Output/Latest/objects"] + completion_args,
-        [sys.executable, "run.py", "reconstruct-objects", "--objects", "Output/Latest/objects"] + reconstruction_args,
-        [sys.executable, "run.py", "render-blend-png", "--reference-blend", "path/to/file.blend", "--output", "Output/Latest/render/image.png", "--width", "1280", "--height", "720", "--exposure", "auto"],
-    ]
-    for command in recipes:
-        print(shell_join(command))
 
 
 def remove_option_with_value(args: list[str], option: str) -> list[str]:
