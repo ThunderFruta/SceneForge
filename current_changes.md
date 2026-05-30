@@ -9,8 +9,11 @@ This file tracks notable project changes while SceneForge is still small.
 - Extended the support-plane placement implementation with explicit 5-DoF unknown-support fallback records, bbox-as-silhouette proxy loss reports, software-rendered mask silhouette losses, sampled VGGT point-proximity losses, finite support-footprint checks, support penetration and object-overlap diagnostics, and placement-quality thresholds written to JSON.
 - Added `run.py render-scene-camera-view` plus `Tools/Scripts/render_scene_camera_view.py` to render composed GLB scenes from the source camera for GT-style visual checks against the input image.
 - Changed explicit placement fitting to relock tabletop objects to the final optimized support-object top surface, widened procedural room-corner backgrounds for source-camera renders, and added a fit-preview render mode for photo-like scene inspection.
-- Tightened support-plane projection acceptance so occluded floor objects can extend below the visible mask without accepting oversized horizontal projections, expanded the floor-depth search window for rear chairs, and enriched `placement_quality.json` with status counts, review items, loss summaries, support modes, and overlap warnings.
-- Removed hardcoded chair scale, spacing, and pose overrides from scene composition; object sizing and placement should come from support, projection, mask, and VGGT evidence instead of per-object fixes.
+- Tightened support-plane projection acceptance so occluded floor objects can extend below the visible mask without accepting oversized horizontal projections, expanded the floor-depth search window for rear floor-supported objects, and enriched `placement_quality.json` with status counts, review items, loss summaries, support modes, and overlap warnings.
+- Removed hardcoded chair scale, spacing, and pose overrides plus their no-op report fields from scene composition; also removed the automatic table-label floor-contact mesh cleanup so object sizing and placement come from support, projection, mask, and VGGT evidence instead of per-object fixes.
+- Added a generic visible-VGGT-point consistency term to the support-plane placement objective so candidate scale/translation is scored against object point evidence without object-name-specific rules.
+- Added a large-image-target scale floor to the generic support-plane optimizer so near-camera objects are not allowed to use extreme shrink candidates when their target box covers a large fraction of the source image.
+- Added projected empty-room image textures to procedural room-corner planes so composed GLBs can carry textured floor and wall planes instead of flat fallback colors.
 
 ## 2026-05-29
 
@@ -45,7 +48,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Added `run.py compose-scene` to combine `empty_room_mesh.glb`, `objects_vggt/object_geometry.json`, and per-object Hunyuan/TripoSR meshes into `Output/Latest/scene/scene.glb` plus `scene_alignment.json`.
 - Changed the recommended composed-scene background to `empty_room_planes.glb` so final geometry uses fitted XYZ-aligned structural planes instead of the raw empty-room VGGT relief mesh.
 - Changed scene composition snapping to use object support targets: floor-supported furniture stays on the floor, while small tabletop labels such as vase and flower snap to the detected table top when their 2D boxes overlap a table.
-- Added label-aware composition adjustments so chairs are scaled down, pushed slightly outward, and semantically yawed to face the detected table center before floor snapping.
+- Removed the early label-aware chair scale/spacing/yaw experiment from active composition after support-plane fitting moved toward evidence-first placement.
 - Added a constrained support-plane placement optimizer to `compose-scene`: supported objects search only plane translation, yaw, and uniform scale, then write render-to-input projected-box losses plus `input_vs_projection_overlay.png`.
 - Added explicit support-plane placement stages: `choose-object-supports`, `build-object-fit-targets`, and `fit-object-placements` now write `placement/object_supports.json`, `placement/object_fit_targets.json`, `placement/object_placements.json`, and `placement/placement_quality.json`; `compose-scene --placements` can consume those records directly.
 - Changed `compose-scene` to fit the empty-room mesh to the object-placement bounds by default and push its near depth behind placed objects; `--background-fit raw` keeps the raw VGGT background transform for debugging.

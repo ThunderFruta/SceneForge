@@ -104,6 +104,8 @@ def assign_debug_background_materials() -> None:
         prefix = next((key for key in colors if obj.name.startswith(key)), None)
         if prefix is None:
             continue
+        if mesh_has_image_texture(obj):
+            continue
         material = bpy.data.materials.new(f"{obj.name}_debug_unlit")
         material.use_nodes = True
         nodes = material.node_tree.nodes
@@ -115,6 +117,17 @@ def assign_debug_background_materials() -> None:
         material.node_tree.links.new(emission.outputs["Emission"], output.inputs["Surface"])
         obj.data.materials.clear()
         obj.data.materials.append(material)
+
+
+def mesh_has_image_texture(obj: bpy.types.Object) -> bool:
+    for slot in obj.material_slots:
+        material = slot.material
+        if material is None or material.node_tree is None:
+            continue
+        for node in material.node_tree.nodes:
+            if node.bl_idname == "ShaderNodeTexImage" and getattr(node, "image", None) is not None:
+                return True
+    return False
 
 
 def set_white_world() -> None:

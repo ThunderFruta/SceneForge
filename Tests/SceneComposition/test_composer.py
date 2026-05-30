@@ -379,7 +379,62 @@ def test_compose_scene_room_corner_background_is_structural(tmp_path: Path) -> N
     assert report["background"]["wall_top_y"] >= abs(report["background"]["z_back"]) * 0.55
 
 
-def test_compose_scene_flattens_table_floor_contact_artifacts(tmp_path: Path) -> None:
+def test_compose_scene_room_corner_projects_empty_room_texture(tmp_path: Path) -> None:
+    background_dir = tmp_path / "background"
+    background = background_dir / "empty_room_planes.glb"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_cube"
+    object_geometry = tmp_path / "object_geometry.json"
+    output_dir = tmp_path / "scene"
+    background_dir.mkdir(parents=True)
+    np.save(background_dir / "vggt_points.npy", np.zeros((4, 4, 3), dtype=np.float32))
+    Image.new("RGB", (4, 4), (120, 160, 200)).save(background_dir / "empty_room.png")
+    write_box_glb(background)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {
+                    "image_width": 4,
+                    "image_height": 4,
+                    "fov_degrees": 70.0,
+                },
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "cube",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 1.0, 1.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=object_geometry,
+        output_dir=output_dir,
+        background_fit="room-corner",
+        object_scale_factor=1.0,
+    )
+
+    assert report["background"]["texture_source"] == "empty_room_image_camera_projected"
+    assert report["background"]["texture_image_path"] == str(background_dir / "empty_room.png")
+    assert report["background"]["texture_grid_steps"] == 36
+    assert report["background"]["vertex_count"] == 3 * 37 * 37
+    assert report["background"]["face_count"] == 3 * 36 * 36 * 2
+    assert report["background"]["vertex_colors"] == "projected_empty_room_image_fallback"
+
+
+def test_compose_scene_does_not_apply_label_specific_floor_contact_cleanup(tmp_path: Path) -> None:
     background = tmp_path / "background.glb"
     objects_dir = tmp_path / "objects"
     table_dir = objects_dir / "01_table"
@@ -417,9 +472,7 @@ def test_compose_scene_flattens_table_floor_contact_artifacts(tmp_path: Path) ->
         object_scale_factor=1.0,
     )
 
-    cleanup = report["objects"][0]["mesh_cleanup"]["floor_contact_flatten"][0]
-    assert cleanup["status"] == "applied"
-    assert cleanup["clamped_vertex_count"] > 0
+    assert report["objects"][0]["mesh_cleanup"] is None
 
 
 def test_compose_scene_snaps_objects_to_floor(tmp_path: Path) -> None:
@@ -636,6 +689,67 @@ def test_fit_object_placements_and_compose_explicit_records(tmp_path: Path) -> N
     assert by_id[2]["support_detection_id"] == 1
 
 
+def test_compose_explicit_records_recomputes_tabletop_support_after_floor_snap(tmp_path: Path) -> None:
+    background = tmp_path / "background.glb"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    placements_path = tmp_path / "object_placements.json"
+    scene_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_jagged_bottom_glb(table_dir / "hunyuan3d_textured.glb")
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb")
+    table_dir.mkdir(parents=True, exist_ok=True)
+    vase_dir.mkdir(parents=True, exist_ok=True)
+    (table_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    (vase_dir / "metadata.json").write_text(json.dumps({"id": 2}), encoding="utf-8")
+    placements_path.write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "detection_id": 2,
+                        "detector_label": "vase",
+                        "status": "accepted",
+                        "needs_review": False,
+                        "mesh_path": str(vase_dir / "hunyuan3d_textured.glb"),
+                        "transform_gltf": [[0.2, 0.0, 0.0, 0.0], [0.0, 0.2, 0.0, 0.6], [0.0, 0.0, 0.2, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                        "transformed_bounds": [[-0.1, 0.5, -0.1], [0.1, 0.7, 0.1]],
+                        "support": {"mode": "tabletop_4dof", "support_kind": "tabletop", "support_detection_id": 1, "support_y_gltf": 0.5},
+                    },
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "status": "accepted",
+                        "needs_review": False,
+                        "mesh_path": str(table_dir / "hunyuan3d_textured.glb"),
+                        "transform_gltf": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                        "transformed_bounds": [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                        "support": {"mode": "floor_4dof", "support_kind": "floor", "support_y_gltf": -0.5},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=placements_path,
+        placements_path=placements_path,
+        output_dir=scene_dir,
+        background_fit="room-corner",
+        include_review=True,
+    )
+
+    by_id = {item["detection_id"]: item for item in report["objects"]}
+    table_top = by_id[1]["transformed_bounds"][1][1]
+    assert by_id[2]["support_y"] == table_top
+    assert by_id[2]["support_y"] != 0.5
+    assert np.isclose(by_id[2]["transformed_bounds"][0][1], table_top)
+
+
 def test_fit_object_placements_has_unknown_5dof_fallback(tmp_path: Path) -> None:
     planes_path = tmp_path / "background" / "plane_detections.json"
     objects_dir = tmp_path / "objects"
@@ -786,7 +900,12 @@ def test_fit_object_placements_reports_vggt_point_loss(tmp_path: Path) -> None:
     )
 
     record = placements["objects"][0]
+    optimization = record["render_to_input_optimization"]
     assert Path(targets["objects"][0]["visible_points_scene_path"]).is_file()
+    assert optimization["vggt_candidate_fit"]["status"] == "accepted"
+    assert optimization["vggt_candidate_fit"]["loss_weight"] > 0.0
+    assert optimization["vggt_candidate_fit"]["optimized"]["loss"] is not None
+    assert optimization["optimized_bbox_loss"] is not None
     assert record["losses"]["vggt_points"] is not None
     assert record["quality"]["vggt_points"]["status"] == "accepted"
     assert record["quality"]["silhouette_render"]["status"] == "accepted"
@@ -914,10 +1033,13 @@ def test_compose_scene_does_not_apply_chair_specific_scale_or_pose(tmp_path: Pat
     )
 
     by_id = {item["detection_id"]: item for item in report["objects"]}
-    assert by_id[2]["label_scale_factor"] == 1.0
-    assert by_id[2]["spacing_delta_gltf"] == [0.0, 0.0, 0.0]
-    assert by_id[2]["semantic_orientation_kind"] is None
-    assert by_id[2]["semantic_yaw_radians"] == 0.0
+    assert "label_scale_factors" not in report
+    assert "spacing_targets" not in report
+    assert "orientation_targets" not in report
+    assert "label_scale_factor" not in by_id[2]
+    assert "spacing_delta_gltf" not in by_id[2]
+    assert "semantic_orientation_kind" not in by_id[2]
+    assert "semantic_yaw_radians" not in by_id[2]
     chair_extent_x = by_id[2]["transformed_bounds"][1][0] - by_id[2]["transformed_bounds"][0][0]
     assert np.isclose(chair_extent_x, 1.0)
 
@@ -977,6 +1099,59 @@ def test_compose_scene_writes_support_dof_and_render_proxy_overlay(tmp_path: Pat
     assert optimization["candidate_count"] > 0
     assert optimization["optimized_projected_bbox_xyxy"] is not None
     assert (output_dir / "input_vs_projection_overlay.png").is_file()
+
+
+def test_large_image_target_omits_extreme_shrink_scale_candidates(tmp_path: Path) -> None:
+    source_image = tmp_path / "source.png"
+    Image.new("RGB", (100, 100), (240, 240, 240)).save(source_image)
+    background = tmp_path / "background.glb"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_cube"
+    object_geometry = tmp_path / "object_geometry.json"
+    output_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {
+                    "image_width": 100,
+                    "image_height": 100,
+                    "fov_degrees": 70.0,
+                },
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "cube",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [20.0, 10.0, 80.0, 90.0],
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [0.2, 0.2, 0.2],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=object_geometry,
+        output_dir=output_dir,
+        background_fit="room-corner",
+        object_scale_factor=1.0,
+        source_image_path=source_image,
+    )
+
+    optimization = report["objects"][0]["render_to_input_optimization"]
+    assert optimization["minimum_scale_reason"] == "large_image_target"
+    assert optimization["minimum_scale_delta"] == 0.7
+    assert min(optimization["scale_candidates"]) == 0.7
 
 
 def test_compose_scene_rejects_bad_projection_optimization(tmp_path: Path) -> None:

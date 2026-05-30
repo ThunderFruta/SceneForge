@@ -22,11 +22,13 @@ PROJECTION_OCCLUDED_BOTTOM_TOP_EDGE_REVIEW_RATIO = 0.40
 PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO = 0.55
 PROJECTION_CENTER_REJECT_RATIO = 0.35
 PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO = 2.30
-LABEL_SCALE_FACTORS: tuple[tuple[str, float], ...] = ()
-FLOOR_OBJECT_SPACING_OFFSETS: tuple[tuple[str, float], ...] = ()
-FLOOR_CONTACT_FLATTEN_QUANTILE = 6.0
-ORIENT_TOWARD_SUPPORT_LABELS: tuple[str, ...] = ()
-SEMANTIC_FRONT_AXIS_GLTF: dict[str, str] = {}
+VGGT_CANDIDATE_POINT_SAMPLE_COUNT = 512
+VGGT_CANDIDATE_LOSS_WEIGHT = 0.35
+DEFAULT_UNIFORM_SCALE_CANDIDATES = (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40)
+LARGE_TARGET_HEIGHT_RATIO = 0.45
+LARGE_TARGET_MIN_UNIFORM_SCALE = 0.70
+FLOOR_SUPPORT_CONTACT_QUANTILE = 0.5
+TABLETOP_SUPPORT_CONTACT_QUANTILE = 20.0
 
 
 def compose_scene(
@@ -84,34 +86,22 @@ def compose_scene(
     placements = (explicit_placements or geometry).get("objects", [])
     scene = new_scene()
     if explicit_placements is not None:
-        spacing_targets: dict[int, dict[str, Any]] = {}
-        orientation_targets: dict[int, dict[str, Any]] = {}
         placement_bounds = explicit_placement_bounds_gltf(placements)
     else:
-        spacing_targets = object_spacing_targets(
-            placements,
-            placement_orientation=placement_orientation,
-            object_scale_factor=object_scale_factor,
-        )
-        orientation_targets = object_orientation_targets(
-            placements,
-            placement_orientation=placement_orientation,
-            object_scale_factor=object_scale_factor,
-            spacing_targets=spacing_targets,
-        )
         placement_bounds = placement_bounds_gltf(
             placements,
             placement_orientation=placement_orientation,
             object_scale_factor=object_scale_factor,
-            spacing_targets=spacing_targets,
-            orientation_targets=orientation_targets,
         )
     if background_fit == "room-corner" and placement_bounds is not None:
+        plane_texture_path = room_corner_plane_texture_path(background_vggt_dir)
         background_stats = add_room_corner_background(
             scene,
             placement_bounds=placement_bounds,
             margin=background_margin,
             depth_offset=background_depth_offset,
+            texture_image_path=plane_texture_path,
+            coordinate_contract=coordinate_contract,
         )
     elif background_fit == "camera-clipped" and background_vggt_dir is not None:
         background_stats = add_vggt_background_mesh(
@@ -142,7 +132,13 @@ def compose_scene(
 
     floor_y = background_floor_y(background_stats) if snap_objects_to_floor else None
     if explicit_placements is not None:
-        support_targets = explicit_support_targets(placements)
+        support_targets = explicit_support_targets(
+            placements,
+            floor_y=floor_y,
+            object_dirs=object_dirs,
+            object_mesh_name=object_mesh_name,
+            include_review=include_review,
+        )
     else:
         support_targets = object_support_targets(
             placements,
@@ -152,8 +148,6 @@ def compose_scene(
             placement_orientation=placement_orientation,
             object_scale_factor=object_scale_factor,
             floor_y=floor_y,
-            spacing_targets=spacing_targets,
-            orientation_targets=orientation_targets,
         )
     records: list[dict[str, Any]] = []
     for placement in placements:
@@ -165,6 +159,7 @@ def compose_scene(
                 object_dirs=object_dirs,
                 object_mesh_name=object_mesh_name,
                 include_review=include_review,
+                support_target=support_targets.get(detection_id),
             )
         else:
             record = compose_object_record(
@@ -176,8 +171,6 @@ def compose_scene(
                 placement_orientation=placement_orientation,
                 object_scale_factor=object_scale_factor,
                 support_target=support_targets.get(detection_id),
-                spacing_target=spacing_targets.get(detection_id),
-                orientation_target=orientation_targets.get(detection_id),
                 coordinate_contract=coordinate_contract,
                 optimize_placements=optimize_placements,
             )
@@ -204,9 +197,6 @@ def compose_scene(
         "scale_mode": scale_mode,
         "placement_orientation": placement_orientation,
         "object_scale_factor": float(object_scale_factor),
-        "label_scale_factors": label_scale_factors_report(),
-        "spacing_targets": spacing_targets,
-        "orientation_targets": orientation_targets,
         "background_fit": background_fit,
         "background_margin": float(background_margin),
         "background_depth_offset": float(background_depth_offset),
@@ -253,21 +243,99 @@ def explicit_placement_bounds_gltf(placements: list[dict[str, Any]]) -> np.ndarr
     return merge_bounds(bounds)
 
 
-def explicit_support_targets(placements: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+def explicit_support_targets(
+    placements: list[dict[str, Any]],
+    *,
+    floor_y: float | None = None,
+    object_dirs: dict[int, Path] | None = None,
+    object_mesh_name: str = "hunyuan3d_textured.glb",
+    include_review: bool = False,
+) -> dict[int, dict[str, Any]]:
     targets: dict[int, dict[str, Any]] = {}
     for placement in placements:
         detection_id = int(placement.get("detection_id", 0))
         support = placement.get("support") or {}
+        support_kind = normalized_support_kind(support.get("support_kind")) or support_kind_from_mode(support.get("mode"))
         support_y = support.get("support_y_gltf")
+        if support_kind == "floor" and floor_y is not None:
+            support_y = floor_y
         targets[detection_id] = {
-            "support_kind": support.get("support_kind") or support_kind_from_mode(support.get("mode")),
+            "support_kind": support_kind,
             "support_detection_id": support.get("support_detection_id"),
             "support_y": float(support_y) if support_y is not None else None,
             "support_plane_id": support.get("support_plane_id"),
             "support_label": support.get("support_label"),
             "support_confidence": support.get("support_confidence"),
         }
+    support_tops = explicit_support_object_tops(
+        placements,
+        targets=targets,
+        object_dirs=object_dirs or {},
+        object_mesh_name=object_mesh_name,
+        include_review=include_review,
+    )
+    for target in targets.values():
+        if target.get("support_kind") != "tabletop":
+            continue
+        support_detection_id = target.get("support_detection_id")
+        if support_detection_id in support_tops:
+            target["support_y"] = support_tops[support_detection_id]
     return targets
+
+
+def explicit_support_object_tops(
+    placements: list[dict[str, Any]],
+    *,
+    targets: dict[int, dict[str, Any]],
+    object_dirs: dict[int, Path],
+    object_mesh_name: str,
+    include_review: bool,
+) -> dict[int, float]:
+    support_tops: dict[int, float] = {}
+    for placement in placements:
+        if placement.get("status") != "accepted":
+            continue
+        if placement.get("suppressed_by_composite"):
+            continue
+        if bool(placement.get("needs_review", False)) and not include_review:
+            continue
+        detection_id = int(placement.get("detection_id", 0))
+        label = str(placement.get("detector_label") or "")
+        if not is_table_support_label(label):
+            continue
+        target = targets.get(detection_id)
+        if not target or target.get("support_y") is None:
+            continue
+        mesh_path = explicit_placement_mesh_path(placement, object_dirs, object_mesh_name)
+        if mesh_path is None:
+            continue
+        try:
+            transform = np.asarray(placement.get("transform_gltf"), dtype=np.float64)
+            if transform.shape != (4, 4) or not np.isfinite(transform).all():
+                continue
+            snapped, _delta = snap_transform_to_support(
+                mesh_path,
+                transform,
+                float(target["support_y"]),
+                contact_quantile=support_contact_quantile(target.get("support_kind")),
+            )
+            support_tops[detection_id] = float(transformed_mesh_bounds(mesh_path, snapped)[1, 1])
+        except Exception:
+            continue
+    return support_tops
+
+
+def explicit_placement_mesh_path(
+    placement: dict[str, Any],
+    object_dirs: dict[int, Path],
+    object_mesh_name: str,
+) -> Path | None:
+    mesh_path = Path(str(placement.get("mesh_path"))) if placement.get("mesh_path") else None
+    if mesh_path is not None and mesh_path.is_file():
+        return mesh_path
+    detection_id = int(placement.get("detection_id", 0))
+    object_dir = object_dirs.get(int(placement.get("source_object_dir_id") or detection_id))
+    return resolve_object_mesh_path(object_dir, object_mesh_name) if object_dir else None
 
 
 def compose_explicit_placement_record(
@@ -277,11 +345,21 @@ def compose_explicit_placement_record(
     object_dirs: dict[int, Path],
     object_mesh_name: str,
     include_review: bool,
+    support_target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     detection_id = int(placement.get("detection_id", 0))
     label = str(placement.get("detector_label") or "object")
     support = placement.get("support") or {}
-    support_kind = support.get("support_kind") or support_kind_from_mode(support.get("mode"))
+    support_record = support_target or {
+        "support_kind": normalized_support_kind(support.get("support_kind")) or support_kind_from_mode(support.get("mode")),
+        "support_detection_id": support.get("support_detection_id"),
+        "support_y": support.get("support_y_gltf"),
+        "support_plane_id": support.get("support_plane_id"),
+        "support_label": support.get("support_label"),
+        "support_confidence": support.get("support_confidence"),
+        "mode": support.get("mode"),
+    }
+    support_kind = support_record.get("support_kind") or support_kind_from_mode(support.get("mode"))
     base = {
         "detection_id": detection_id,
         "detector_label": placement.get("detector_label"),
@@ -300,16 +378,12 @@ def compose_explicit_placement_record(
         "placement_status": placement.get("status"),
         "transform_gltf": placement.get("transform_gltf"),
         "support_kind": support_kind,
-        "support_detection_id": support.get("support_detection_id"),
-        "support_y": support.get("support_y_gltf"),
-        "support_plane_id": support.get("support_plane_id"),
-        "support_label": support.get("support_label"),
-        "support_confidence": support.get("support_confidence"),
-        "label_scale_factor": label_scale_factor(label),
-        "spacing_delta_gltf": [0.0, 0.0, 0.0],
-        "semantic_yaw_radians": 0.0,
-        "semantic_orientation_kind": None,
-        "support_degrees_of_freedom": placement.get("degrees_of_freedom"),
+        "support_detection_id": support_record.get("support_detection_id"),
+        "support_y": support_record.get("support_y"),
+        "support_plane_id": support_record.get("support_plane_id"),
+        "support_label": support_record.get("support_label"),
+        "support_confidence": support_record.get("support_confidence"),
+        "support_degrees_of_freedom": support_degrees_of_freedom(support_record),
         "render_to_input_optimization": placement.get("render_to_input_optimization"),
         "projection_quality": (placement.get("render_to_input_optimization") or {}).get("projection_quality"),
         "losses": placement.get("losses"),
@@ -337,19 +411,25 @@ def compose_explicit_placement_record(
         transform = np.asarray(placement.get("transform_gltf"), dtype=np.float64)
         if transform.shape != (4, 4) or not np.isfinite(transform).all():
             raise ValueError("transform_gltf must be a finite 4x4 matrix")
+        support_snap_delta = 0.0
+        if support_record.get("support_y") is not None:
+            support_y = float(support_record["support_y"])
+            transform, support_snap_delta = snap_transform_to_support(
+                mesh_path,
+                transform,
+                support_y,
+                contact_quantile=support_contact_quantile(support_kind),
+            )
         object_stats = add_scene_asset(
             scene,
             mesh_path,
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
-            floor_contact_flatten=should_flatten_floor_contact(label, support_kind),
         )
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
         return base
 
-    support_snap_delta = placement.get("support_snap_delta")
-    support_snap_delta = float(support_snap_delta) if support_snap_delta is not None else 0.0
     base.update(
         object_mesh=str(mesh_path),
         status="composed",
@@ -365,7 +445,11 @@ def compose_explicit_placement_record(
 
 
 def support_kind_from_mode(mode: Any) -> str | None:
-    mode_text = str(mode or "")
+    return normalized_support_kind(mode)
+
+
+def normalized_support_kind(mode: Any) -> str | None:
+    mode_text = str(mode or "").lower()
     if mode_text.startswith("floor"):
         return "floor"
     if mode_text.startswith("tabletop"):
@@ -379,6 +463,12 @@ def support_kind_from_mode(mode: Any) -> str | None:
     return None
 
 
+def support_contact_quantile(support_kind: Any) -> float:
+    if normalized_support_kind(support_kind) == "tabletop":
+        return TABLETOP_SUPPORT_CONTACT_QUANTILE
+    return FLOOR_SUPPORT_CONTACT_QUANTILE
+
+
 def compose_object_record(
     *,
     scene: Any,
@@ -389,8 +479,6 @@ def compose_object_record(
     placement_orientation: str,
     object_scale_factor: float,
     support_target: dict[str, Any] | None,
-    spacing_target: dict[str, Any] | None = None,
-    orientation_target: dict[str, Any] | None = None,
     coordinate_contract: dict[str, Any] | None = None,
     optimize_placements: bool = True,
 ) -> dict[str, Any]:
@@ -415,10 +503,6 @@ def compose_object_record(
         "support_kind": support_target.get("support_kind") if support_target else None,
         "support_detection_id": support_target.get("support_detection_id") if support_target else None,
         "support_y": support_target.get("support_y") if support_target else None,
-        "label_scale_factor": label_scale_factor(label),
-        "spacing_delta_gltf": spacing_target.get("delta_gltf") if spacing_target else [0.0, 0.0, 0.0],
-        "semantic_yaw_radians": orientation_target.get("yaw_radians") if orientation_target else 0.0,
-        "semantic_orientation_kind": orientation_target.get("orientation_kind") if orientation_target else None,
         "support_degrees_of_freedom": support_degrees_of_freedom(support_target),
         "render_to_input_optimization": None,
         "projection_quality": None,
@@ -445,13 +529,18 @@ def compose_object_record(
         transform = placement_transform_to_gltf(
             placement,
             placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
+            object_scale_factor=object_scale_factor,
         )
-        transform = apply_spacing_target(transform, spacing_target)
-        transform = apply_orientation_target(transform, orientation_target)
         support_snap_delta = 0.0
+        snapped_support_y = None
         if support_target is not None and support_target.get("support_y") is not None:
-            transform, support_snap_delta = snap_transform_to_support(mesh_path, transform, float(support_target["support_y"]))
+            snapped_support_y = float(support_target["support_y"])
+            transform, support_snap_delta = snap_transform_to_support(
+                mesh_path,
+                transform,
+                snapped_support_y,
+                contact_quantile=support_contact_quantile(base["support_kind"]),
+            )
         optimization = optimize_transform_to_input(
             mesh_path=mesh_path,
             placement=placement,
@@ -461,6 +550,15 @@ def compose_object_record(
             enabled=optimize_placements,
         )
         transform = optimization["transform"]
+        if snapped_support_y is not None:
+            transform, final_snap_delta = snap_transform_to_support(
+                mesh_path,
+                transform,
+                snapped_support_y,
+                contact_quantile=support_contact_quantile(base["support_kind"]),
+            )
+            if support_snap_delta == 0.0:
+                support_snap_delta = final_snap_delta
         projection_quality = optimization["report"].get("projection_quality")
         if projection_quality and projection_quality.get("status") == "rejected":
             base["needs_review"] = True
@@ -469,7 +567,6 @@ def compose_object_record(
             mesh_path,
             name_prefix=f"object_{detection_id:02d}_{slugify(label)}",
             transform=transform,
-            floor_contact_flatten=should_flatten_floor_contact(label, base["support_kind"]),
         )
     except Exception as exc:
         base.update(status="failed", reason=f"composition_failed: {exc}")
@@ -514,8 +611,12 @@ def optimize_transform_to_input(
     enabled: bool,
 ) -> dict[str, Any]:
     target_bbox = bbox_array(placement.get("bbox_xyxy"))
-    source_bounds = combined_bounds(load_meshes(mesh_path))
+    meshes = load_meshes(mesh_path)
+    source_bounds = combined_bounds(meshes)
     initial_bbox = projected_transform_bbox(source_bounds, transform, coordinate_contract)
+    vggt_fit = load_vggt_candidate_fit(placement)
+    initial_vggt = vggt_candidate_transform_loss(vggt_fit, source_bounds, transform)
+    vggt_loss_weight = VGGT_CANDIDATE_LOSS_WEIGHT if vggt_fit.get("available") else 0.0
     base_report = {
         "enabled": bool(enabled),
         "method": "support_plane_discrete_render_proxy_v1",
@@ -526,9 +627,22 @@ def optimize_transform_to_input(
         "initial_loss": None,
         "optimized_loss": None,
         "candidate_loss": None,
+        "initial_bbox_loss": None,
+        "optimized_bbox_loss": None,
+        "candidate_bbox_loss": None,
+        "vggt_candidate_fit": vggt_candidate_fit_report(
+            vggt_fit,
+            loss_weight=vggt_loss_weight,
+            initial=initial_vggt,
+            optimized=initial_vggt,
+            candidate=initial_vggt,
+        ),
         "delta_gltf": [0.0, 0.0, 0.0],
         "yaw_delta_radians": 0.0,
         "uniform_scale_delta": 1.0,
+        "scale_candidates": list(DEFAULT_UNIFORM_SCALE_CANDIDATES),
+        "minimum_scale_delta": min(DEFAULT_UNIFORM_SCALE_CANDIDATES),
+        "minimum_scale_reason": "default",
         "candidate_count": 0,
         "projection_quality": projection_quality_report(initial_bbox, target_bbox, accepted=True),
     }
@@ -537,11 +651,22 @@ def optimize_transform_to_input(
 
     support_y = float(support_target["support_y"])
     allow_occluded_bottom = bool((support_target or {}).get("support_kind") == "floor")
-    initial_loss = bbox_projection_loss(initial_bbox, target_bbox)
+    initial_bbox_loss = bbox_projection_loss(initial_bbox, target_bbox)
+    initial_support_loss = support_penalty(source_bounds, transform, support_y)
+    initial_loss = objective_transform_loss(
+        bbox_loss=initial_bbox_loss,
+        support_loss=initial_support_loss,
+        scale_loss=0.0,
+        vggt_loss=initial_vggt.get("loss"),
+        vggt_loss_weight=vggt_loss_weight,
+    )
     initial_quality = projection_quality_report(initial_bbox, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
+    scale_candidates, scale_floor_report = scale_candidates_for_target(target_bbox, coordinate_contract)
     best_candidate_transform = np.asarray(transform, dtype=np.float64)
     best_candidate_bbox = initial_bbox
     best_candidate_loss = initial_loss
+    best_candidate_bbox_loss = initial_bbox_loss
+    best_candidate_vggt = initial_vggt
     best_candidate_delta = np.zeros(3, dtype=np.float64)
     best_candidate_yaw = 0.0
     best_candidate_scale = 1.0
@@ -549,6 +674,8 @@ def optimize_transform_to_input(
     best_accepted_transform = np.asarray(transform, dtype=np.float64)
     best_accepted_bbox = initial_bbox
     best_accepted_loss = initial_loss if initial_quality.get("status") != "rejected" else float("inf")
+    best_accepted_bbox_loss = initial_bbox_loss
+    best_accepted_vggt = initial_vggt
     best_accepted_delta = np.zeros(3, dtype=np.float64)
     best_accepted_yaw = 0.0
     best_accepted_scale = 1.0
@@ -558,17 +685,29 @@ def optimize_transform_to_input(
     for dx in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
         for dz in (-0.56, -0.44, -0.32, -0.24, -0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
             for yaw in (-0.50, -0.25, 0.0, 0.25, 0.50):
-                for scale in (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40):
+                for scale in scale_candidates:
                     candidate_count += 1
                     candidate = candidate_transform(best_transform=transform, delta=np.array([dx, 0.0, dz]), yaw=yaw, scale=scale)
                     candidate, _delta = snap_transform_to_support_bounds(source_bounds, candidate, support_y)
                     projected = projected_transform_bbox(source_bounds, candidate, coordinate_contract)
                     if projected is None:
                         continue
-                    loss = bbox_projection_loss(projected, target_bbox) + support_penalty(source_bounds, candidate, support_y) + abs(float(np.log(scale))) * 0.08
+                    bbox_loss = bbox_projection_loss(projected, target_bbox)
+                    support_loss = support_penalty(source_bounds, candidate, support_y)
+                    scale_loss = abs(float(np.log(scale))) * 0.08
+                    vggt_loss = vggt_candidate_transform_loss(vggt_fit, source_bounds, candidate)
+                    loss = objective_transform_loss(
+                        bbox_loss=bbox_loss,
+                        support_loss=support_loss,
+                        scale_loss=scale_loss,
+                        vggt_loss=vggt_loss.get("loss"),
+                        vggt_loss_weight=vggt_loss_weight,
+                    )
                     quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
                     if loss < best_candidate_loss:
                         best_candidate_loss = loss
+                        best_candidate_bbox_loss = bbox_loss
+                        best_candidate_vggt = vggt_loss
                         best_candidate_transform = candidate
                         best_candidate_bbox = projected
                         best_candidate_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -580,6 +719,8 @@ def optimize_transform_to_input(
                         accepted_candidate_count += 1
                         if loss < best_accepted_loss:
                             best_accepted_loss = loss
+                            best_accepted_bbox_loss = bbox_loss
+                            best_accepted_vggt = vggt_loss
                             best_accepted_transform = candidate
                             best_accepted_bbox = projected
                             best_accepted_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -590,22 +731,38 @@ def optimize_transform_to_input(
     final_transform = best_accepted_transform if accepted else np.asarray(transform, dtype=np.float64)
     final_bbox = best_accepted_bbox if accepted else initial_bbox
     final_loss = best_accepted_loss if accepted else initial_loss
+    final_bbox_loss = best_accepted_bbox_loss if accepted else initial_bbox_loss
+    final_vggt = best_accepted_vggt if accepted else initial_vggt
     final_quality = best_accepted_quality if accepted else initial_quality
     base_report.update(
         initial_loss=float(initial_loss),
         optimized_loss=float(final_loss),
         candidate_loss=float(best_candidate_loss),
+        initial_bbox_loss=float(initial_bbox_loss),
+        optimized_bbox_loss=float(final_bbox_loss),
+        candidate_bbox_loss=float(best_candidate_bbox_loss),
         optimized_projected_bbox_xyxy=final_bbox.tolist(),
         candidate_projected_bbox_xyxy=best_candidate_bbox.tolist(),
         delta_gltf=[float(value) for value in best_accepted_delta] if accepted else [0.0, 0.0, 0.0],
         yaw_delta_radians=float(best_accepted_yaw) if accepted else 0.0,
         uniform_scale_delta=float(best_accepted_scale) if accepted else 1.0,
+        scale_candidates=[float(value) for value in scale_candidates],
+        minimum_scale_delta=float(scale_floor_report["minimum_scale_delta"]),
+        minimum_scale_reason=scale_floor_report["reason"],
+        target_height_ratio=scale_floor_report["target_height_ratio"],
         candidate_count=int(candidate_count),
         accepted_candidate_count=int(accepted_candidate_count),
         candidate_projection_quality=best_candidate_quality,
         candidate_uniform_scale_delta=float(best_candidate_scale),
         candidate_delta_gltf=[float(value) for value in best_candidate_delta],
         candidate_yaw_delta_radians=float(best_candidate_yaw),
+        vggt_candidate_fit=vggt_candidate_fit_report(
+            vggt_fit,
+            loss_weight=vggt_loss_weight,
+            initial=initial_vggt,
+            optimized=final_vggt,
+            candidate=best_candidate_vggt,
+        ),
         projection_quality=final_quality,
     )
     return {"transform": final_transform, "report": base_report}
@@ -625,6 +782,194 @@ def support_penalty(source_bounds: np.ndarray, transform: np.ndarray, support_y:
     transformed = transformed_bounds_from_source_bounds(source_bounds, transform)
     vertical_error = abs(float(transformed[0, 1]) - float(support_y))
     return float(vertical_error)
+
+
+def objective_transform_loss(
+    *,
+    bbox_loss: float,
+    support_loss: float,
+    scale_loss: float,
+    vggt_loss: Any,
+    vggt_loss_weight: float,
+) -> float:
+    total = float(bbox_loss) + float(support_loss) + float(scale_loss)
+    if vggt_loss is not None and vggt_loss_weight > 0:
+        total += float(vggt_loss) * float(vggt_loss_weight)
+    return float(total)
+
+
+def scale_candidates_for_target(
+    target_bbox: np.ndarray,
+    coordinate_contract: dict[str, Any] | None,
+) -> tuple[tuple[float, ...], dict[str, Any]]:
+    contract = coordinate_contract or {}
+    image_height = float(contract.get("image_height") or 0.0)
+    target_height = bbox_height(target_bbox) if target_bbox is not None else 0.0
+    target_height_ratio = float(target_height / image_height) if image_height > 0 else 0.0
+    minimum_scale = min(DEFAULT_UNIFORM_SCALE_CANDIDATES)
+    reason = "default"
+    if target_height_ratio >= LARGE_TARGET_HEIGHT_RATIO:
+        minimum_scale = LARGE_TARGET_MIN_UNIFORM_SCALE
+        reason = "large_image_target"
+    candidates = tuple(float(scale) for scale in DEFAULT_UNIFORM_SCALE_CANDIDATES if float(scale) >= minimum_scale)
+    if not candidates:
+        candidates = (float(minimum_scale),)
+    return candidates, {
+        "minimum_scale_delta": float(minimum_scale),
+        "reason": reason,
+        "target_height_ratio": target_height_ratio,
+    }
+
+
+def load_vggt_candidate_fit(placement: dict[str, Any]) -> dict[str, Any]:
+    points_path_value = placement.get("visible_points_scene_path")
+    if not points_path_value:
+        return unavailable_vggt_candidate_fit("missing_visible_points")
+    points_path = Path(str(points_path_value))
+    if not points_path.is_file():
+        return unavailable_vggt_candidate_fit("missing_visible_points_file", points_path=points_path)
+    try:
+        visible_points = np.load(points_path, allow_pickle=False)
+    except Exception:
+        return unavailable_vggt_candidate_fit("invalid_visible_points_file", points_path=points_path)
+    visible_points = np.asarray(visible_points, dtype=np.float64)
+    if visible_points.ndim != 2 or visible_points.shape[1] != 3:
+        return unavailable_vggt_candidate_fit("invalid_visible_points_shape", points_path=points_path)
+    visible_points = visible_points[np.isfinite(visible_points).all(axis=1)]
+    if len(visible_points) == 0:
+        return unavailable_vggt_candidate_fit("empty_visible_points", points_path=points_path)
+    visible_gltf = scene_points_to_gltf_points(sample_point_rows(visible_points, VGGT_CANDIDATE_POINT_SAMPLE_COUNT))
+    visible_bounds = np.stack([visible_gltf.min(axis=0), visible_gltf.max(axis=0)], axis=0)
+    visible_extent = visible_bounds[1] - visible_bounds[0]
+    visible_diag = max(float(np.linalg.norm(visible_extent)), 1e-6)
+    return {
+        "available": True,
+        "points_gltf": visible_gltf,
+        "bounds_gltf": visible_bounds,
+        "center_gltf": (visible_bounds[0] + visible_bounds[1]) / 2.0,
+        "extent_gltf": visible_extent,
+        "diagonal_gltf": visible_diag,
+        "report": {
+            "method": "visible_vggt_point_aabb_objective_v1",
+            "status": "accepted",
+            "reason": None,
+            "visible_points_scene_path": str(points_path),
+            "visible_point_sample_count": int(len(visible_gltf)),
+            "visible_bounds_gltf": visible_bounds.tolist(),
+        },
+    }
+
+
+def unavailable_vggt_candidate_fit(reason: str, *, points_path: Path | None = None) -> dict[str, Any]:
+    return {
+        "available": False,
+        "points_gltf": None,
+        "bounds_gltf": None,
+        "center_gltf": None,
+        "extent_gltf": None,
+        "diagonal_gltf": None,
+        "report": {
+            "method": "visible_vggt_point_aabb_objective_v1",
+            "status": "unavailable",
+            "reason": reason,
+            "visible_points_scene_path": str(points_path) if points_path is not None else None,
+            "visible_point_sample_count": 0,
+            "visible_bounds_gltf": None,
+        },
+    }
+
+
+def vggt_candidate_transform_loss(
+    fit: dict[str, Any],
+    source_bounds: np.ndarray,
+    transform: np.ndarray,
+) -> dict[str, Any]:
+    if not fit.get("available"):
+        return {
+            "status": "unavailable",
+            "reason": (fit.get("report") or {}).get("reason"),
+            "loss": None,
+            "center_loss": None,
+            "extent_loss": None,
+            "outside_median_loss": None,
+            "outside_p90_loss": None,
+            "candidate_bounds_gltf": None,
+        }
+    visible_points = np.asarray(fit["points_gltf"], dtype=np.float64)
+    candidate_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    visible_center = np.asarray(fit["center_gltf"], dtype=np.float64)
+    visible_extent = np.asarray(fit["extent_gltf"], dtype=np.float64)
+    diagonal = max(float(fit["diagonal_gltf"]), 1e-6)
+    candidate_center = (candidate_bounds[0] + candidate_bounds[1]) / 2.0
+    candidate_extent = np.maximum(candidate_bounds[1] - candidate_bounds[0], 1e-6)
+    center_loss = float(np.linalg.norm(candidate_center - visible_center) / diagonal)
+    active_axes = visible_extent > max(diagonal * 0.025, 1e-5)
+    if bool(np.any(active_axes)):
+        extent_loss = float(np.mean(np.abs(np.log(candidate_extent[active_axes] / np.maximum(visible_extent[active_axes], 1e-6)))))
+    else:
+        extent_loss = 0.0
+    outside_distances = point_aabb_outside_distances(visible_points, candidate_bounds)
+    outside_median = float(np.median(outside_distances) / diagonal)
+    outside_p90 = float(np.percentile(outside_distances, 90.0) / diagonal)
+    loss = 0.35 * center_loss + 0.25 * extent_loss + 0.40 * outside_p90
+    return {
+        "status": "accepted",
+        "reason": None,
+        "loss": float(loss),
+        "center_loss": center_loss,
+        "extent_loss": extent_loss,
+        "outside_median_loss": outside_median,
+        "outside_p90_loss": outside_p90,
+        "candidate_bounds_gltf": candidate_bounds.tolist(),
+    }
+
+
+def vggt_candidate_fit_report(
+    fit: dict[str, Any],
+    *,
+    loss_weight: float,
+    initial: dict[str, Any],
+    optimized: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    report = dict(fit.get("report") or unavailable_vggt_candidate_fit("missing_report")["report"])
+    report["loss_weight"] = float(loss_weight)
+    report["initial"] = vggt_candidate_loss_summary(initial)
+    report["optimized"] = vggt_candidate_loss_summary(optimized)
+    report["candidate"] = vggt_candidate_loss_summary(candidate)
+    return report
+
+
+def vggt_candidate_loss_summary(loss: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "status",
+        "reason",
+        "loss",
+        "center_loss",
+        "extent_loss",
+        "outside_median_loss",
+        "outside_p90_loss",
+        "candidate_bounds_gltf",
+    )
+    return {key: loss.get(key) for key in keys}
+
+
+def point_aabb_outside_distances(points: np.ndarray, bounds: np.ndarray) -> np.ndarray:
+    lower = np.maximum(bounds[0] - points, 0.0)
+    upper = np.maximum(points - bounds[1], 0.0)
+    offsets = np.maximum(lower, upper)
+    return np.sqrt(np.sum(offsets * offsets, axis=1))
+
+
+def sample_point_rows(values: np.ndarray, max_count: int) -> np.ndarray:
+    if len(values) <= max_count:
+        return np.asarray(values, dtype=np.float64)
+    indices = np.linspace(0, len(values) - 1, max_count, dtype=np.int64)
+    return np.asarray(values[indices], dtype=np.float64)
+
+
+def scene_points_to_gltf_points(points: np.ndarray) -> np.ndarray:
+    return np.asarray([[x, z, -y] for x, y, z in points], dtype=np.float64)
 
 
 def projected_transform_bbox(
@@ -868,8 +1213,6 @@ def object_support_targets(
     placement_orientation: str,
     object_scale_factor: float,
     floor_y: float | None,
-    spacing_targets: dict[int, dict[str, Any]],
-    orientation_targets: dict[int, dict[str, Any]],
 ) -> dict[int, dict[str, Any]]:
     if floor_y is None:
         return {}
@@ -891,15 +1234,18 @@ def object_support_targets(
         transform = placement_transform_to_gltf(
             placement,
             placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
+            object_scale_factor=object_scale_factor,
         )
-        transform = apply_spacing_target(transform, spacing_targets.get(detection_id))
-        transform = apply_orientation_target(transform, orientation_targets.get(detection_id))
         support_kind = "floor"
         support_detection_id = None
         support_y = float(floor_y)
         if is_table_support_label(label):
-            snapped, _delta = snap_transform_to_support(mesh_path, transform, floor_y)
+            snapped, _delta = snap_transform_to_support(
+                mesh_path,
+                transform,
+                floor_y,
+                contact_quantile=support_contact_quantile("floor"),
+            )
             table_bounds = transformed_mesh_bounds(mesh_path, snapped)
             table_candidates.append(
                 {
@@ -934,138 +1280,6 @@ def object_support_targets(
     return targets
 
 
-def object_orientation_targets(
-    placements: list[dict[str, Any]],
-    *,
-    placement_orientation: str,
-    object_scale_factor: float,
-    spacing_targets: dict[int, dict[str, Any]],
-) -> dict[int, dict[str, Any]]:
-    table_centers: list[np.ndarray] = []
-    for placement in placements:
-        if not placement_is_composable(placement, include_review=False):
-            continue
-        label = str(placement.get("detector_label") or "")
-        if not is_table_support_label(label):
-            continue
-        transform = placement_transform_to_gltf(
-            placement,
-            placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
-        )
-        table_centers.append(np.asarray(transform[:3, 3], dtype=np.float64))
-    if not table_centers:
-        return {}
-    table_center = np.mean(table_centers, axis=0)
-
-    targets: dict[int, dict[str, Any]] = {}
-    for placement in placements:
-        if not placement_is_composable(placement, include_review=False):
-            continue
-        detection_id = int(placement.get("detection_id", 0))
-        label = str(placement.get("detector_label") or "")
-        if not should_orient_toward_support(label):
-            continue
-        transform = placement_transform_to_gltf(
-            placement,
-            placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
-        )
-        transform = apply_spacing_target(transform, spacing_targets.get(detection_id))
-        direction = table_center - np.asarray(transform[:3, 3], dtype=np.float64)
-        direction[1] = 0.0
-        length = float(np.linalg.norm(direction))
-        if length <= 1e-8:
-            continue
-        direction = direction / length
-        yaw = yaw_from_front_axis(direction, semantic_front_axis(label))
-        targets[detection_id] = {
-            "orientation_kind": "face_nearest_table",
-            "reference": "table_center",
-            "front_axis_gltf": semantic_front_axis(label),
-            "yaw_radians": float(yaw),
-            "target_direction_gltf": [float(direction[0]), float(direction[1]), float(direction[2])],
-        }
-    return targets
-
-
-def object_spacing_targets(
-    placements: list[dict[str, Any]],
-    *,
-    placement_orientation: str,
-    object_scale_factor: float,
-) -> dict[int, dict[str, Any]]:
-    table_centers: list[np.ndarray] = []
-    for placement in placements:
-        if not placement_is_composable(placement, include_review=False):
-            continue
-        label = str(placement.get("detector_label") or "")
-        if not is_table_support_label(label):
-            continue
-        transform = placement_transform_to_gltf(
-            placement,
-            placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
-        )
-        table_centers.append(np.asarray(transform[:3, 3], dtype=np.float64))
-    if not table_centers:
-        return {}
-    table_center = np.mean(table_centers, axis=0)
-
-    targets: dict[int, dict[str, Any]] = {}
-    for placement in placements:
-        if not placement_is_composable(placement, include_review=False):
-            continue
-        detection_id = int(placement.get("detection_id", 0))
-        label = str(placement.get("detector_label") or "")
-        offset = floor_object_spacing_offset(label)
-        if offset <= 0.0:
-            continue
-        transform = placement_transform_to_gltf(
-            placement,
-            placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
-        )
-        direction = np.asarray(transform[:3, 3], dtype=np.float64) - table_center
-        direction[1] = 0.0
-        length = float(np.linalg.norm(direction))
-        if length <= 1e-8:
-            continue
-        delta = direction / length * offset
-        targets[detection_id] = {
-            "spacing_kind": "push_away_from_table",
-            "reference": "table_center",
-            "delta_gltf": [float(delta[0]), float(delta[1]), float(delta[2])],
-        }
-    return targets
-
-
-def apply_spacing_target(transform: np.ndarray, spacing_target: dict[str, Any] | None) -> np.ndarray:
-    if not spacing_target:
-        return transform
-    delta = np.asarray(spacing_target.get("delta_gltf", [0.0, 0.0, 0.0]), dtype=np.float64)
-    if delta.shape != (3,) or not np.isfinite(delta).all():
-        return transform
-    adjusted = np.asarray(transform, dtype=np.float64).copy()
-    adjusted[:3, 3] += delta
-    return adjusted
-
-
-def apply_orientation_target(transform: np.ndarray, orientation_target: dict[str, Any] | None) -> np.ndarray:
-    if not orientation_target:
-        return transform
-    try:
-        yaw = float(orientation_target.get("yaw_radians", 0.0))
-    except (TypeError, ValueError):
-        return transform
-    if not np.isfinite(yaw):
-        return transform
-    rotation = yaw_rotation_gltf(yaw)
-    adjusted = np.asarray(transform, dtype=np.float64).copy()
-    adjusted[:3, :3] = rotation @ adjusted[:3, :3]
-    return adjusted
-
-
 def yaw_rotation_gltf(yaw: float) -> np.ndarray:
     cos_value = float(np.cos(yaw))
     sin_value = float(np.sin(yaw))
@@ -1077,54 +1291,6 @@ def yaw_rotation_gltf(yaw: float) -> np.ndarray:
         ],
         dtype=np.float64,
     )
-
-
-def yaw_from_front_axis(direction: np.ndarray, front_axis: str) -> float:
-    direction = np.asarray(direction, dtype=np.float64)
-    if front_axis == "-Z":
-        direction = -direction
-    return float(np.arctan2(direction[0], direction[2]))
-
-
-def should_orient_toward_support(label: str) -> bool:
-    normalized = label.lower()
-    return any(token in normalized for token in ORIENT_TOWARD_SUPPORT_LABELS)
-
-
-def semantic_front_axis(label: str) -> str:
-    normalized = label.lower()
-    for token, axis in SEMANTIC_FRONT_AXIS_GLTF.items():
-        if token in normalized:
-            return axis
-    return "+Z"
-
-
-def should_flatten_floor_contact(label: str, support_kind: str | None) -> bool:
-    return support_kind == "floor" and is_table_support_label(label)
-
-
-def label_scale_factors_report() -> dict[str, float]:
-    return {label: float(scale) for label, scale in LABEL_SCALE_FACTORS}
-
-
-def effective_object_scale_factor(label: str, object_scale_factor: float) -> float:
-    return float(object_scale_factor) * label_scale_factor(label)
-
-
-def label_scale_factor(label: str) -> float:
-    normalized = label.lower()
-    for token, factor in LABEL_SCALE_FACTORS:
-        if token in normalized:
-            return float(factor)
-    return 1.0
-
-
-def floor_object_spacing_offset(label: str) -> float:
-    normalized = label.lower()
-    for token, offset in FLOOR_OBJECT_SPACING_OFFSETS:
-        if token in normalized:
-            return float(offset)
-    return 0.0
 
 
 def object_dir_id_for_placement(placement: dict[str, Any]) -> int:
@@ -1233,6 +1399,13 @@ def infer_source_image_path(geometry: dict[str, Any]) -> Path | None:
             if image_path:
                 return Path(str(image_path))
     return None
+
+
+def room_corner_plane_texture_path(background_vggt_dir: Path | None) -> Path | None:
+    if background_vggt_dir is None:
+        return None
+    candidate = background_vggt_dir / "empty_room.png"
+    return candidate if candidate.is_file() else None
 
 
 def add_vggt_background_mesh(
@@ -1362,9 +1535,20 @@ def snap_transform_to_floor(mesh_path: Path, transform: np.ndarray, floor_y: flo
     return snap_transform_to_support(mesh_path, transform, floor_y)
 
 
-def snap_transform_to_support(mesh_path: Path, transform: np.ndarray, support_y: float) -> tuple[np.ndarray, float]:
-    source_bounds = combined_bounds(load_meshes(mesh_path))
-    return snap_transform_to_support_bounds(source_bounds, transform, support_y)
+def snap_transform_to_support(
+    mesh_path: Path,
+    transform: np.ndarray,
+    support_y: float,
+    *,
+    contact_quantile: float = FLOOR_SUPPORT_CONTACT_QUANTILE,
+) -> tuple[np.ndarray, float]:
+    meshes = load_meshes(mesh_path)
+    source_bounds = combined_bounds(meshes)
+    contact_y = transformed_mesh_contact_y(meshes, source_bounds, transform, contact_quantile=contact_quantile)
+    delta = float(support_y - contact_y)
+    snapped = np.asarray(transform, dtype=np.float64).copy()
+    snapped[1, 3] += delta
+    return snapped, delta
 
 
 def snap_transform_to_support_bounds(source_bounds: np.ndarray, transform: np.ndarray, support_y: float) -> tuple[np.ndarray, float]:
@@ -1373,6 +1557,29 @@ def snap_transform_to_support_bounds(source_bounds: np.ndarray, transform: np.nd
     snapped = np.asarray(transform, dtype=np.float64).copy()
     snapped[1, 3] += delta
     return snapped, delta
+
+
+def transformed_mesh_contact_y(
+    meshes: list[Any],
+    source_bounds: np.ndarray,
+    transform: np.ndarray,
+    *,
+    contact_quantile: float,
+) -> float:
+    asset_transform = np.asarray(transform, dtype=np.float64) @ normalization_transform(source_bounds)
+    vertices: list[np.ndarray] = []
+    for mesh in meshes:
+        mesh_vertices = np.asarray(mesh.vertices, dtype=np.float64)
+        if mesh_vertices.ndim == 2 and mesh_vertices.shape[1] == 3 and len(mesh_vertices) > 0:
+            vertices.append(transform_points(mesh_vertices, asset_transform))
+    if not vertices:
+        return float(transformed_bounds_from_source_bounds(source_bounds, transform)[0, 1])
+    y_values = np.concatenate(vertices, axis=0)[:, 1]
+    y_values = y_values[np.isfinite(y_values)]
+    if len(y_values) == 0:
+        return float(transformed_bounds_from_source_bounds(source_bounds, transform)[0, 1])
+    quantile = float(np.clip(contact_quantile, 0.0, 100.0))
+    return float(np.percentile(y_values, quantile))
 
 
 def transformed_mesh_bounds(mesh_path: Path, transform: np.ndarray) -> np.ndarray:
@@ -1404,6 +1611,9 @@ def add_room_corner_background(
     placement_bounds: np.ndarray,
     margin: float,
     depth_offset: float,
+    texture_image_path: Path | None = None,
+    coordinate_contract: dict[str, Any] | None = None,
+    texture_grid_steps: int = 36,
 ) -> dict[str, Any]:
     try:
         import trimesh
@@ -1429,6 +1639,10 @@ def add_room_corner_background(
         )
     )
     side_x = x_max
+
+    texture_image = Image.open(texture_image_path).convert("RGB") if texture_image_path is not None else None
+    texture_contract = room_corner_texture_contract(texture_image, coordinate_contract)
+    texture_rgb = np.asarray(texture_image, dtype=np.uint8) if texture_image is not None else None
 
     specs = [
         (
@@ -1475,23 +1689,43 @@ def add_room_corner_background(
     total_vertices = 0
     total_faces = 0
     for name, vertices, color in specs:
-        faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
-        colors = np.tile(np.asarray(color, dtype=np.uint8), (len(vertices), 1))
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=colors, process=False)
-        rgb = [float(value) / 255.0 for value in color[:3]]
-        mesh.visual = TextureVisuals(
-            material=PBRMaterial(
-                name=f"{name}_mat",
-                baseColorFactor=[rgb[0], rgb[1], rgb[2], 1.0],
-                emissiveFactor=[rgb[0] * 0.35, rgb[1] * 0.35, rgb[2] * 0.35],
-                roughnessFactor=0.9,
-                metallicFactor=0.0,
-                doubleSided=True,
-            )
+        vertices_out, faces, colors, uvs = room_corner_plane_geometry(
+            vertices=vertices,
+            fallback_color=color,
+            texture_rgb=texture_rgb,
+            coordinate_contract=texture_contract,
+            grid_steps=texture_grid_steps if texture_image is not None else 1,
         )
+        mesh = trimesh.Trimesh(vertices=vertices_out, faces=faces, vertex_colors=colors, process=False)
+        rgb = [float(value) / 255.0 for value in color[:3]]
+        if texture_image is not None:
+            mesh.visual = TextureVisuals(
+                uv=uvs,
+                material=PBRMaterial(
+                    name=f"{name}_projected_empty_room_mat",
+                    baseColorTexture=texture_image.copy(),
+                    baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+                    emissiveTexture=texture_image.copy(),
+                    emissiveFactor=[0.25, 0.25, 0.25],
+                    roughnessFactor=0.9,
+                    metallicFactor=0.0,
+                    doubleSided=True,
+                ),
+            )
+        else:
+            mesh.visual = TextureVisuals(
+                material=PBRMaterial(
+                    name=f"{name}_mat",
+                    baseColorFactor=[rgb[0], rgb[1], rgb[2], 1.0],
+                    emissiveFactor=[rgb[0] * 0.35, rgb[1] * 0.35, rgb[2] * 0.35],
+                    roughnessFactor=0.9,
+                    metallicFactor=0.0,
+                    doubleSided=True,
+                )
+            )
         scene.add_geometry(mesh, geom_name=name, node_name=name)
         bounds.append(np.asarray(mesh.bounds, dtype=np.float64))
-        total_vertices += int(len(vertices))
+        total_vertices += int(len(vertices_out))
         total_faces += int(len(faces))
     merged = merge_bounds(bounds)
     return {
@@ -1504,11 +1738,114 @@ def add_room_corner_background(
         "transformed_bounds": merged.tolist(),
         "vertex_count": total_vertices,
         "face_count": total_faces,
+        "texture_source": "empty_room_image_camera_projected" if texture_image_path is not None else None,
+        "texture_image_path": str(texture_image_path) if texture_image_path is not None else None,
+        "texture_grid_steps": int(texture_grid_steps) if texture_image_path is not None else None,
+        "vertex_colors": "projected_empty_room_image_fallback" if texture_image_path is not None else "plane_fallback_color",
         "floor_y": floor_y,
         "wall_top_y": wall_top_y,
         "z_back": z_back,
         "z_front": z_front,
     }
+
+
+def room_corner_texture_contract(image: Image.Image | None, coordinate_contract: dict[str, Any] | None) -> dict[str, Any] | None:
+    if image is None:
+        return None
+    contract = dict(coordinate_contract or {})
+    contract["image_width"] = int(image.size[0])
+    contract["image_height"] = int(image.size[1])
+    contract.setdefault("fov_degrees", DEFAULT_FOV_DEGREES)
+    return contract
+
+
+def room_corner_plane_geometry(
+    *,
+    vertices: np.ndarray,
+    fallback_color: list[int],
+    texture_rgb: np.ndarray | None,
+    coordinate_contract: dict[str, Any] | None,
+    grid_steps: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    corners = np.asarray(vertices, dtype=np.float64)
+    steps = max(1, int(grid_steps))
+    out_vertices: list[np.ndarray] = []
+    colors: list[tuple[int, int, int, int]] = []
+    uvs: list[tuple[float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+    for row in range(steps + 1):
+        v = row / steps
+        left = corners[0] * (1.0 - v) + corners[3] * v
+        right = corners[1] * (1.0 - v) + corners[2] * v
+        for col in range(steps + 1):
+            u = col / steps
+            point = left * (1.0 - u) + right * u
+            out_vertices.append(point)
+            colors.append(room_corner_vertex_color(point, fallback_color, texture_rgb, coordinate_contract))
+            uvs.append(room_corner_vertex_uv(point, texture_rgb, coordinate_contract))
+
+    row_width = steps + 1
+    for row in range(steps):
+        for col in range(steps):
+            v00 = row * row_width + col
+            v10 = v00 + 1
+            v01 = (row + 1) * row_width + col
+            v11 = v01 + 1
+            faces.append((v00, v10, v11))
+            faces.append((v00, v11, v01))
+    return (
+        np.asarray(out_vertices, dtype=np.float32),
+        np.asarray(faces, dtype=np.int64),
+        np.asarray(colors, dtype=np.uint8),
+        np.asarray(uvs, dtype=np.float32),
+    )
+
+
+def room_corner_vertex_color(
+    point: np.ndarray,
+    fallback_color: list[int],
+    texture_rgb: np.ndarray | None,
+    coordinate_contract: dict[str, Any] | None,
+) -> tuple[int, int, int, int]:
+    color = np.asarray(fallback_color, dtype=np.float64)
+    pixel = room_corner_projected_pixel(point, texture_rgb, coordinate_contract)
+    if pixel is not None and texture_rgb is not None:
+        x, y = pixel
+        color[:3] = np.asarray(texture_rgb[y, x], dtype=np.float64)
+    return tuple(int(np.clip(value, 0, 255)) for value in color)
+
+
+def room_corner_vertex_uv(
+    point: np.ndarray,
+    texture_rgb: np.ndarray | None,
+    coordinate_contract: dict[str, Any] | None,
+) -> tuple[float, float]:
+    pixel = room_corner_projected_pixel(point, texture_rgb, coordinate_contract)
+    if pixel is None or texture_rgb is None:
+        return (0.0, 0.0)
+    x, y = pixel
+    u = x / max(texture_rgb.shape[1] - 1, 1)
+    v = 1.0 - y / max(texture_rgb.shape[0] - 1, 1)
+    return (float(np.clip(u, 0.0, 1.0)), float(np.clip(v, 0.0, 1.0)))
+
+
+def room_corner_projected_pixel(
+    point: np.ndarray,
+    texture_rgb: np.ndarray | None,
+    coordinate_contract: dict[str, Any] | None,
+) -> tuple[int, int] | None:
+    if texture_rgb is None:
+        return None
+    projected = project_gltf_point_to_pixel(point, coordinate_contract)
+    if projected is None:
+        return None
+    x, y = projected
+    if not np.isfinite([x, y]).all():
+        return None
+    return (
+        int(np.clip(round(x), 0, texture_rgb.shape[1] - 1)),
+        int(np.clip(round(y), 0, texture_rgb.shape[0] - 1)),
+    )
 
 
 def placement_transform_to_gltf(
@@ -1600,22 +1937,16 @@ def placement_bounds_gltf(
     *,
     placement_orientation: str,
     object_scale_factor: float,
-    spacing_targets: dict[int, dict[str, Any]] | None = None,
-    orientation_targets: dict[int, dict[str, Any]] | None = None,
 ) -> np.ndarray | None:
     bounds: list[np.ndarray] = []
     for placement in placements:
         if not placement_is_composable(placement, include_review=False):
             continue
-        detection_id = int(placement.get("detection_id", 0))
-        label = str(placement.get("detector_label") or "")
         transform = placement_transform_to_gltf(
             placement,
             placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
+            object_scale_factor=object_scale_factor,
         )
-        transform = apply_spacing_target(transform, (spacing_targets or {}).get(detection_id))
-        transform = apply_orientation_target(transform, (orientation_targets or {}).get(detection_id))
         corners = unit_box_corners()
         transformed = transform_points(corners, transform)
         bounds.append(np.stack([transformed.min(axis=0), transformed.max(axis=0)], axis=0))
@@ -1680,7 +2011,6 @@ def add_scene_asset(
     name_prefix: str,
     transform: np.ndarray | None = None,
     normalize: bool = True,
-    floor_contact_flatten: bool = False,
 ) -> dict[str, Any]:
     meshes = load_meshes(path)
     if not meshes:
@@ -1693,12 +2023,9 @@ def add_scene_asset(
     else:
         asset_transform = np.eye(4)
     transformed_bounds: list[np.ndarray] = []
-    cleanup_reports: list[dict[str, Any]] = []
     for index, mesh in enumerate(meshes):
         mesh = mesh.copy()
         mesh.apply_transform(asset_transform)
-        if floor_contact_flatten:
-            cleanup_reports.append(flatten_floor_contact(mesh))
         transformed_bounds.append(np.asarray(mesh.bounds, dtype=np.float64))
         scene.add_geometry(mesh, geom_name=f"{name_prefix}_{index:03d}", node_name=f"{name_prefix}_{index:03d}")
     return {
@@ -1707,44 +2034,7 @@ def add_scene_asset(
         "source_bounds": source_bounds.tolist(),
         "transform_gltf": asset_transform.tolist(),
         "transformed_bounds": merge_bounds(transformed_bounds).tolist(),
-        "mesh_cleanup": {
-            "floor_contact_flatten": cleanup_reports,
-        }
-        if cleanup_reports
-        else None,
-    }
-
-
-def flatten_floor_contact(mesh: Any) -> dict[str, Any]:
-    vertices = np.asarray(mesh.vertices, dtype=np.float64).copy()
-    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
-        return {"status": "skipped", "reason": "empty_vertices"}
-    y_values = vertices[:, 1]
-    floor_y = float(y_values.min())
-    extent_y = float(y_values.max() - y_values.min())
-    if extent_y <= 1e-8:
-        return {"status": "skipped", "reason": "degenerate_y_extent"}
-    threshold = float(np.percentile(y_values, FLOOR_CONTACT_FLATTEN_QUANTILE))
-    mask = y_values < threshold
-    clamped_count = int(mask.sum())
-    if clamped_count == 0:
-        return {
-            "status": "skipped",
-            "reason": "no_vertices_below_quantile",
-            "axis": "gltf_y",
-            "quantile": FLOOR_CONTACT_FLATTEN_QUANTILE,
-            "threshold_y": threshold,
-        }
-    vertices[mask, 1] = floor_y
-    mesh.vertices = vertices
-    return {
-        "status": "applied",
-        "method": "floor_contact_quantile_flatten",
-        "axis": "gltf_y",
-        "quantile": FLOOR_CONTACT_FLATTEN_QUANTILE,
-        "floor_y": floor_y,
-        "threshold_y": threshold,
-        "clamped_vertex_count": clamped_count,
+        "mesh_cleanup": None,
     }
 
 

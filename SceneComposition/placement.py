@@ -17,7 +17,6 @@ from SceneComposition.composer import (
     bbox_overlap_area,
     bounds_array,
     combined_bounds,
-    effective_object_scale_factor,
     index_object_dirs,
     is_table_support_label,
     is_tabletop_object_label,
@@ -465,7 +464,7 @@ def fit_placement_for_target(
         transform = placement_transform_to_gltf(
             placement,
             placement_orientation=placement_orientation,
-            object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
+            object_scale_factor=object_scale_factor,
         )
         support_y = support.get("support_y_gltf")
         support_target = None
@@ -526,7 +525,7 @@ def fit_placement_for_target(
             or collision_status == "rejected"
         )
         losses = placement_losses(
-            bbox_loss=optimization["report"].get("optimized_loss"),
+            bbox_loss=optimization["report"].get("optimized_bbox_loss", optimization["report"].get("optimized_loss")),
             silhouette_loss=silhouette_loss,
             vggt_point_loss=vggt_points.get("loss"),
             support_contact=support_contact_loss,
@@ -850,7 +849,7 @@ def build_table_support_candidates(
             transform = placement_transform_to_gltf(
                 placement,
                 placement_orientation=placement_orientation,
-                object_scale_factor=effective_object_scale_factor(label, object_scale_factor),
+                object_scale_factor=object_scale_factor,
             )
             transform, _delta = snap_transform_to_support_bounds(source_bounds, transform, floor_y_gltf)
             bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
@@ -1089,6 +1088,7 @@ def placement_record_from_target(target: dict[str, Any]) -> dict[str, Any]:
         "extent_xyz": geometry.get("extent_xyz"),
         "rotation_matrix": geometry.get("rotation_matrix"),
         "needs_review": target.get("needs_review"),
+        "visible_points_scene_path": target.get("visible_points_scene_path"),
     }
 
 
