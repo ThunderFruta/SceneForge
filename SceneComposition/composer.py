@@ -45,6 +45,10 @@ MAX_EVIDENCE_SCALE_CANDIDATE = 3.0
 DEFAULT_UNIFORM_SCALE_CANDIDATES = (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40)
 DEFAULT_TRANSLATION_X_CANDIDATES = (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16)
 DEFAULT_TRANSLATION_Z_CANDIDATES = (-0.56, -0.44, -0.32, -0.24, -0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16)
+PROJECTION_TRANSLATION_STEP_RATIO = 0.16
+PROJECTION_TRANSLATION_MIN_STEP = 0.04
+PROJECTION_TRANSLATION_MAX_STEP = 0.12
+PROJECTION_TRANSLATION_NEIGHBORS = (1.0,)
 DEFAULT_YAW_CANDIDATES = (
     -float(np.pi),
     -float(np.pi) * 0.75,
@@ -846,6 +850,7 @@ def optimize_transform_to_input(
         transform,
         avoidance,
     )
+    projection_translation_report = unavailable_projection_translation_report("refinement_not_run")
     for dx in dx_candidates:
         for dz in dz_candidates:
             for yaw in yaw_candidates:
@@ -933,6 +938,82 @@ def optimize_transform_to_input(
                             best_accepted_yaw = yaw
                             best_accepted_scale = scale
                             best_accepted_quality = quality
+    if np.isfinite(best_accepted_loss):
+        refinement_dx, refinement_dz, projection_translation_report = translation_candidates_for_projection_residual(
+            source_bounds=source_bounds,
+            projection_vertices=projection_vertices,
+            transform=best_accepted_transform,
+            target_bbox=target_bbox,
+            coordinate_contract=coordinate_contract,
+            support_y=support_y,
+            pivot_local=support_pivot.get("pivot_local"),
+        )
+        if refinement_dx and refinement_dz:
+            refinement_delta = np.array([float(refinement_dx[0]), 0.0, float(refinement_dz[0])], dtype=np.float64)
+            refined = candidate_transform(
+                best_transform=best_accepted_transform,
+                delta=refinement_delta,
+                yaw=0.0,
+                scale=1.0,
+                pivot_local=support_pivot.get("pivot_local"),
+            )
+            refined, _delta = snap_transform_to_support_bounds(source_bounds, refined, support_y)
+            projected = projected_mesh_sample_bbox(projection_vertices, source_bounds, refined, coordinate_contract)
+            if projected is None:
+                projected = projected_transform_bbox(source_bounds, refined, coordinate_contract)
+            if projected is not None:
+                bbox_loss = bbox_projection_loss(projected, target_bbox)
+                support_loss = support_penalty(source_bounds, refined, support_y)
+                scale_loss = abs(float(np.log(best_accepted_scale))) * 0.08
+                vggt_loss = vggt_candidate_transform_loss(vggt_fit, source_bounds, refined)
+                yaw_loss = yaw_prior_loss(yaw_prior, transform_yaw_gltf(refined))
+                facing_loss = facing_prior_loss(facing_prior, refined)
+                size_loss = physical_size_prior_loss(size_prior, source_bounds, refined)
+                avoidance_loss = object_avoidance_prior_loss(avoidance, source_bounds, refined)
+                quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
+                if size_loss is None or float(size_loss) <= PHYSICAL_SIZE_PRIOR_CANDIDATE_REJECT_LOSS:
+                    loss = objective_transform_loss(
+                        bbox_loss=bbox_loss,
+                        support_loss=support_loss,
+                        scale_loss=scale_loss,
+                        vggt_loss=vggt_loss.get("loss"),
+                        vggt_loss_weight=vggt_loss_weight,
+                        yaw_prior_loss=yaw_loss,
+                        facing_prior_loss=facing_loss,
+                        physical_size_prior_loss=size_loss,
+                        object_avoidance_prior_loss=avoidance_loss,
+                    )
+                    if quality.get("status") != "rejected":
+                        total_delta = best_accepted_delta + refinement_delta
+                        keep_mask_candidate(
+                            candidate_pool,
+                            transform=refined,
+                            bbox=projected,
+                            loss=loss,
+                            bbox_loss=bbox_loss,
+                            vggt=vggt_loss,
+                            yaw_prior_loss=yaw_loss,
+                            facing_prior_loss=facing_loss,
+                            physical_size_prior_loss=size_loss,
+                            object_avoidance_prior_loss=avoidance_loss,
+                            delta=total_delta,
+                            yaw=best_accepted_yaw,
+                            scale=best_accepted_scale,
+                            quality=quality,
+                        )
+                        if loss < best_accepted_loss:
+                            accepted_candidate_count += 1
+                            best_accepted_loss = loss
+                            best_accepted_bbox_loss = bbox_loss
+                            best_accepted_vggt = vggt_loss
+                            best_accepted_yaw_prior_loss = yaw_loss
+                            best_accepted_facing_prior_loss = facing_loss
+                            best_accepted_size_prior_loss = size_loss
+                            best_accepted_avoidance_loss = avoidance_loss
+                            best_accepted_transform = refined
+                            best_accepted_bbox = projected
+                            best_accepted_delta = total_delta
+                            best_accepted_quality = quality
     accepted = np.isfinite(best_accepted_loss)
     final_transform = best_accepted_transform if accepted else np.asarray(transform, dtype=np.float64)
     final_bbox = best_accepted_bbox if accepted else initial_bbox
@@ -972,6 +1053,95 @@ def optimize_transform_to_input(
             final_mask = selected_mask_candidate["mask"]
         elif mask_report.get("status") == "unavailable":
             final_mask = initial_mask
+        post_dx, post_dz, post_projection_translation_report = translation_candidates_for_projection_residual(
+            source_bounds=source_bounds,
+            projection_vertices=projection_vertices,
+            transform=final_transform,
+            target_bbox=target_bbox,
+            coordinate_contract=coordinate_contract,
+            support_y=support_y,
+            pivot_local=support_pivot.get("pivot_local"),
+        )
+        if post_dx and post_dz:
+            refinement_delta = np.array([float(post_dx[0]), 0.0, float(post_dz[0])], dtype=np.float64)
+            refined = candidate_transform(
+                best_transform=final_transform,
+                delta=refinement_delta,
+                yaw=0.0,
+                scale=1.0,
+                pivot_local=support_pivot.get("pivot_local"),
+            )
+            refined, _delta = snap_transform_to_support_bounds(source_bounds, refined, support_y)
+            projected = projected_mesh_sample_bbox(projection_vertices, source_bounds, refined, coordinate_contract)
+            if projected is None:
+                projected = projected_transform_bbox(source_bounds, refined, coordinate_contract)
+            if projected is not None:
+                bbox_loss = bbox_projection_loss(projected, target_bbox)
+                support_loss = support_penalty(source_bounds, refined, support_y)
+                scale_loss = abs(float(np.log(best_accepted_scale))) * 0.08
+                vggt_loss = vggt_candidate_transform_loss(vggt_fit, source_bounds, refined)
+                yaw_loss = yaw_prior_loss(yaw_prior, transform_yaw_gltf(refined))
+                facing_loss = facing_prior_loss(facing_prior, refined)
+                size_loss = physical_size_prior_loss(size_prior, source_bounds, refined)
+                avoidance_loss = object_avoidance_prior_loss(avoidance, source_bounds, refined)
+                quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
+                if quality.get("status") != "rejected" and (size_loss is None or float(size_loss) <= PHYSICAL_SIZE_PRIOR_CANDIDATE_REJECT_LOSS):
+                    objective_loss = objective_transform_loss(
+                        bbox_loss=bbox_loss,
+                        support_loss=support_loss,
+                        scale_loss=scale_loss,
+                        vggt_loss=vggt_loss.get("loss"),
+                        vggt_loss_weight=vggt_loss_weight,
+                        yaw_prior_loss=yaw_loss,
+                        facing_prior_loss=facing_loss,
+                        physical_size_prior_loss=size_loss,
+                        object_avoidance_prior_loss=avoidance_loss,
+                    )
+                    refined_mask = mask_candidate_transform_loss(
+                        mask_fit,
+                        meshes=meshes,
+                        source_bounds=source_bounds,
+                        transform=refined,
+                    )
+                    point_match = vggt_point_match_transform_loss(
+                        vggt_fit,
+                        meshes=meshes,
+                        source_bounds=source_bounds,
+                        transform=refined,
+                    )
+                    if refined_mask.get("status") == "accepted" and refined_mask.get("loss") is not None:
+                        combined_loss = float(objective_loss) + float(refined_mask["loss"]) * MASK_CANDIDATE_LOSS_WEIGHT
+                        if point_match.get("loss") is not None:
+                            combined_loss += float(point_match["loss"]) * VGGT_POINT_MATCH_LOSS_WEIGHT
+                        if combined_loss < final_loss:
+                            final_transform = refined
+                            final_bbox = projected
+                            final_loss = combined_loss
+                            final_bbox_loss = bbox_loss
+                            final_vggt = vggt_loss
+                            final_yaw_prior_loss = yaw_loss
+                            final_facing_prior_loss = facing_loss
+                            final_size_prior_loss = size_loss
+                            final_avoidance_loss = avoidance_loss
+                            final_quality = quality
+                            best_accepted_delta = best_accepted_delta + refinement_delta
+                            report = dict(refined_mask)
+                            report.update(
+                                status="accepted",
+                                candidate_count=len(candidate_pool),
+                                evaluated_count=None,
+                                selected_yaw=float(best_accepted_yaw),
+                                selected_scale=float(best_accepted_scale),
+                                base_loss=float(objective_loss),
+                                combined_loss=float(combined_loss),
+                                loss_weight=float(MASK_CANDIDATE_LOSS_WEIGHT),
+                                vggt_point_match=point_match,
+                                vggt_point_match_loss_weight=float(VGGT_POINT_MATCH_LOSS_WEIGHT if point_match.get("loss") is not None else 0.0),
+                                selected_projected_bbox_xyxy=projected.tolist(),
+                                fallback_reason=None,
+                            )
+                            final_mask = report
+                            projection_translation_report = post_projection_translation_report
     else:
         mask_report = unavailable_mask_candidate_report(
             mask_fit,
@@ -1021,6 +1191,7 @@ def optimize_transform_to_input(
             mask_loss=final_mask.get("loss"),
             support_pivot=support_pivot,
             translation_prior=translation_prior_report,
+            projection_translation_prior=projection_translation_report,
             fallback_reason=None if accepted else "no_projection_accepted_candidate",
         ),
         vggt_candidate_fit=vggt_candidate_fit_report(
@@ -1511,6 +1682,7 @@ def orientation_search_report(
     mask_loss: Any = None,
     support_pivot: dict[str, Any] | None = None,
     translation_prior: dict[str, Any] | None = None,
+    projection_translation_prior: dict[str, Any] | None = None,
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     scale_prior = abs(float(np.log(float(scale_delta)))) * 0.08 if scale_delta not in (None, 0) else 0.0
@@ -1536,6 +1708,7 @@ def orientation_search_report(
         },
         "support_pivot": support_pivot,
         "translation_prior": translation_prior,
+        "projection_translation_prior": projection_translation_prior,
         "fallback_reason": fallback_reason,
     }
 
@@ -2206,6 +2379,145 @@ def translation_candidates_for_avoidance(
     }
 
 
+def translation_candidates_for_projection_residual(
+    *,
+    source_bounds: np.ndarray,
+    projection_vertices: np.ndarray,
+    transform: np.ndarray,
+    target_bbox: np.ndarray,
+    coordinate_contract: dict[str, Any] | None,
+    support_y: float,
+    pivot_local: Any = None,
+) -> tuple[tuple[float, ...], tuple[float, ...], dict[str, Any]]:
+    base_bbox = projected_mesh_sample_bbox(projection_vertices, source_bounds, transform, coordinate_contract)
+    if base_bbox is None:
+        base_bbox = projected_transform_bbox(source_bounds, transform, coordinate_contract)
+    if base_bbox is None:
+        return (), (), unavailable_projection_translation_report("missing_base_projection")
+
+    candidate_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    extent = np.maximum(candidate_bounds[1] - candidate_bounds[0], 1e-8)
+    horizontal_extent = max(float(extent[0]), float(extent[2]), 1e-8)
+    step = float(np.clip(horizontal_extent * PROJECTION_TRANSLATION_STEP_RATIO, PROJECTION_TRANSLATION_MIN_STEP, PROJECTION_TRANSLATION_MAX_STEP))
+    base_center = bbox_center_2d(base_bbox)
+    target_center = bbox_center_2d(target_bbox)
+    residual = target_center - base_center
+    axes: list[tuple[str, np.ndarray, np.ndarray]] = []
+    for axis, delta in (
+        ("x", np.array([step, 0.0, 0.0], dtype=np.float64)),
+        ("z", np.array([0.0, 0.0, step], dtype=np.float64)),
+    ):
+        candidate = candidate_transform(
+            best_transform=transform,
+            delta=delta,
+            yaw=0.0,
+            scale=1.0,
+            pivot_local=pivot_local,
+        )
+        candidate, _snap_delta = snap_transform_to_support_bounds(source_bounds, candidate, support_y)
+        bbox = projected_mesh_sample_bbox(projection_vertices, source_bounds, candidate, coordinate_contract)
+        if bbox is None:
+            bbox = projected_transform_bbox(source_bounds, candidate, coordinate_contract)
+        if bbox is None:
+            continue
+        response = (bbox_center_2d(bbox) - base_center) / step
+        if np.isfinite(response).all() and float(np.linalg.norm(response)) > 1e-6:
+            axes.append((axis, delta, response))
+    if len(axes) < 2:
+        return (), (), unavailable_projection_translation_report(
+            "insufficient_projection_jacobian",
+            base_bbox=base_bbox,
+            residual=residual,
+        )
+
+    jacobian = np.column_stack([item[2] for item in axes])
+    try:
+        solution, *_unused = np.linalg.lstsq(jacobian, residual, rcond=None)
+    except np.linalg.LinAlgError:
+        return (), (), unavailable_projection_translation_report(
+            "singular_projection_jacobian",
+            base_bbox=base_bbox,
+            residual=residual,
+            jacobian=jacobian,
+        )
+    if solution.shape != (2,) or not np.isfinite(solution).all():
+        return (), (), unavailable_projection_translation_report(
+            "invalid_projection_translation_solution",
+            base_bbox=base_bbox,
+            residual=residual,
+            jacobian=jacobian,
+        )
+
+    max_delta = max(horizontal_extent * 2.5, step * 2.0)
+    if bool(np.any(np.abs(solution) > max_delta)):
+        return (), (), unavailable_projection_translation_report(
+            "projection_translation_solution_exceeds_local_window",
+            base_bbox=base_bbox,
+            residual=residual,
+            jacobian=jacobian,
+            solution=solution,
+            max_delta=max_delta,
+        )
+    clipped = np.clip(solution, -max_delta, max_delta)
+    dx_values: set[float] = set()
+    dz_values: set[float] = set()
+    added: list[dict[str, Any]] = []
+    for axis_index, (axis, _delta, _response) in enumerate(axes):
+        value = float(clipped[axis_index])
+        bucket = dx_values if axis == "x" else dz_values
+        for neighbor in PROJECTION_TRANSLATION_NEIGHBORS:
+            candidate_value = round(value * float(neighbor), 4)
+            if not np.isfinite(candidate_value) or abs(candidate_value) <= 1e-8:
+                continue
+            bucket.add(float(candidate_value))
+            added.append(
+                {
+                    "axis": axis,
+                    "delta": float(candidate_value),
+                    "reason": "projected_bbox_center_residual",
+                    "neighbor": float(neighbor),
+                }
+            )
+    return tuple(sorted(dx_values)), tuple(sorted(dz_values)), {
+        "method": "projected_bbox_residual_planar_translation_candidates_v1",
+        "status": "accepted",
+        "reason": None,
+        "step_gltf": step,
+        "base_projected_bbox_xyxy": base_bbox.tolist(),
+        "target_center_px": target_center.tolist(),
+        "base_center_px": base_center.tolist(),
+        "residual_px": residual.tolist(),
+        "jacobian_px_per_gltf": jacobian.tolist(),
+        "solution_delta_gltf": [float(value) for value in solution],
+        "clipped_delta_gltf": [float(value) for value in clipped],
+        "added_candidate_count": len(added),
+        "added_candidates": added,
+    }
+
+
+def unavailable_projection_translation_report(
+    reason: str,
+    *,
+    base_bbox: np.ndarray | None = None,
+    residual: np.ndarray | None = None,
+    jacobian: np.ndarray | None = None,
+    solution: np.ndarray | None = None,
+    max_delta: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "method": "projected_bbox_residual_planar_translation_candidates_v1",
+        "status": "unavailable",
+        "reason": reason,
+        "base_projected_bbox_xyxy": base_bbox.tolist() if base_bbox is not None else None,
+        "residual_px": residual.tolist() if residual is not None else None,
+        "jacobian_px_per_gltf": jacobian.tolist() if jacobian is not None else None,
+        "solution_delta_gltf": solution.tolist() if solution is not None else None,
+        "max_delta_gltf": float(max_delta) if max_delta is not None else None,
+        "added_candidate_count": 0,
+        "added_candidates": [],
+    }
+
+
 def mask_candidate_transform_loss(
     fit: dict[str, Any],
     *,
@@ -2497,8 +2809,8 @@ def project_gltf_point_to_pixel(point: np.ndarray, coordinate_contract: dict[str
 
 def bbox_projection_loss(projected: np.ndarray, target: np.ndarray) -> float:
     iou = bbox_iou(projected, target)
-    projected_center = np.array([(projected[0] + projected[2]) / 2.0, (projected[1] + projected[3]) / 2.0])
-    target_center = np.array([(target[0] + target[2]) / 2.0, (target[1] + target[3]) / 2.0])
+    projected_center = bbox_center_2d(projected)
+    target_center = bbox_center_2d(target)
     diagonal = max(float(np.linalg.norm([target[2] - target[0], target[3] - target[1]])), 1.0)
     center_loss = float(np.linalg.norm(projected_center - target_center) / diagonal)
     projected_area = max(float((projected[2] - projected[0]) * (projected[3] - projected[1])), 1.0)
@@ -2507,6 +2819,11 @@ def bbox_projection_loss(projected: np.ndarray, target: np.ndarray) -> float:
     target_height = max(float(target[3] - target[1]), 1.0)
     edge_loss = (abs(float(projected[1] - target[1])) + abs(float(projected[3] - target[3]))) / target_height
     return float((1.0 - iou) + 0.55 * center_loss + 0.35 * area_loss + 0.45 * edge_loss)
+
+
+def bbox_center_2d(bbox: np.ndarray) -> np.ndarray:
+    array = np.asarray(bbox, dtype=np.float64)
+    return np.array([(array[0] + array[2]) / 2.0, (array[1] + array[3]) / 2.0], dtype=np.float64)
 
 
 def projection_quality_report(
@@ -2557,7 +2874,7 @@ def projection_quality_report(
         and bottom_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO
         and horizontal_edge_ratio <= PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO
         and center_x_ratio <= PROJECTION_CENTER_REJECT_RATIO
-        and center_y_ratio <= PROJECTION_CENTER_Y_REJECT_RATIO
+        and center_y_ratio <= PROJECTION_CENTER_REJECT_RATIO
         and area_ratio <= PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO
     )
     area_error_ratio = abs(area_ratio - 1.0)

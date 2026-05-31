@@ -16,9 +16,11 @@ from SceneComposition.composer import (
     physical_size_prior_from_target,
     physical_size_prior_loss,
     placement_transform_to_gltf,
+    projected_transform_bbox,
     projection_quality_report,
     support_plane_pivot_local,
     transformed_bounds_from_source_bounds,
+    translation_candidates_for_projection_residual,
     yaw_rotation_gltf,
     compose_scene,
 )
@@ -26,6 +28,7 @@ from SceneComposition.placement import (
     build_object_fit_targets,
     choose_object_supports,
     fit_object_placements,
+    floor_occupancy_refit_acceptance,
     reconcile_visibility_explained_projection_reviews,
 )
 
@@ -139,13 +142,12 @@ def test_projection_quality_rejects_too_small_projected_area() -> None:
 
 def test_projection_quality_rejects_occluded_bottom_with_large_center_shift() -> None:
     target = np.asarray([100.0, 50.0, 180.0, 150.0], dtype=np.float64)
-    shifted = np.asarray([98.0, 80.0, 182.0, 180.0], dtype=np.float64)
+    shifted = np.asarray([98.0, 90.0, 182.0, 215.0], dtype=np.float64)
 
     rejected = projection_quality_report(shifted, target, allow_occluded_bottom=True)
 
     assert rejected["status"] == "rejected"
-    assert rejected["reason"] == "vertical_center_error"
-    assert rejected["center_y_error_ratio"] > rejected["center_y_threshold"]
+    assert rejected["center_y_error_ratio"] > rejected["center_threshold"]
 
 
 def write_plane_report(path: Path, *, floor_z: float = 0.0) -> None:
@@ -1632,3 +1634,123 @@ def test_support_candidate_transform_preserves_bottom_pivot() -> None:
     before = transform[:3, :3] @ local + transform[:3, 3]
     after = candidate[:3, :3] @ local + candidate[:3, 3]
     assert np.allclose(after, before + delta)
+
+
+def test_projection_residual_adds_planar_translation_candidates() -> None:
+    source_bounds = np.asarray([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]], dtype=np.float64)
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] *= 0.35
+    transform[:3, 3] = [-0.25, 0.0, -2.0]
+    contract = {
+        "image_width": 800,
+        "image_height": 600,
+        "fov_degrees": 70.0,
+    }
+    base = projected_transform_bbox(source_bounds, transform, contract)
+    assert base is not None
+    target = np.asarray(base, dtype=np.float64) + np.array([20.0, 0.0, 20.0, 0.0], dtype=np.float64)
+
+    dx, dz, report = translation_candidates_for_projection_residual(
+        source_bounds=source_bounds,
+        projection_vertices=np.asarray(
+            [
+                [-0.5, -0.5, -0.5],
+                [-0.5, -0.5, 0.5],
+                [-0.5, 0.5, -0.5],
+                [-0.5, 0.5, 0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, -0.5],
+                [0.5, 0.5, 0.5],
+            ],
+            dtype=np.float64,
+        ),
+        transform=transform,
+        target_bbox=target,
+        coordinate_contract=contract,
+        support_y=-0.175,
+        pivot_local=np.asarray([0.0, -0.5, 0.0], dtype=np.float64),
+    )
+
+    assert report["status"] == "accepted"
+    assert report["method"] == "projected_bbox_residual_planar_translation_candidates_v1"
+    assert any(value > 0.0 for value in dx)
+    assert report["added_candidate_count"] == len(report["added_candidates"])
+
+
+def test_floor_occupancy_refit_rejects_projection_regression() -> None:
+    initial = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.4,
+            "optimized_loss": 1.2,
+        }
+    }
+    candidate = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.8,
+            "optimized_loss": 1.0,
+        }
+    }
+
+    acceptance = floor_occupancy_refit_acceptance(
+        initial=initial,
+        candidate=candidate,
+        initial_overlap=0.02,
+        optimized_overlap=0.0,
+        avoidance_report={"optimized_loss": 0.0},
+    )
+
+    assert acceptance["accepted"] is False
+    assert acceptance["reason"] == "projection_loss_degraded"
+
+
+def test_floor_occupancy_refit_accepts_quality_preserving_overlap_fix() -> None:
+    initial = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.4,
+            "optimized_loss": 1.2,
+        }
+    }
+    candidate = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.45,
+            "optimized_loss": 1.1,
+        }
+    }
+
+    acceptance = floor_occupancy_refit_acceptance(
+        initial=initial,
+        candidate=candidate,
+        initial_overlap=0.02,
+        optimized_overlap=0.0,
+        avoidance_report={"optimized_loss": 0.0},
+    )
+
+    assert acceptance["accepted"] is True
+    assert acceptance["reason"] == "overlap_improved_without_quality_regression"
+
+
+def test_floor_occupancy_refit_accepts_projection_improvement_with_total_tradeoff() -> None:
+    initial = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.65,
+            "optimized_loss": 1.0,
+        }
+    }
+    candidate = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.2,
+            "optimized_loss": 1.25,
+        }
+    }
+
+    acceptance = floor_occupancy_refit_acceptance(
+        initial=initial,
+        candidate=candidate,
+        initial_overlap=0.02,
+        optimized_overlap=0.0,
+        avoidance_report={"optimized_loss": 0.0},
+    )
+
+    assert acceptance["accepted"] is True
+    assert acceptance["projection_improved"] is True

@@ -62,6 +62,8 @@ VGGT_POINT_SAMPLE_COUNT = 2048
 SILHOUETTE_FACE_SAMPLE_COUNT = 60000
 STRUCTURAL_FLOOR_SUPPORT_MIN_POINTS = 128
 STRUCTURAL_FLOOR_SUPPORT_BOUNDS_MARGIN_RATIO = 1.0
+OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE = 0.15
+OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE = 0.20
 
 
 def choose_object_supports(
@@ -979,7 +981,14 @@ def resolve_floor_occupancy_priors(
             continue
         optimized_overlap = total_bounds_overlap_volume(new_bounds, [entry["bounds_gltf"] for entry in avoid])
         avoidance_report = (record.get("render_to_input_optimization") or {}).get("object_avoidance_prior") or {}
-        if optimized_overlap >= initial_overlap - 1e-8 and float(avoidance_report.get("optimized_loss") or 0.0) > 1e-8:
+        acceptance = floor_occupancy_refit_acceptance(
+            initial=item,
+            candidate=record,
+            initial_overlap=initial_overlap,
+            optimized_overlap=optimized_overlap,
+            avoidance_report=avoidance_report,
+        )
+        if not acceptance["accepted"]:
             continue
         refreshed[index] = record
         by_id[detection_id] = record
@@ -990,6 +999,7 @@ def resolve_floor_occupancy_priors(
             "initial_overlap_volume_gltf": float(initial_overlap),
             "optimized_overlap_volume_gltf": float(optimized_overlap),
             "avoidance_prior": avoidance_report,
+            "acceptance": acceptance,
         }
     return refreshed, {
         "enabled": True,
@@ -999,6 +1009,90 @@ def resolve_floor_occupancy_priors(
         "refit_detection_ids": refit_ids,
         "refits": refit_reports,
     }
+
+
+def floor_occupancy_refit_acceptance(
+    *,
+    initial: dict[str, Any],
+    candidate: dict[str, Any],
+    initial_overlap: float,
+    optimized_overlap: float,
+    avoidance_report: dict[str, Any],
+) -> dict[str, Any]:
+    if optimized_overlap >= initial_overlap - 1e-8 and float(avoidance_report.get("optimized_loss") or 0.0) > 1e-8:
+        return {
+            "accepted": False,
+            "reason": "overlap_not_improved",
+            "initial_projection_loss": optimization_bbox_loss(initial),
+            "optimized_projection_loss": optimization_bbox_loss(candidate),
+            "initial_total_loss": optimization_total_loss(initial),
+            "optimized_total_loss": optimization_total_loss(candidate),
+        }
+    initial_projection = optimization_bbox_loss(initial)
+    optimized_projection = optimization_bbox_loss(candidate)
+    initial_total = optimization_total_loss(initial)
+    optimized_total = optimization_total_loss(candidate)
+    if (
+        initial_projection is not None
+        and optimized_projection is not None
+        and optimized_projection > initial_projection + OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE
+    ):
+        return {
+            "accepted": False,
+            "reason": "projection_loss_degraded",
+            "initial_projection_loss": initial_projection,
+            "optimized_projection_loss": optimized_projection,
+            "projection_loss_tolerance": OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE,
+            "initial_total_loss": initial_total,
+            "optimized_total_loss": optimized_total,
+        }
+    projection_improved = (
+        initial_projection is not None
+        and optimized_projection is not None
+        and optimized_projection < initial_projection - OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE
+    )
+    if (
+        not projection_improved
+        and initial_total is not None
+        and optimized_total is not None
+        and optimized_total > initial_total + OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE
+    ):
+        return {
+            "accepted": False,
+            "reason": "objective_loss_degraded",
+            "initial_projection_loss": initial_projection,
+            "optimized_projection_loss": optimized_projection,
+            "initial_total_loss": initial_total,
+            "optimized_total_loss": optimized_total,
+            "total_loss_tolerance": OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE,
+        }
+    return {
+        "accepted": True,
+        "reason": "overlap_improved_without_quality_regression",
+        "initial_projection_loss": initial_projection,
+        "optimized_projection_loss": optimized_projection,
+        "projection_loss_tolerance": OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE,
+        "initial_total_loss": initial_total,
+        "optimized_total_loss": optimized_total,
+        "total_loss_tolerance": OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE,
+        "projection_improved": bool(projection_improved),
+    }
+
+
+def optimization_bbox_loss(record: dict[str, Any]) -> float | None:
+    try:
+        value = (record.get("render_to_input_optimization") or {}).get("optimized_bbox_loss")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def optimization_total_loss(record: dict[str, Any]) -> float | None:
+    try:
+        value = (record.get("render_to_input_optimization") or {}).get("optimized_loss")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def bounds_overlap_volume(left: np.ndarray, right: np.ndarray) -> float:

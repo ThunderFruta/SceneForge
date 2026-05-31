@@ -42,8 +42,11 @@ This file tracks notable project changes while SceneForge is still small.
 - Added a repeated-instance physical-volume prior inspired by 3D-RE-GEN's OBB volume scale initialization, so multiple objects with the same detector label and support type are refit toward a shared physical volume instead of only matching per-image silhouettes.
 - Added a 3D-RE-GEN-style bottom-center support pivot for support-plane candidate transforms, so yaw/scale search preserves floor/table contact instead of rotating around the object center.
 - Added occupied-bounds avoidance refits for floor-supported objects: reported table/chair AABB overlaps now feed back into a generic avoidance prior and evidence-derived translation candidates instead of remaining diagnostics only.
-- Tightened the projected-box objective so apparent size and vertical edge agreement carry more weight when collision avoidance competes with silhouette matching.
+- Tightened the projected-box objective and projection acceptance so apparent size and vertical edge agreement carry more weight when collision avoidance competes with silhouette matching.
+- Strengthened repeated-instance physical-volume consistency and reject outlier physical-size candidates before mask re-ranking or final 4-DoF selection, preventing collision avoidance from solving layout by resizing one repeated object.
 - Added projected empty-room image textures to procedural room-corner planes so composed GLBs can carry textured floor and wall planes instead of flat fallback colors.
+- Added a generic projected-box residual refinement report for support-plane placement, using a local planar translation Jacobian after candidate selection to test small evidence-driven X/Z corrections without object-label-specific pose or scale patches.
+- Gated floor-occupancy refits by projection and total objective quality as well as overlap reduction, so AABB collision cleanup cannot discard stronger image-scale/pose evidence.
 
 ## 2026-05-29
 
