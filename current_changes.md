@@ -36,6 +36,10 @@ This file tracks notable project changes while SceneForge is still small.
 - Added a generic visible-VGGT-point consistency term to the support-plane placement objective so candidate scale/translation is scored against object point evidence without object-name-specific rules.
 - Added a large-image-target scale floor to the generic support-plane optimizer so near-camera objects are not allowed to use extreme shrink candidates when their target box covers a large fraction of the source image.
 - Added generic evidence-derived scale candidates and SAM-mask silhouette re-ranking for support-plane placement, so size and yaw are selected from projected mesh fit plus VGGT/support evidence instead of coarse bbox-only acceptance.
+- Added VGGT OBB yaw and mesh-vertical-asymmetry facing priors to object placement: yaw candidates now include fitted point-cloud axes, and high-asymmetry floor objects can orient their open side toward a nearby low/wide floor anchor without label-specific chair/table pose rules.
+- Added visibility-aware review reconciliation so a projection-only occluded-bottom warning is cleared only when rendered front-object silhouettes explain the missing bottom edge while support and collision checks remain accepted.
+- Rebalanced support-plane placement toward 3D point-cloud consistency after checking 3D-RE-GEN's planar pose model: VGGT center/extent fit now has stronger weight than the noisy 2D mask reranker when scale and depth disagree.
+- Added a repeated-instance physical-volume prior inspired by 3D-RE-GEN's OBB volume scale initialization, so multiple objects with the same detector label and support type are refit toward a shared physical volume instead of only matching per-image silhouettes.
 - Added projected empty-room image textures to procedural room-corner planes so composed GLBs can carry textured floor and wall planes instead of flat fallback colors.
 
 ## 2026-05-29

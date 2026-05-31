@@ -232,11 +232,30 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    objects, size_resolution = resolve_repeated_instance_size_priors(
+        objects=objects,
+        targets=targets.get("objects", []),
+        support_by_id=support_by_id,
+        coordinate_contract=coordinate_contract,
+        placement_orientation=placement_orientation,
+        object_scale_factor=object_scale_factor,
+        optimize_placements=optimize_placements,
+    )
+    objects, facing_resolution = resolve_asymmetric_facing_priors(
+        objects=objects,
+        targets=targets.get("objects", []),
+        support_by_id=support_by_id,
+        coordinate_contract=coordinate_contract,
+        placement_orientation=placement_orientation,
+        object_scale_factor=object_scale_factor,
+        optimize_placements=optimize_placements,
+    )
     visibility_resolution = annotate_visibility_aware_silhouettes(
         objects=objects,
         targets=targets.get("objects", []),
         coordinate_contract=coordinate_contract,
     )
+    review_resolution = reconcile_visibility_explained_projection_reviews(objects)
     annotate_pairwise_collision_metrics(objects)
     quality = placement_quality_report(objects)
     report = {
@@ -266,7 +285,10 @@ def fit_object_placements(
         "objects": objects,
         "quality": quality,
         "dependent_support_resolution": dependent_resolution,
+        "repeated_instance_size_resolution": size_resolution,
+        "asymmetric_facing_resolution": facing_resolution,
         "visibility_resolution": visibility_resolution,
+        "visibility_review_resolution": review_resolution,
         "summary": {
             "placement_count": len(objects),
             "accepted_count": sum(1 for item in objects if item["status"] == "accepted"),
@@ -427,6 +449,7 @@ def fit_placement_for_target(
     object_scale_factor: float,
     optimize_placements: bool,
     facing_target_gltf: Any = None,
+    physical_size_target_extent_gltf: Any = None,
 ) -> dict[str, Any]:
     detection_id = int(target.get("detection_id", 0))
     label = str(target.get("detector_label") or "object")
@@ -490,6 +513,7 @@ def fit_placement_for_target(
             coordinate_contract=coordinate_contract,
             enabled=bool(optimize_placements),
             facing_target_gltf=facing_target_gltf,
+            physical_size_target_extent_gltf=physical_size_target_extent_gltf,
         )
         mode = str(support.get("mode") or "unknown_5dof")
         if support_target is None and mode == "unknown_5dof":
@@ -632,6 +656,242 @@ def resolve_dependent_support_surfaces(
     }
 
 
+def resolve_repeated_instance_size_priors(
+    *,
+    objects: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    support_by_id: dict[int, dict[str, Any]],
+    coordinate_contract: dict[str, Any] | None,
+    placement_orientation: str,
+    object_scale_factor: float,
+    optimize_placements: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in objects:
+        if item.get("status") != "accepted":
+            continue
+        bounds = bounds_array(item.get("transformed_bounds"))
+        if bounds is None:
+            continue
+        key = repeated_instance_group_key(item)
+        if key is None:
+            continue
+        groups.setdefault(key, []).append(item)
+
+    target_by_id = {int(target.get("detection_id", 0)): target for target in targets}
+    refreshed = list(objects)
+    refit_ids: list[int] = []
+    group_reports: list[dict[str, Any]] = []
+    for (label_key, support_kind), members in sorted(groups.items()):
+        if len(members) < 2:
+            continue
+        extents = []
+        for member in members:
+            bounds = bounds_array(member.get("transformed_bounds"))
+            if bounds is not None:
+                extents.append(bounds[1] - bounds[0])
+        if len(extents) < 2:
+            continue
+        extent_array = np.asarray(extents, dtype=np.float64)
+        target_extent = np.median(extent_array, axis=0)
+        if target_extent.shape != (3,) or not np.isfinite(target_extent).all() or np.any(target_extent <= 1e-8):
+            continue
+        volumes = np.prod(np.maximum(extent_array, 1e-8), axis=1)
+        target_volume = float(np.median(volumes))
+        if not np.isfinite(target_volume) or target_volume <= 1e-12:
+            continue
+        size_target = {
+            "target_extent_gltf": [float(value) for value in target_extent],
+            "target_volume_gltf": target_volume,
+        }
+        group_refit_ids: list[int] = []
+        for member in members:
+            detection_id = int(member.get("detection_id", 0))
+            target = target_by_id.get(detection_id)
+            if target is None:
+                continue
+            support = member.get("support") or (support_by_id.get(detection_id) or {}).get("support") or {}
+            record = fit_placement_for_target(
+                target=target,
+                support_record={"support": support},
+                coordinate_contract=coordinate_contract,
+                placement_orientation=placement_orientation,
+                object_scale_factor=object_scale_factor,
+                optimize_placements=optimize_placements,
+                physical_size_target_extent_gltf=size_target,
+            )
+            if record.get("status") != "accepted":
+                continue
+            report = ((record.get("render_to_input_optimization") or {}).get("physical_size_prior") or {})
+            if report.get("status") != "accepted":
+                continue
+            index = next((idx for idx, item in enumerate(refreshed) if int(item.get("detection_id", 0)) == detection_id), None)
+            if index is None:
+                continue
+            refreshed[index] = record
+            refit_ids.append(detection_id)
+            group_refit_ids.append(detection_id)
+        if group_refit_ids:
+            group_reports.append(
+                {
+                    "group_label_key": label_key,
+                    "support_kind": support_kind,
+                    "target_extent_gltf": [float(value) for value in target_extent],
+                    "target_volume_gltf": target_volume,
+                    "member_count": len(members),
+                    "refit_detection_ids": group_refit_ids,
+                }
+            )
+    return refreshed, {
+        "enabled": True,
+        "method": "same_label_support_physical_extent_median_prior",
+        "group_count": len(group_reports),
+        "refit_count": len(refit_ids),
+        "refit_detection_ids": refit_ids,
+        "groups": group_reports,
+    }
+
+
+def repeated_instance_group_key(item: dict[str, Any]) -> tuple[str, str] | None:
+    label = normalized_instance_label(item.get("detector_label"))
+    support_kind = str((item.get("support") or {}).get("support_kind") or "")
+    if not label or not support_kind:
+        return None
+    return label, support_kind
+
+
+def normalized_instance_label(value: Any) -> str:
+    label = str(value or "").strip().lower()
+    return " ".join(label.split())
+
+
+def resolve_asymmetric_facing_priors(
+    *,
+    objects: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    support_by_id: dict[int, dict[str, Any]],
+    coordinate_contract: dict[str, Any] | None,
+    placement_orientation: str,
+    object_scale_factor: float,
+    optimize_placements: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    anchors = asymmetric_facing_anchor_candidates(objects)
+    if not anchors:
+        return objects, {
+            "enabled": True,
+            "refit_count": 0,
+            "refit_detection_ids": [],
+            "reason": "no_anchor_candidates",
+        }
+    refreshed = list(objects)
+    by_id = {int(item.get("detection_id", 0)): item for item in objects}
+    refit_ids: list[int] = []
+    refit_targets: dict[int, dict[str, Any]] = {}
+    for index, target in enumerate(targets):
+        detection_id = int(target.get("detection_id", 0))
+        current = by_id.get(detection_id)
+        if current is None or current.get("status") != "accepted":
+            continue
+        support = current.get("support") or (support_by_id.get(detection_id) or {}).get("support") or {}
+        if support.get("support_kind") != "floor":
+            continue
+        current_bounds = bounds_array(current.get("transformed_bounds"))
+        if current_bounds is None:
+            continue
+        if any(int(anchor["detection_id"]) == detection_id for anchor in anchors):
+            continue
+        anchor = nearest_facing_anchor(current_bounds, anchors)
+        if anchor is None:
+            continue
+        record = fit_placement_for_target(
+            target=target,
+            support_record={"support": support},
+            coordinate_contract=coordinate_contract,
+            placement_orientation=placement_orientation,
+            object_scale_factor=object_scale_factor,
+            optimize_placements=optimize_placements,
+            facing_target_gltf=anchor["center_gltf"],
+            physical_size_target_extent_gltf=((current.get("render_to_input_optimization") or {}).get("physical_size_prior") or {}),
+        )
+        if record.get("status") != "accepted":
+            continue
+        report = ((record.get("render_to_input_optimization") or {}).get("mesh_facing_prior") or {})
+        if report.get("status") != "accepted":
+            continue
+        refreshed[index] = record
+        by_id[detection_id] = record
+        refit_ids.append(detection_id)
+        refit_targets[detection_id] = {
+            "anchor_detection_id": int(anchor["detection_id"]),
+            "anchor_center_gltf": anchor["center_gltf"],
+            "anchor_reason": anchor["reason"],
+            "optimized_loss": (report.get("optimized") or {}).get("loss"),
+        }
+    return refreshed, {
+        "enabled": True,
+        "method": "mesh_vertical_asymmetry_to_nearby_low_wide_anchor",
+        "anchor_count": len(anchors),
+        "anchors": anchors,
+        "refit_count": len(refit_ids),
+        "refit_detection_ids": refit_ids,
+        "refit_targets": refit_targets,
+    }
+
+
+def asymmetric_facing_anchor_candidates(objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    anchors: list[dict[str, Any]] = []
+    for item in objects:
+        if item.get("status") != "accepted":
+            continue
+        support = item.get("support") or {}
+        if support.get("support_kind") != "floor":
+            continue
+        bounds = bounds_array(item.get("transformed_bounds"))
+        if bounds is None:
+            continue
+        extent = bounds[1] - bounds[0]
+        horizontal_max = max(float(extent[0]), float(extent[2]))
+        height = float(extent[1])
+        footprint_area = float(max(extent[0], 0.0) * max(extent[2], 0.0))
+        if horizontal_max <= 1e-8 or height <= 1e-8:
+            continue
+        if horizontal_max < height * 1.10:
+            continue
+        if footprint_area < 0.035:
+            continue
+        center = ((bounds[0] + bounds[1]) / 2.0).tolist()
+        anchors.append(
+            {
+                "detection_id": int(item.get("detection_id", 0)),
+                "detector_label": item.get("detector_label"),
+                "center_gltf": [float(value) for value in center],
+                "footprint_radius": float(np.linalg.norm(extent[[0, 2]]) / 2.0),
+                "height": height,
+                "footprint_area": footprint_area,
+                "reason": "low_wide_floor_object",
+            }
+        )
+    return anchors
+
+
+def nearest_facing_anchor(bounds: np.ndarray, anchors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    center = (bounds[0] + bounds[1]) / 2.0
+    extent = bounds[1] - bounds[0]
+    radius = float(np.linalg.norm(extent[[0, 2]]) / 2.0)
+    best: dict[str, Any] | None = None
+    best_distance = float("inf")
+    for anchor in anchors:
+        anchor_center = np.asarray(anchor["center_gltf"], dtype=np.float64)
+        distance = float(np.linalg.norm(anchor_center[[0, 2]] - center[[0, 2]]))
+        max_distance = max((radius + float(anchor["footprint_radius"])) * 3.0, 0.45)
+        if distance > max_distance:
+            continue
+        if distance < best_distance:
+            best = anchor
+            best_distance = distance
+    return best
+
+
 def annotate_visibility_aware_silhouettes(
     *,
     objects: list[dict[str, Any]],
@@ -701,6 +961,43 @@ def annotate_visibility_aware_silhouettes(
         "enabled": True,
         "updated_count": len(updated_ids),
         "updated_detection_ids": updated_ids,
+    }
+
+
+def reconcile_visibility_explained_projection_reviews(objects: list[dict[str, Any]]) -> dict[str, Any]:
+    resolved_ids: list[int] = []
+    for item in objects:
+        if item.get("status") != "accepted" or not item.get("needs_review"):
+            continue
+        quality = ensure_quality(item)
+        projection_status = quality.get("projection_status")
+        if projection_status != "accepted_occluded_bottom":
+            continue
+        if quality.get("support_status") != "accepted" or quality.get("collision_status") != "accepted":
+            continue
+        visibility = quality.get("silhouette_visibility") or {}
+        if visibility.get("status") != "accepted":
+            continue
+        if not visibility.get("occluder_detection_ids"):
+            continue
+        visible_area = int(visibility.get("visible_area_px") or 0)
+        occluded_area = int(visibility.get("occluded_area_px") or 0)
+        if visible_area <= 0 or occluded_area <= 0:
+            continue
+        quality["projection_review_resolution"] = {
+            "status": "resolved",
+            "reason": "occluded_bottom_explained_by_front_silhouettes",
+            "occluder_detection_ids": visibility.get("occluder_detection_ids") or [],
+            "occluded_area_ratio": visibility.get("occluded_area_ratio"),
+        }
+        item["needs_review"] = False
+        item["reason"] = None
+        resolved_ids.append(int(item.get("detection_id", 0)))
+    return {
+        "enabled": True,
+        "method": "visibility_explained_projection_review_reconciliation",
+        "resolved_count": len(resolved_ids),
+        "resolved_detection_ids": resolved_ids,
     }
 
 

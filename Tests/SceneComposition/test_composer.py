@@ -9,8 +9,23 @@ import numpy as np
 from PIL import Image
 
 from run import build_parser
-from SceneComposition.composer import compose_scene, placement_transform_to_gltf, projection_quality_report
-from SceneComposition.placement import build_object_fit_targets, choose_object_supports, fit_object_placements
+from SceneComposition.composer import (
+    facing_prior_loss,
+    mesh_facing_prior_from_target,
+    physical_size_prior_from_target,
+    physical_size_prior_loss,
+    placement_transform_to_gltf,
+    projection_quality_report,
+    transformed_bounds_from_source_bounds,
+    yaw_rotation_gltf,
+    compose_scene,
+)
+from SceneComposition.placement import (
+    build_object_fit_targets,
+    choose_object_supports,
+    fit_object_placements,
+    reconcile_visibility_explained_projection_reviews,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1490,3 +1505,82 @@ def test_compose_scene_cli(tmp_path: Path) -> None:
     assert (output_dir / "scene.glb").is_file()
     assert (output_dir / "scene_alignment.json").is_file()
     assert "Composed 1/1 objects" in result.stdout
+
+
+def test_mesh_facing_prior_uses_vertical_asymmetry_without_label() -> None:
+    import trimesh
+
+    seat = trimesh.creation.box(extents=(1.0, 0.18, 1.0))
+    back = trimesh.creation.box(extents=(1.0, 0.9, 0.12))
+    back.apply_translation((0.0, 0.42, -0.45))
+    mesh = trimesh.util.concatenate([seat, back])
+
+    transform = np.eye(4, dtype=np.float64)
+    prior = mesh_facing_prior_from_target(
+        meshes=[mesh],
+        transform=transform,
+        facing_target_gltf=[0.0, 0.0, 2.0],
+    )
+    flipped = transform.copy()
+    flipped[:3, :3] = yaw_rotation_gltf(np.pi)
+
+    assert prior["available"] is True
+    assert prior["asymmetry"]["offset_ratio"] > 0.12
+    assert facing_prior_loss(prior, transform) < 0.05
+    assert facing_prior_loss(prior, flipped) > 0.90
+
+
+def test_visibility_reconciliation_clears_occluded_bottom_review_without_label() -> None:
+    objects = [
+        {
+            "detection_id": 9,
+            "status": "accepted",
+            "needs_review": True,
+            "reason": "occluded_bottom_edge_tolerated",
+            "quality": {
+                "projection_status": "accepted_occluded_bottom",
+                "support_status": "accepted",
+                "collision_status": "accepted",
+                "silhouette_visibility": {
+                    "status": "accepted",
+                    "occluder_detection_ids": [3],
+                    "visible_area_px": 120,
+                    "occluded_area_px": 80,
+                    "occluded_area_ratio": 0.4,
+                },
+            },
+        }
+    ]
+
+    report = reconcile_visibility_explained_projection_reviews(objects)
+
+    assert report["resolved_detection_ids"] == [9]
+    assert objects[0]["needs_review"] is False
+    assert objects[0]["reason"] is None
+    assert objects[0]["quality"]["projection_review_resolution"]["status"] == "resolved"
+
+
+def test_physical_size_prior_uses_volume_scale_without_label() -> None:
+    source_bounds = np.asarray([[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]], dtype=np.float64)
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = np.eye(3, dtype=np.float64) * 0.5
+
+    prior = physical_size_prior_from_target(
+        source_bounds=source_bounds,
+        transform=transform,
+        target_extent_gltf={
+            "target_extent_gltf": [1.0, 1.0, 1.0],
+            "target_volume_gltf": 1.0,
+        },
+    )
+    corrected = transform.copy()
+    corrected[:3, :3] *= prior["scale_candidate"]
+
+    initial_volume = np.prod(transformed_bounds_from_source_bounds(source_bounds, transform)[1] - transformed_bounds_from_source_bounds(source_bounds, transform)[0])
+    corrected_volume = np.prod(transformed_bounds_from_source_bounds(source_bounds, corrected)[1] - transformed_bounds_from_source_bounds(source_bounds, corrected)[0])
+
+    assert prior["available"] is True
+    assert prior["volume_scale_candidate"] == 2.0
+    assert initial_volume < 0.2
+    assert corrected_volume == 1.0
+    assert physical_size_prior_loss(prior, source_bounds, corrected) == 0.0

@@ -26,10 +26,11 @@ PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO = 1.60
 PROJECTION_AREA_ERROR_REJECT_RATIO = 0.60
 VGGT_CANDIDATE_POINT_SAMPLE_COUNT = 512
 PROJECTED_VERTEX_SAMPLE_COUNT = 2048
-VGGT_CANDIDATE_LOSS_WEIGHT = 0.35
+VGGT_CANDIDATE_LOSS_WEIGHT = 1.15
 VGGT_YAW_PRIOR_WEIGHT = 0.16
-MESH_FACING_PRIOR_WEIGHT = 0.32
-MASK_CANDIDATE_LOSS_WEIGHT = 0.85
+MESH_FACING_PRIOR_WEIGHT = 0.95
+REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT = 1.40
+MASK_CANDIDATE_LOSS_WEIGHT = 0.45
 MASK_CANDIDATE_POOL_SIZE = 48
 MASK_CANDIDATE_RENDER_MAX_SIZE = 320
 MASK_CANDIDATE_FACE_SAMPLE_COUNT = 12000
@@ -650,6 +651,7 @@ def optimize_transform_to_input(
     coordinate_contract: dict[str, Any] | None,
     enabled: bool,
     facing_target_gltf: Any = None,
+    physical_size_target_extent_gltf: Any = None,
 ) -> dict[str, Any]:
     target_bbox = bbox_array(placement.get("bbox_xyxy"))
     meshes = load_meshes(mesh_path)
@@ -666,6 +668,12 @@ def optimize_transform_to_input(
     initial_yaw_prior_loss = yaw_prior_loss(yaw_prior, initial_yaw)
     facing_prior = mesh_facing_prior_from_target(meshes=meshes, transform=transform, facing_target_gltf=facing_target_gltf)
     initial_facing_prior_loss = facing_prior_loss(facing_prior, transform)
+    size_prior = physical_size_prior_from_target(
+        source_bounds=source_bounds,
+        transform=transform,
+        target_extent_gltf=physical_size_target_extent_gltf,
+    )
+    initial_size_prior_loss = physical_size_prior_loss(size_prior, source_bounds, transform)
     mask_fit = load_mask_candidate_fit(placement, coordinate_contract)
     mask_loss_weight = MASK_CANDIDATE_LOSS_WEIGHT if mask_fit.get("available") else 0.0
     initial_mask = mask_candidate_transform_loss(
@@ -714,6 +722,12 @@ def optimize_transform_to_input(
             optimized_loss=initial_facing_prior_loss,
             candidate_loss=initial_facing_prior_loss,
         ),
+        "physical_size_prior": physical_size_prior_report(
+            size_prior,
+            initial=initial_size_prior_loss,
+            optimized=initial_size_prior_loss,
+            candidate=initial_size_prior_loss,
+        ),
         "mask_candidate_fit": mask_candidate_fit_report(
             mask_fit,
             loss_weight=mask_loss_weight,
@@ -750,6 +764,7 @@ def optimize_transform_to_input(
         vggt_loss_weight=vggt_loss_weight,
         yaw_prior_loss=initial_yaw_prior_loss,
         facing_prior_loss=initial_facing_prior_loss,
+        physical_size_prior_loss=initial_size_prior_loss,
     )
     initial_quality = projection_quality_report(initial_bbox, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
     scale_candidates, scale_floor_report = scale_candidates_for_target(
@@ -759,6 +774,7 @@ def optimize_transform_to_input(
         vggt_fit=vggt_fit,
         source_bounds=source_bounds,
         transform=transform,
+        physical_size_prior=size_prior,
     )
     yaw_candidates = yaw_candidates_for_placement(placement, yaw_prior, facing_prior)
     best_candidate_transform = np.asarray(transform, dtype=np.float64)
@@ -768,6 +784,7 @@ def optimize_transform_to_input(
     best_candidate_vggt = initial_vggt
     best_candidate_yaw_prior_loss = initial_yaw_prior_loss
     best_candidate_facing_prior_loss = initial_facing_prior_loss
+    best_candidate_size_prior_loss = initial_size_prior_loss
     best_candidate_delta = np.zeros(3, dtype=np.float64)
     best_candidate_yaw = 0.0
     best_candidate_scale = 1.0
@@ -779,6 +796,7 @@ def optimize_transform_to_input(
     best_accepted_vggt = initial_vggt
     best_accepted_yaw_prior_loss = initial_yaw_prior_loss
     best_accepted_facing_prior_loss = initial_facing_prior_loss
+    best_accepted_size_prior_loss = initial_size_prior_loss
     best_accepted_delta = np.zeros(3, dtype=np.float64)
     best_accepted_yaw = 0.0
     best_accepted_scale = 1.0
@@ -794,6 +812,7 @@ def optimize_transform_to_input(
             vggt=initial_vggt,
             yaw_prior_loss=initial_yaw_prior_loss,
             facing_prior_loss=initial_facing_prior_loss,
+            physical_size_prior_loss=initial_size_prior_loss,
             delta=np.zeros(3, dtype=np.float64),
             yaw=0.0,
             scale=1.0,
@@ -819,6 +838,7 @@ def optimize_transform_to_input(
                     vggt_loss = vggt_candidate_transform_loss(vggt_fit, source_bounds, candidate)
                     yaw_loss = yaw_prior_loss(yaw_prior, transform_yaw_gltf(candidate))
                     facing_loss = facing_prior_loss(facing_prior, candidate)
+                    size_loss = physical_size_prior_loss(size_prior, source_bounds, candidate)
                     loss = objective_transform_loss(
                         bbox_loss=bbox_loss,
                         support_loss=support_loss,
@@ -827,6 +847,7 @@ def optimize_transform_to_input(
                         vggt_loss_weight=vggt_loss_weight,
                         yaw_prior_loss=yaw_loss,
                         facing_prior_loss=facing_loss,
+                        physical_size_prior_loss=size_loss,
                     )
                     quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
                     if loss < best_candidate_loss:
@@ -835,6 +856,7 @@ def optimize_transform_to_input(
                         best_candidate_vggt = vggt_loss
                         best_candidate_yaw_prior_loss = yaw_loss
                         best_candidate_facing_prior_loss = facing_loss
+                        best_candidate_size_prior_loss = size_loss
                         best_candidate_transform = candidate
                         best_candidate_bbox = projected
                         best_candidate_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -853,6 +875,7 @@ def optimize_transform_to_input(
                             vggt=vggt_loss,
                             yaw_prior_loss=yaw_loss,
                             facing_prior_loss=facing_loss,
+                            physical_size_prior_loss=size_loss,
                             delta=np.array([dx, 0.0, dz], dtype=np.float64),
                             yaw=yaw,
                             scale=scale,
@@ -864,6 +887,7 @@ def optimize_transform_to_input(
                             best_accepted_vggt = vggt_loss
                             best_accepted_yaw_prior_loss = yaw_loss
                             best_accepted_facing_prior_loss = facing_loss
+                            best_accepted_size_prior_loss = size_loss
                             best_accepted_transform = candidate
                             best_accepted_bbox = projected
                             best_accepted_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -878,6 +902,7 @@ def optimize_transform_to_input(
     final_vggt = best_accepted_vggt if accepted else initial_vggt
     final_yaw_prior_loss = best_accepted_yaw_prior_loss if accepted else initial_yaw_prior_loss
     final_facing_prior_loss = best_accepted_facing_prior_loss if accepted else initial_facing_prior_loss
+    final_size_prior_loss = best_accepted_size_prior_loss if accepted else initial_size_prior_loss
     final_quality = best_accepted_quality if accepted else initial_quality
     final_mask = initial_mask
     mask_fallback_reason = None
@@ -895,8 +920,9 @@ def optimize_transform_to_input(
             final_loss = float(selected_mask_candidate["combined_loss"])
             final_bbox_loss = float(selected_mask_candidate["bbox_loss"])
             final_vggt = selected_mask_candidate["vggt"]
-            final_yaw_prior_loss = float(selected_mask_candidate["yaw_prior_loss"])
-            final_facing_prior_loss = float(selected_mask_candidate["facing_prior_loss"])
+            final_yaw_prior_loss = selected_mask_candidate["yaw_prior_loss"]
+            final_facing_prior_loss = selected_mask_candidate["facing_prior_loss"]
+            final_size_prior_loss = selected_mask_candidate["physical_size_prior_loss"]
             final_quality = selected_mask_candidate["quality"]
             best_accepted_delta = np.asarray(selected_mask_candidate["delta"], dtype=np.float64)
             best_accepted_yaw = float(selected_mask_candidate["yaw"])
@@ -946,6 +972,7 @@ def optimize_transform_to_input(
             vggt_loss=final_vggt.get("loss"),
             yaw_prior_loss=final_yaw_prior_loss,
             facing_prior_loss=final_facing_prior_loss,
+            physical_size_prior_loss=final_size_prior_loss,
             mask_loss=final_mask.get("loss"),
             fallback_reason=None if accepted else "no_projection_accepted_candidate",
         ),
@@ -975,6 +1002,12 @@ def optimize_transform_to_input(
             initial_loss=initial_facing_prior_loss,
             optimized_loss=final_facing_prior_loss,
             candidate_loss=best_candidate_facing_prior_loss,
+        ),
+        physical_size_prior=physical_size_prior_report(
+            size_prior,
+            initial=initial_size_prior_loss,
+            optimized=final_size_prior_loss,
+            candidate=best_candidate_size_prior_loss,
         ),
         mask_candidate_fit=mask_candidate_fit_report(
             mask_fit,
@@ -1124,6 +1157,132 @@ def mesh_facing_prior_from_target(
     }
 
 
+def physical_size_prior_from_target(
+    *,
+    source_bounds: np.ndarray,
+    transform: np.ndarray,
+    target_extent_gltf: Any,
+) -> dict[str, Any]:
+    target, target_volume = physical_size_target_extent_and_volume(target_extent_gltf)
+    if target is None:
+        return unavailable_physical_size_prior("missing_physical_size_target")
+    if np.any(target <= 1e-8):
+        return unavailable_physical_size_prior("degenerate_physical_size_target")
+    current_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    current_extent = current_bounds[1] - current_bounds[0]
+    current_volume = physical_extent_volume(current_extent)
+    if target_volume is None:
+        target_volume = physical_extent_volume(target)
+    active = target > max(float(np.linalg.norm(target)) * 0.025, 1e-5)
+    if not bool(np.any(active)):
+        return unavailable_physical_size_prior("no_active_target_axes")
+    ratios = target[active] / np.maximum(current_extent[active], 1e-8)
+    if len(ratios) == 0 or not np.isfinite(ratios).all():
+        return unavailable_physical_size_prior("invalid_scale_ratio")
+    axis_scale = float(np.median(ratios))
+    volume_scale = None
+    if current_volume is not None and target_volume is not None and current_volume > 1e-12 and target_volume > 1e-12:
+        volume_scale = float((target_volume / current_volume) ** (1.0 / 3.0))
+    scale_candidate = float(volume_scale if volume_scale is not None else axis_scale)
+    if not np.isfinite(scale_candidate) or scale_candidate <= 1e-8:
+        return unavailable_physical_size_prior("invalid_scale_candidate")
+    return {
+        "available": True,
+        "method": "repeated_instance_physical_extent_prior_v1",
+        "reason": None,
+        "target_extent_gltf": [float(value) for value in target],
+        "target_volume_gltf": float(target_volume) if target_volume is not None else None,
+        "initial_extent_gltf": [float(value) for value in current_extent],
+        "initial_volume_gltf": float(current_volume) if current_volume is not None else None,
+        "axis_scale_candidate": axis_scale,
+        "volume_scale_candidate": volume_scale,
+        "scale_candidate": scale_candidate,
+    }
+
+
+def physical_size_target_extent_and_volume(value: Any) -> tuple[np.ndarray | None, float | None]:
+    if isinstance(value, dict):
+        extent = vector_or_none(value.get("target_extent_gltf") or value.get("extent_gltf"))
+        volume_value = value.get("target_volume_gltf") if "target_volume_gltf" in value else value.get("volume_gltf")
+        try:
+            volume = float(volume_value) if volume_value is not None else None
+        except (TypeError, ValueError):
+            volume = None
+        if volume is not None and (not np.isfinite(volume) or volume <= 0.0):
+            volume = None
+        return extent, volume
+    return vector_or_none(value), None
+
+
+def physical_extent_volume(extent: np.ndarray) -> float | None:
+    values = np.asarray(extent, dtype=np.float64)
+    if values.shape != (3,) or not np.isfinite(values).all() or np.any(values <= 1e-8):
+        return None
+    return float(np.prod(values))
+
+
+def unavailable_physical_size_prior(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "method": "repeated_instance_physical_extent_prior_v1",
+        "reason": reason,
+        "target_extent_gltf": None,
+        "target_volume_gltf": None,
+        "initial_extent_gltf": None,
+        "initial_volume_gltf": None,
+        "axis_scale_candidate": None,
+        "volume_scale_candidate": None,
+        "scale_candidate": None,
+    }
+
+
+def physical_size_prior_loss(prior: dict[str, Any], source_bounds: np.ndarray, transform: np.ndarray) -> float | None:
+    if not prior.get("available"):
+        return None
+    target = np.asarray(prior.get("target_extent_gltf"), dtype=np.float64)
+    if target.shape != (3,) or not np.isfinite(target).all() or np.any(target <= 1e-8):
+        return None
+    current_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    extent = np.maximum(current_bounds[1] - current_bounds[0], 1e-8)
+    active = target > max(float(np.linalg.norm(target)) * 0.025, 1e-5)
+    if not bool(np.any(active)):
+        return None
+    extent_loss = float(np.mean(np.abs(np.log(extent[active] / target[active]))))
+    current_volume = physical_extent_volume(extent)
+    target_volume = prior.get("target_volume_gltf")
+    volume_loss = None
+    if current_volume is not None and target_volume is not None:
+        volume_loss = float(abs(np.log(current_volume / max(float(target_volume), 1e-12))))
+    if volume_loss is None:
+        return extent_loss
+    return float(0.75 * volume_loss + 0.25 * extent_loss)
+
+
+def physical_size_prior_report(
+    prior: dict[str, Any],
+    *,
+    initial: float | None,
+    optimized: float | None,
+    candidate: float | None,
+) -> dict[str, Any]:
+    return {
+        "method": prior.get("method"),
+        "status": "accepted" if prior.get("available") else "unavailable",
+        "reason": prior.get("reason"),
+        "loss_weight": float(REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT if prior.get("available") else 0.0),
+        "target_extent_gltf": prior.get("target_extent_gltf"),
+        "target_volume_gltf": prior.get("target_volume_gltf"),
+        "initial_extent_gltf": prior.get("initial_extent_gltf"),
+        "initial_volume_gltf": prior.get("initial_volume_gltf"),
+        "axis_scale_candidate": prior.get("axis_scale_candidate"),
+        "volume_scale_candidate": prior.get("volume_scale_candidate"),
+        "scale_candidate": prior.get("scale_candidate"),
+        "initial": {"loss": float(initial) if initial is not None else None},
+        "optimized": {"loss": float(optimized) if optimized is not None else None},
+        "candidate": {"loss": float(candidate) if candidate is not None else None},
+    }
+
+
 def unavailable_mesh_facing_prior(reason: str) -> dict[str, Any]:
     return {
         "available": False,
@@ -1153,7 +1312,7 @@ def mesh_vertical_asymmetry_direction(meshes: list[Any]) -> dict[str, Any] | Non
         return None
     y_threshold = float(np.percentile(points[:, 1], 75.0))
     high = points[points[:, 1] >= y_threshold]
-    if len(high) < 8:
+    if len(high) < 4:
         return None
     offset = high[:, [0, 2]].mean(axis=0) - ((bounds[0, [0, 2]] + bounds[1, [0, 2]]) / 2.0)
     horizontal_extent = max(float(extent[0]), float(extent[2]), 1e-8)
@@ -1292,6 +1451,7 @@ def orientation_search_report(
     vggt_loss: Any,
     yaw_prior_loss: Any = None,
     facing_prior_loss: Any = None,
+    physical_size_prior_loss: Any = None,
     mask_loss: Any = None,
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -1308,6 +1468,7 @@ def orientation_search_report(
             "vggt_points": float(vggt_loss) if vggt_loss is not None else None,
             "vggt_yaw_prior": float(yaw_prior_loss) if yaw_prior_loss is not None else None,
             "mesh_facing_prior": float(facing_prior_loss) if facing_prior_loss is not None else None,
+            "physical_size_prior": float(physical_size_prior_loss) if physical_size_prior_loss is not None else None,
             "mask_silhouette": float(mask_loss) if mask_loss is not None else None,
             "candidate_count": int(candidate_count),
             "accepted_candidate_count": int(accepted_candidate_count),
@@ -1326,6 +1487,7 @@ def keep_mask_candidate(
     vggt: dict[str, Any],
     yaw_prior_loss: float | None,
     facing_prior_loss: float | None,
+    physical_size_prior_loss: float | None,
     delta: np.ndarray,
     yaw: float,
     scale: float,
@@ -1339,6 +1501,7 @@ def keep_mask_candidate(
         "vggt": dict(vggt),
         "yaw_prior_loss": float(yaw_prior_loss) if yaw_prior_loss is not None else None,
         "facing_prior_loss": float(facing_prior_loss) if facing_prior_loss is not None else None,
+        "physical_size_prior_loss": float(physical_size_prior_loss) if physical_size_prior_loss is not None else None,
         "delta": np.asarray(delta, dtype=np.float64).copy(),
         "yaw": float(yaw),
         "scale": float(scale),
@@ -1440,6 +1603,7 @@ def objective_transform_loss(
     vggt_loss_weight: float,
     yaw_prior_loss: Any = None,
     facing_prior_loss: Any = None,
+    physical_size_prior_loss: Any = None,
 ) -> float:
     total = float(bbox_loss) + float(support_loss) + float(scale_loss)
     if vggt_loss is not None and vggt_loss_weight > 0:
@@ -1448,6 +1612,8 @@ def objective_transform_loss(
         total += float(yaw_prior_loss) * VGGT_YAW_PRIOR_WEIGHT
     if facing_prior_loss is not None:
         total += float(facing_prior_loss) * MESH_FACING_PRIOR_WEIGHT
+    if physical_size_prior_loss is not None:
+        total += float(physical_size_prior_loss) * REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT
     return float(total)
 
 
@@ -1459,6 +1625,7 @@ def scale_candidates_for_target(
     vggt_fit: dict[str, Any] | None = None,
     source_bounds: np.ndarray | None = None,
     transform: np.ndarray | None = None,
+    physical_size_prior: dict[str, Any] | None = None,
 ) -> tuple[tuple[float, ...], dict[str, Any]]:
     contract = coordinate_contract or {}
     image_height = float(contract.get("image_height") or 0.0)
@@ -1476,6 +1643,10 @@ def scale_candidates_for_target(
         source_bounds=source_bounds,
         transform=transform,
     )
+    if physical_size_prior and physical_size_prior.get("available"):
+        scale = physical_size_prior.get("scale_candidate")
+        if scale is not None:
+            evidence_scales = tuple(list(evidence_scales) + [float(scale)])
     candidate_values = {float(scale) for scale in DEFAULT_UNIFORM_SCALE_CANDIDATES if float(scale) >= minimum_scale}
     for scale in evidence_scales:
         for neighbor in EVIDENCE_SCALE_NEIGHBORS:
@@ -1615,7 +1786,7 @@ def vggt_candidate_transform_loss(
     outside_distances = point_aabb_outside_distances(visible_points, candidate_bounds)
     outside_median = float(np.median(outside_distances) / diagonal)
     outside_p90 = float(np.percentile(outside_distances, 90.0) / diagonal)
-    loss = 0.35 * center_loss + 0.25 * extent_loss + 0.40 * outside_p90
+    loss = 0.42 * center_loss + 0.43 * extent_loss + 0.15 * outside_p90
     return {
         "status": "accepted",
         "reason": None,
