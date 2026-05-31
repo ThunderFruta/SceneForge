@@ -521,6 +521,8 @@ def texture_object_dir(
             if output_glb.exists():
                 output_glb.unlink()
             shutil.move(str(generated_glb), output_glb)
+        elif output_obj.is_file():
+            export_textured_obj_to_glb(output_obj, output_glb)
         remesh_path = object_dir / "white_mesh_remesh.obj"
         if remesh_path.is_file():
             remesh_target = artifacts_dir / remesh_path.name
@@ -552,6 +554,16 @@ def texture_object_dir(
             }
         )
     write_object_metadata(object_dir, record)
+
+
+def export_textured_obj_to_glb(output_obj: Path, output_glb: Path) -> None:
+    try:
+        import trimesh
+    except Exception as exc:
+        raise RuntimeError("Converting Hunyuan3D textured OBJ to GLB requires trimesh.") from exc
+    loaded = trimesh.load(output_obj, force="scene", process=False)
+    output_glb.parent.mkdir(parents=True, exist_ok=True)
+    loaded.export(output_glb)
 
 
 def postprocess_hunyuan_textured_glb(
@@ -609,6 +621,9 @@ def postprocess_hunyuan_textured_glb(
 
 
 def should_remove_hunyuan_support_sheet(object_dir: Path, record: dict[str, Any]) -> bool:
+    mesh_quality = record.get("mesh_quality")
+    if isinstance(mesh_quality, dict) and mesh_quality.get("has_large_support_sheet") is True:
+        return True
     label_parts = [object_dir.name]
     metadata_path = object_dir / "metadata.json"
     if metadata_path.is_file():
@@ -619,7 +634,20 @@ def should_remove_hunyuan_support_sheet(object_dir: Path, record: dict[str, Any]
             pass
     label_parts.extend(str(record.get(key) or "") for key in ("detector_label", "primitive_label", "completed_mask_prompt"))
     label = " ".join(label_parts).lower()
-    return "table" in label
+    base_prone_labels = (
+        "table",
+        "chair",
+        "stool",
+        "bench",
+        "sofa",
+        "couch",
+        "cabinet",
+        "shelf",
+        "desk",
+        "dresser",
+        "nightstand",
+    )
+    return any(part in label for part in base_prone_labels)
 
 
 def parse_removed_faces(output: str) -> int | None:
@@ -684,12 +712,12 @@ def prepare_paint_reference_image(
     cropped_image.putalpha(cropped_mask)
     cropped_image.thumbnail((int(size * 0.9), int(size * 0.9)), Image.Resampling.LANCZOS)
 
-    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
     x = (size - cropped_image.width) // 2
     y = (size - cropped_image.height) // 2
     canvas.paste(cropped_image, (x, y), cropped_image)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output_path)
+    canvas.convert("RGB").save(output_path)
     return output_path, matte_source
 
 

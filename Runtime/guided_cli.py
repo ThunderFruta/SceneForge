@@ -240,6 +240,66 @@ def object_reconstruction_args_if_available() -> list[str]:
     ]
 
 
+def process_image_args_for_image(image: str | Path, output_root: str | Path) -> list[str]:
+    args = [
+        "process-image",
+        "--image", str(image),
+        "--output-root", str(output_root),
+        "--detector-backend", open_vocab_backend_with_ram_fallback()[0],
+        "--device", os.environ.get("SCENEFORGE_PROCESS_IMAGE_DEVICE", os.environ.get("SCENEFORGE_VGGT_DEVICE", "auto")),
+        "--completion-backend", completion_backend_for_process_image(),
+        "--completion-model", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_MODEL", "gpt-5.5"),
+        "--completion-canvas-size", os.environ.get("SCENEFORGE_OPENAI_COMPLETION_CANVAS_SIZE", "1024"),
+        "--completion-max-objects", os.environ.get(
+            "SCENEFORGE_OPENAI_COMPLETION_MAX_OBJECTS",
+            os.environ.get("SCENEFORGE_COMPLETION_MAX_OBJECTS", "0"),
+        ),
+        "--empty-room-backend", empty_room_backend_for_process_image(),
+        "--empty-room-model", os.environ.get("SCENEFORGE_EMPTY_ROOM_MODEL", "gpt-image-1.5"),
+        "--vggt-backend", os.environ.get("SCENEFORGE_VGGT_BACKEND", "vggt"),
+        "--vggt-model", os.environ.get("SCENEFORGE_VGGT_MODEL", "facebook/VGGT-1B"),
+        "--vggt-cache-dir", os.environ.get("SCENEFORGE_VGGT_CACHE_DIR", "Models/Geometry/VGGT/hf-cache"),
+        "--object-backend", os.environ.get("SCENEFORGE_OBJECT_RECON_BACKEND", "hunyuan3d"),
+        "--object-model", os.environ.get("SCENEFORGE_HUNYUAN3D_MODEL", "tencent/Hunyuan3D-2.1"),
+        "--object-model-dir", os.environ.get("SCENEFORGE_TRIPOSR_MODEL_DIR", "Models/Mesh/TripoSR"),
+        "--object-mesh-name", os.environ.get("SCENEFORGE_OBJECT_MESH_NAME", "hunyuan3d_textured.glb"),
+        "--max-objects", os.environ.get("SCENEFORGE_OBJECT_RECON_MAX_OBJECTS", "0"),
+        "--object-scale-factor", os.environ.get("SCENEFORGE_OBJECT_SCALE_FACTOR", "0.85"),
+        "--placement-orientation", os.environ.get("SCENEFORGE_PLACEMENT_ORIENTATION", "upright"),
+        "--background-fit", os.environ.get("SCENEFORGE_BACKGROUND_FIT", "room-corner"),
+    ]
+    repo_dir = os.environ.get("SCENEFORGE_VGGT_REPO_DIR", "Models/Geometry/VGGT/repo")
+    if repo_dir:
+        args.extend(["--vggt-repo-dir", repo_dir])
+    if os.environ.get("SCENEFORGE_VGGT_LOCAL_ONLY", "1").strip().lower() not in {"", "0", "false", "no", "off"}:
+        args.append("--vggt-local-only")
+    if os.environ.get("SCENEFORGE_RENDER_SOURCE_CAMERA", "1").strip().lower() in {"", "1", "true", "yes", "on"}:
+        args.append("--render-source-camera")
+    else:
+        args.append("--no-render-source-camera")
+    return args
+
+
+def completion_backend_for_process_image() -> str:
+    value = os.environ.get("SCENEFORGE_COMPLETION_BACKEND", "openai-image").strip().lower()
+    if value in {"", "none", "0", "false", "off"}:
+        return "none"
+    if value in {"openai", "gpt-5.5"}:
+        return "openai-image"
+    if value in {"flux", "flux-fill"}:
+        return "flux-fill"
+    return value
+
+
+def empty_room_backend_for_process_image() -> str:
+    value = os.environ.get("SCENEFORGE_EMPTY_ROOM_BACKEND", "openai-image").strip().lower()
+    if value == "openai":
+        return "openai-image"
+    if value in {"fake", "openai-image"}:
+        return value
+    return "openai-image"
+
+
 def empty_room_construction_args_if_available(image: str | Path, detect_output: str | Path) -> list[str]:
     output = Path(detect_output)
     return empty_room_construction_args_for_paths(
@@ -295,11 +355,12 @@ def empty_room_construction_args_for_paths(
 def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
     root = repo_root()
     choices = [
-        ("Process image", "Detect objects, construct empty room, complete object crops, and reconstruct meshes"),
+        ("Process image", "Run end-to-end detection, empty room, VGGT, object meshes, placement fitting, and composed scene"),
         ("Construct empty room", "Generate empty-room image and VGGT background mesh"),
         ("Render .blend to PNG", "Render the active Blender camera to one PNG"),
         ("Complete object crops", "Run OpenAI or FLUX completion over an objects directory"),
         ("Reconstruct object meshes", "Run Hunyuan3D or TripoSR over completed object crops"),
+        ("Fit and compose scene", "Fit supports/placements from existing outputs and write the composed GLB scene"),
     ]
     selected = ask_choice(
         "SceneForge guided mode",
@@ -316,9 +377,9 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
         if not is_image_path(image):
             print("Image detection needs an image file such as .png, .jpg, .jpeg, .webp, .bmp, .tif, or .tiff.")
             return 2
-        output = ask_text("Output directory", "Output/Latest/detect", required=True)
-        args = detect_args_for_image(image, output)
-        return _run_detection_then_completion(args, output)
+        output_root = ask_text("Output root", "Output/Latest", required=True)
+        args = process_image_args_for_image(image, output_root)
+        return _run_scene_args(args, execute)
     if selected == 1:
         image = ask_text("Image path", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
         detections = ask_text("Detections JSON", "Output/Latest/detect/detections.json", required=True)
@@ -366,6 +427,11 @@ def guided_scene_main(execute: Callable[[list[str]], int]) -> int:
             *object_reconstruction_args_if_available(),
         ]
         return _run_scene_args(args, execute)
+    if selected == 5:
+        output_root = ask_text("Output root", "Output/Latest", required=True)
+        source_image = ask_text("Source image", root / "Assets" / "Samples" / "Chairs.jpg", required=True)
+        object_mesh_name = ask_text("Object mesh name", os.environ.get("SCENEFORGE_OBJECT_MESH_NAME", "hunyuan3d_textured.glb"), required=True)
+        return _run_fit_then_compose(output_root, source_image, object_mesh_name)
     return 2
 
 
@@ -420,6 +486,129 @@ def _run_detection_then_completion(args: list[str], output: str | Path) -> int:
     return _run_completion_process(
         [sys.executable, "run.py", "reconstruct-objects", "--objects", str(objects_dir), *reconstruction_args]
     )
+
+
+def _run_fit_then_compose(output_root: str | Path, source_image: str | Path, object_mesh_name: str) -> int:
+    root = Path(output_root)
+    commands = fit_and_compose_commands(root, source_image, object_mesh_name)
+    print("Equivalent commands:")
+    for command in commands:
+        print(shell_join([sys.executable, "run.py", *command]))
+    if not confirm("Run now", default=True):
+        return 0
+    for command in commands:
+        status = _run_completion_process([sys.executable, "run.py", *command])
+        if status != 0:
+            return status
+    return 0
+
+
+def fit_and_compose_commands(output_root: Path, source_image: str | Path, object_mesh_name: str) -> list[list[str]]:
+    detect_dir = output_root / "detect"
+    objects_dir = output_root / "objects"
+    background_dir = output_root / "background"
+    objects_vggt_dir = output_root / "objects_vggt"
+    placement_dir = output_root / "placement"
+    scene_dir = output_root / "scene"
+    orientation = os.environ.get("SCENEFORGE_PLACEMENT_ORIENTATION", "upright")
+    scale = os.environ.get("SCENEFORGE_OBJECT_SCALE_FACTOR", "0.85")
+    background_fit = os.environ.get("SCENEFORGE_BACKGROUND_FIT", "room-corner")
+    commands: list[list[str]] = []
+    if not (detect_dir / "detections.json").is_file():
+        commands.append(detect_args_for_image(source_image, detect_dir))
+    if not (objects_vggt_dir / "vggt_points.npy").is_file():
+        commands.append(vggt_args_for_image(source_image, objects_vggt_dir))
+    if not (background_dir / "vggt_points.npy").is_file():
+        empty_room_args = empty_room_construction_args_for_paths(
+            image=source_image,
+            detections=detect_dir / "detections.json",
+            objects=objects_dir,
+            output=background_dir,
+        )
+        if empty_room_args:
+            commands.append(empty_room_args)
+    commands.extend([
+        [
+            "fit-vggt-boxes",
+            "--detections", str(detect_dir / "detections.json"),
+            "--objects", str(objects_dir),
+            "--vggt", str(objects_vggt_dir),
+            "--output", str(objects_vggt_dir),
+        ],
+        [
+            "fit-empty-room-planes",
+            "--background", str(background_dir),
+            "--output", str(background_dir),
+        ],
+        [
+            "choose-object-supports",
+            "--object-geometry", str(objects_vggt_dir / "object_geometry.json"),
+            "--planes", str(background_dir / "plane_detections.json"),
+            "--detections", str(detect_dir / "detections.json"),
+            "--objects", str(objects_dir),
+            "--output", str(placement_dir),
+            "--object-mesh-name", object_mesh_name,
+            "--placement-orientation", orientation,
+            "--object-scale-factor", scale,
+        ],
+        [
+            "build-object-fit-targets",
+            "--object-geometry", str(objects_vggt_dir / "object_geometry.json"),
+            "--supports", str(placement_dir / "object_supports.json"),
+            "--objects", str(objects_dir),
+            "--output", str(placement_dir),
+            "--object-mesh-name", object_mesh_name,
+        ],
+        [
+            "fit-object-placements",
+            "--supports", str(placement_dir / "object_supports.json"),
+            "--fit-targets", str(placement_dir / "object_fit_targets.json"),
+            "--output", str(placement_dir),
+            "--placement-orientation", orientation,
+            "--object-scale-factor", scale,
+        ],
+        [
+            "compose-scene",
+            "--background", str(background_dir / "empty_room_planes.glb"),
+            "--objects", str(objects_dir),
+            "--object-geometry", str(objects_vggt_dir / "object_geometry.json"),
+            "--placements", str(placement_dir / "object_placements.json"),
+            "--output", str(scene_dir),
+            "--object-mesh-name", object_mesh_name,
+            "--placement-orientation", orientation,
+            "--object-scale-factor", scale,
+            "--background-fit", background_fit,
+            "--background-vggt-dir", str(background_dir),
+            "--source-image", str(source_image),
+        ],
+        [
+            "render-scene-camera-view",
+            "--scene", str(scene_dir / "scene.glb"),
+            "--output", str(scene_dir / "source_camera_render.png"),
+            "--alignment-report", str(scene_dir / "scene_alignment.json"),
+        ],
+    ])
+    return commands
+
+
+def vggt_args_for_image(image: str | Path, output: str | Path) -> list[str]:
+    args = [
+        "run-vggt",
+        "--image", str(image),
+        "--output", str(output),
+        "--backend", os.environ.get("SCENEFORGE_VGGT_BACKEND", "vggt"),
+        "--model", os.environ.get("SCENEFORGE_VGGT_MODEL", "facebook/VGGT-1B"),
+        "--vggt-cache-dir", os.environ.get("SCENEFORGE_VGGT_CACHE_DIR", "Models/Geometry/VGGT/hf-cache"),
+        "--obj-stride", os.environ.get("SCENEFORGE_VGGT_OBJ_STRIDE", "8"),
+        "--mesh-stem", os.environ.get("SCENEFORGE_VGGT_MESH_STEM", "vggt_mesh"),
+        "--device", os.environ.get("SCENEFORGE_VGGT_DEVICE", "auto"),
+    ]
+    repo_dir = os.environ.get("SCENEFORGE_VGGT_REPO_DIR", "Models/Geometry/VGGT/repo")
+    if repo_dir:
+        args.extend(["--vggt-repo-dir", repo_dir])
+    if os.environ.get("SCENEFORGE_VGGT_LOCAL_ONLY", "1").strip().lower() not in {"", "0", "false", "no", "off"}:
+        args.append("--vggt-local-only")
+    return args
 
 
 def _run_completion_process(command: list[str], banner: str | None = None) -> int:

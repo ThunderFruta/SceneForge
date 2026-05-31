@@ -20,8 +20,10 @@ from SceneComposition.composer import (
     projected_transform_bbox,
     projection_quality_report,
     support_plane_pivot_local,
+    suppress_duplicate_tabletop_composites,
     transformed_bounds_from_source_bounds,
     translation_candidates_for_projection_residual,
+    vggt_floor_flatness_metric,
     yaw_rotation_gltf,
     compose_scene,
 )
@@ -30,6 +32,8 @@ from SceneComposition.placement import (
     choose_object_supports,
     fit_object_placements,
     floor_occupancy_refit_acceptance,
+    mesh_quality_report,
+    placement_quality_flags,
     reconcile_visibility_explained_projection_reviews,
 )
 
@@ -406,6 +410,7 @@ def test_compose_scene_camera_clipped_background_uses_raw_vggt_mesh_with_alignme
         objects_dir=objects_dir,
         object_geometry_path=object_geometry,
         output_dir=output_dir,
+        background_fit="camera-clipped",
         background_stride=1,
         clip_background_masks=True,
         background_clip_dilation_px=0,
@@ -432,13 +437,13 @@ def test_compose_scene_camera_clipped_background_uses_raw_vggt_mesh_with_alignme
     assert report["summary"]["composed_count"] == 1
 
 
-def test_compose_scene_cli_defaults_to_empty_room_vggt_background() -> None:
+def test_compose_scene_cli_defaults_to_fitted_empty_room_planes() -> None:
     parser = build_parser()
 
     args = parser.parse_args(["compose-scene"])
 
-    assert args.background == "Output/Latest/background/empty_room_mesh.glb"
-    assert args.background_fit == "camera-clipped"
+    assert args.background == "Output/Latest/background/empty_room_planes.glb"
+    assert args.background_fit == "room-corner"
 
 
 def test_compose_scene_room_corner_background_is_structural(tmp_path: Path) -> None:
@@ -540,6 +545,68 @@ def test_compose_scene_room_corner_projects_empty_room_texture(tmp_path: Path) -
     assert report["background"]["vertex_count"] == 3 * 37 * 37
     assert report["background"]["face_count"] == 3 * 36 * 36 * 2
     assert report["background"]["vertex_colors"] == "projected_empty_room_image_fallback"
+
+
+def test_room_corner_vggt_planes_expand_to_avoid_object_cutting(tmp_path: Path) -> None:
+    background_dir = tmp_path / "background"
+    background = background_dir / "empty_room_planes.glb"
+    planes = background_dir / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    object_dir = objects_dir / "01_chair"
+    object_geometry = tmp_path / "object_geometry.json"
+    output_dir = tmp_path / "scene"
+    write_box_glb(background)
+    write_box_glb(object_dir / "hunyuan3d_textured.glb")
+    object_dir.mkdir(parents=True, exist_ok=True)
+    (object_dir / "metadata.json").write_text(json.dumps({"id": 1}), encoding="utf-8")
+    background_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (4, 4), (120, 160, 200)).save(background_dir / "empty_room.png")
+    planes.write_text(
+        json.dumps(
+            {
+                "planes": [
+                    {"id": "floor", "vertices_xyz": [[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]]},
+                    {"id": "back_wall", "vertices_xyz": [[-1.0, 0.7, 0.0], [1.0, 0.7, 0.0], [1.0, 0.7, 1.0], [-1.0, 0.7, 1.0]]},
+                    {"id": "right_wall", "vertices_xyz": [[0.7, 0.0, 0.0], [0.7, 1.0, 0.0], [0.7, 1.0, 1.0], [0.7, 0.0, 1.0]]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "chair",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 2.0, 3.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = compose_scene(
+        background_path=background,
+        objects_dir=objects_dir,
+        object_geometry_path=object_geometry,
+        output_dir=output_dir,
+        background_fit="room-corner",
+        object_scale_factor=1.0,
+    )
+
+    object_bounds = np.asarray(report["objects"][0]["transformed_bounds"], dtype=np.float64)
+    clearance = report["background"]["room_alignment"]["room_plane_clearance"]
+    assert report["background"]["z_back"] < float(object_bounds[0, 2])
+    assert report["background"]["side_x"] > float(object_bounds[1, 0])
+    assert clearance["adjusted_z_back"] is True
+    assert clearance["adjusted_side_x"] is True
 
 
 def test_compose_scene_does_not_apply_label_specific_floor_contact_cleanup(tmp_path: Path) -> None:
@@ -721,8 +788,229 @@ def test_choose_object_supports_writes_floor_and_tabletop_records(tmp_path: Path
     assert by_id[1]["support"]["mode"] == "floor_4dof"
     assert by_id[2]["support"]["mode"] == "tabletop_4dof"
     assert by_id[2]["support"]["support_detection_id"] == 1
+    assert by_id[2]["support"]["finite_support_plane"]["support_detection_id"] == 1
+    assert by_id[2]["support"]["finite_support_plane"]["footprint_area_gltf"] > 0
+    assert by_id[2]["support"]["evidence"]["object_support_overlap_score"] > 0
     assert by_id[3]["support"]["mode"] == "floor_4dof"
     assert report["summary"]["support_modes"] == {"floor_4dof": 2, "tabletop_4dof": 1}
+
+
+def test_choose_object_supports_prefers_stacked_small_object_support(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    flower_dir = objects_dir / "03_flower"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    output_dir = tmp_path / "placement"
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb", extents=(1.0, 0.3, 1.0))
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb", extents=(0.2, 0.5, 0.2))
+    write_box_glb(flower_dir / "hunyuan3d_textured.glb", extents=(0.3, 0.3, 0.3))
+    for object_dir, detection_id in ((table_dir, 1), (vase_dir, 2), (flower_dir, 3)):
+        object_dir.mkdir(parents=True, exist_ok=True)
+        (object_dir / "metadata.json").write_text(json.dumps({"id": detection_id}), encoding="utf-8")
+    object_geometry.parent.mkdir(parents=True, exist_ok=True)
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {"image_width": 100, "image_height": 100, "fov_degrees": 70.0},
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [20.0, 35.0, 80.0, 85.0],
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 1.0, 1.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 2,
+                        "detector_label": "vase",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [47.0, 45.0, 53.0, 70.0],
+                        "center_xyz": [0.0, 1.0, 0.3],
+                        "extent_xyz": [0.15, 0.15, 0.3],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 3,
+                        "detector_label": "flower",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [42.0, 15.0, 58.0, 58.0],
+                        "center_xyz": [0.0, 1.0, 0.55],
+                        "extent_xyz": [0.25, 0.25, 0.35],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=output_dir,
+    )
+
+    by_id = {item["detection_id"]: item for item in report["objects"]}
+    assert by_id[2]["support"]["support_detection_id"] == 1
+    assert by_id[3]["support"]["support_detection_id"] == 2
+    assert by_id[3]["support"]["finite_support_plane"]["source"] == "support_object_top_bounds"
+
+
+def test_choose_object_supports_keeps_tall_flower_mask_on_table(tmp_path: Path) -> None:
+    planes_path = tmp_path / "background" / "plane_detections.json"
+    objects_dir = tmp_path / "objects"
+    table_dir = objects_dir / "01_table"
+    vase_dir = objects_dir / "02_vase"
+    flower_dir = objects_dir / "03_flower"
+    object_geometry = tmp_path / "objects_vggt" / "object_geometry.json"
+    output_dir = tmp_path / "placement"
+    write_plane_report(planes_path, floor_z=0.0)
+    write_box_glb(table_dir / "hunyuan3d_textured.glb", extents=(1.0, 0.3, 1.0))
+    write_box_glb(vase_dir / "hunyuan3d_textured.glb", extents=(0.2, 0.5, 0.2))
+    write_box_glb(flower_dir / "hunyuan3d_textured.glb", extents=(0.3, 0.7, 0.3))
+    for object_dir, detection_id in ((table_dir, 1), (vase_dir, 2), (flower_dir, 3)):
+        object_dir.mkdir(parents=True, exist_ok=True)
+        (object_dir / "metadata.json").write_text(json.dumps({"id": detection_id}), encoding="utf-8")
+    object_geometry.parent.mkdir(parents=True, exist_ok=True)
+    object_geometry.write_text(
+        json.dumps(
+            {
+                "coordinate_contract": {"image_width": 100, "image_height": 100, "fov_degrees": 70.0},
+                "objects": [
+                    {
+                        "detection_id": 1,
+                        "detector_label": "round table",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [20.0, 35.0, 80.0, 85.0],
+                        "center_xyz": [0.0, 1.0, 0.0],
+                        "extent_xyz": [1.0, 1.0, 1.0],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 2,
+                        "detector_label": "vase",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [47.0, 45.0, 53.0, 70.0],
+                        "center_xyz": [0.0, 1.0, 0.3],
+                        "extent_xyz": [0.15, 0.15, 0.3],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                    {
+                        "detection_id": 3,
+                        "detector_label": "flower",
+                        "box_type": "aabb",
+                        "needs_review": False,
+                        "bbox_xyxy": [42.0, 15.0, 58.0, 82.0],
+                        "center_xyz": [0.0, 1.0, 0.55],
+                        "extent_xyz": [0.25, 0.25, 0.35],
+                        "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = choose_object_supports(
+        object_geometry_path=object_geometry,
+        planes_path=planes_path,
+        detections_path=None,
+        objects_dir=objects_dir,
+        output_dir=output_dir,
+    )
+
+    by_id = {item["detection_id"]: item for item in report["objects"]}
+    assert by_id[2]["support"]["support_detection_id"] == 1
+    assert by_id[3]["support"]["support_detection_id"] == 1
+
+
+def test_suppress_duplicate_tabletop_flower_vase_composite() -> None:
+    placements = [
+        {
+            "detection_id": 2,
+            "detector_label": "vase",
+            "support": {"support_kind": "tabletop", "support_detection_id": 3},
+            "render_to_input_optimization": {"target_bbox_xyxy": [748.0, 171.0, 790.0, 315.0]},
+        },
+        {
+            "detection_id": 4,
+            "detector_label": "flower",
+            "support": {"support_kind": "tabletop", "support_detection_id": 3},
+            "render_to_input_optimization": {"target_bbox_xyxy": [698.0, 49.0, 849.0, 272.0]},
+        },
+    ]
+
+    updated = suppress_duplicate_tabletop_composites(placements)
+    by_id = {item["detection_id"]: item for item in updated}
+
+    assert by_id[2]["suppressed_by_composite"] == 4
+    assert by_id[2]["relation_role"] == "suppressed_duplicate_component"
+    assert by_id[4]["relation_role"] == "composite_primary"
+    assert by_id[4]["source_detection_ids"] == [2, 4]
+
+
+def test_high_silhouette_loss_marks_quality_review() -> None:
+    flags = placement_quality_flags(
+        target={"mesh_quality": {"warnings": []}},
+        silhouette_loss=0.75,
+        vggt_point_loss=0.02,
+        scale_delta=1.0,
+    )
+
+    assert "poor_silhouette_fit" in flags
+
+
+def test_mesh_quality_report_flags_non_manifold_mesh_without_rejecting(tmp_path: Path) -> None:
+    import trimesh
+
+    mesh_path = tmp_path / "open_plane.glb"
+    mesh = trimesh.Trimesh(
+        vertices=np.asarray([[-1.0, 0.0, -1.0], [1.0, 0.0, -1.0], [1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]], dtype=np.float64),
+        faces=np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+        process=False,
+    )
+    mesh.export(mesh_path)
+
+    report = mesh_quality_report(mesh_path, mesh_bounds=np.asarray(mesh.bounds, dtype=np.float64))
+
+    assert report["face_count"] == 2
+    assert report["is_manifold"] is False
+    assert "non_manifold_mesh" in report["warnings"]
+
+
+def test_floor_flatness_metric_marks_wavy_raw_floor_review() -> None:
+    import trimesh
+
+    vertices = np.asarray(
+        [
+            [-1.0, 0.0, -1.0],
+            [1.0, 0.08, -1.0],
+            [1.0, 0.12, 1.0],
+            [-1.0, 0.02, 1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, 1.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+    faces = np.asarray([[0, 1, 2], [0, 2, 3], [0, 4, 5]], dtype=np.int64)
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    report = vggt_floor_flatness_metric(mesh)
+
+    assert report["status"] == "review"
+    assert report["residual_p95_gltf"] > report["review_threshold_gltf"]
 
 
 def test_fit_object_placements_and_compose_explicit_records(tmp_path: Path) -> None:
@@ -1719,12 +2007,38 @@ def test_floor_occupancy_refit_rejects_projection_regression() -> None:
         initial=initial,
         candidate=candidate,
         initial_overlap=0.02,
-        optimized_overlap=0.0,
+        optimized_overlap=0.019,
         avoidance_report={"optimized_loss": 0.0},
     )
 
     assert acceptance["accepted"] is False
     assert acceptance["reason"] == "projection_loss_degraded"
+
+
+def test_floor_occupancy_refit_accepts_strong_overlap_fix_despite_projection_tradeoff() -> None:
+    initial = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.4,
+            "optimized_loss": 1.2,
+        }
+    }
+    candidate = {
+        "render_to_input_optimization": {
+            "optimized_bbox_loss": 0.7,
+            "optimized_loss": 1.35,
+        }
+    }
+
+    acceptance = floor_occupancy_refit_acceptance(
+        initial=initial,
+        candidate=candidate,
+        initial_overlap=0.08,
+        optimized_overlap=0.01,
+        avoidance_report={"optimized_loss": 0.0},
+    )
+
+    assert acceptance["accepted"] is True
+    assert acceptance["strong_overlap_fix"] is True
 
 
 def test_floor_occupancy_refit_accepts_quality_preserving_overlap_fix() -> None:

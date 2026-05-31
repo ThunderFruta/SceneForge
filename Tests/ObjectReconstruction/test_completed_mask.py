@@ -47,9 +47,10 @@ class FakePaintConfig:
 
 
 class FakePaintPipeline:
-    def __init__(self) -> None:
+    def __init__(self, *, write_glb: bool = True) -> None:
         self.config = FakePaintConfig()
         self.calls: list[dict[str, object]] = []
+        self.write_glb = write_glb
 
     def __call__(
         self,
@@ -69,8 +70,8 @@ class FakePaintPipeline:
                 "save_glb": save_glb,
             }
         )
-        Path(output_mesh_path).write_text("textured", encoding="utf-8")
-        if save_glb:
+        Path(output_mesh_path).write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n", encoding="utf-8")
+        if save_glb and self.write_glb:
             Path(output_mesh_path).with_suffix(".glb").write_text("textured glb", encoding="utf-8")
 
 
@@ -311,6 +312,31 @@ def test_texture_reference_mode_original_uses_hunyuan_input(tmp_path: Path) -> N
     assert record["texture_reference_mode"] == "original"
 
 
+def test_texture_object_exports_glb_when_paint_only_writes_obj(tmp_path: Path) -> None:
+    object_dir = tmp_path / "01_chair"
+    object_dir.mkdir()
+    Image.new("RGB", (20, 20), (250, 250, 250)).save(object_dir / "hunyuan3d_input.png")
+    Image.new("L", (20, 20), 255).save(object_dir / "hunyuan3d_mask.png")
+    (object_dir / "hunyuan3d_mesh.obj").write_text(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n",
+        encoding="utf-8",
+    )
+    pipeline = FakePaintPipeline(write_glb=False)
+    record = {"status": "ok"}
+
+    texture_object_dir(
+        object_dir,
+        record,
+        paint_pipeline=pipeline,
+        use_remesh=True,
+        reference_mode="original",
+    )
+
+    assert record["texture_status"] == "ok"
+    assert record["textured_glb"] == "hunyuan3d_textured.glb"
+    assert (object_dir / "hunyuan3d_textured.glb").is_file()
+
+
 def test_texture_reference_mode_masked_crop_writes_paint_input(tmp_path: Path) -> None:
     object_dir = tmp_path / "01_chair"
     object_dir.mkdir()
@@ -347,12 +373,21 @@ def test_table_like_outputs_enable_support_sheet_cleanup(tmp_path: Path) -> None
     chair_dir = tmp_path / "01_chair"
     chair_dir.mkdir()
     (chair_dir / "metadata.json").write_text('{"detector_label": "chair"}', encoding="utf-8")
-    assert should_remove_hunyuan_support_sheet(chair_dir, {}) is False
+    assert should_remove_hunyuan_support_sheet(chair_dir, {}) is True
+
+    vase_dir = tmp_path / "02_vase"
+    vase_dir.mkdir()
+    (vase_dir / "metadata.json").write_text('{"detector_label": "vase"}', encoding="utf-8")
+    assert should_remove_hunyuan_support_sheet(vase_dir, {}) is False
 
     metadata_table_dir = tmp_path / "object"
     metadata_table_dir.mkdir()
     (metadata_table_dir / "metadata.json").write_text('{"detector_label": "coffee table"}', encoding="utf-8")
     assert should_remove_hunyuan_support_sheet(metadata_table_dir, {}) is True
+
+    flagged_dir = tmp_path / "unknown"
+    flagged_dir.mkdir()
+    assert should_remove_hunyuan_support_sheet(flagged_dir, {"mesh_quality": {"has_large_support_sheet": True}}) is True
 
 
 def test_parse_removed_faces_reads_blender_json_report() -> None:

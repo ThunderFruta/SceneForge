@@ -16,6 +16,9 @@ from SceneGeometry.coordinate_contract import DEFAULT_FOV_DEGREES
 SCHEMA_VERSION = 1
 TABLE_SUPPORT_LABELS = ("table", "desk", "counter")
 TABLETOP_OBJECT_LABELS = ("vase", "flower", "plant", "lamp", "book", "bowl", "cup", "glass", "plate", "pot")
+PLANT_COMPOSITE_LABELS = ("flower", "plant", "bouquet")
+VESSEL_COMPOSITE_LABELS = ("vase", "pot", "planter")
+TABLETOP_COMPOSITE_SUPPRESSION_MIN_SMALL_OVERLAP = 0.45
 PROJECTION_VERTICAL_EDGE_REJECT_RATIO = 0.35
 PROJECTION_OCCLUDED_BOTTOM_EDGE_REVIEW_RATIO = 0.65
 PROJECTION_OCCLUDED_BOTTOM_TOP_EDGE_REVIEW_RATIO = 0.40
@@ -24,6 +27,9 @@ PROJECTION_CENTER_REJECT_RATIO = 0.35
 PROJECTION_CENTER_Y_REJECT_RATIO = 0.20
 PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO = 1.60
 PROJECTION_AREA_ERROR_REJECT_RATIO = 0.35
+BACKGROUND_FLOOR_FLATNESS_REVIEW_RATIO = 0.025
+ROOM_PLANE_OBJECT_CLEARANCE_RATIO = 0.04
+ROOM_PLANE_OBJECT_MIN_CLEARANCE = 0.05
 VGGT_CANDIDATE_POINT_SAMPLE_COUNT = 512
 VGGT_POINT_MATCH_MESH_SAMPLE_COUNT = 384
 VGGT_POINT_MATCH_TARGET_SAMPLE_COUNT = 384
@@ -102,7 +108,7 @@ def compose_scene(
     scale_mode: str = "fit-box",
     placement_orientation: str = "upright",
     object_scale_factor: float = 0.85,
-    background_fit: str = "camera-clipped",
+    background_fit: str = "room-corner",
     background_margin: float = 1.0,
     background_depth_offset: float = 0.12,
     background_vggt_dir: str | Path | None = None,
@@ -141,7 +147,7 @@ def compose_scene(
     source_report = explicit_placements if explicit_placements is not None else geometry
     source_image_path = Path(source_image_path) if source_image_path is not None else infer_source_image_path(source_report)
     object_dirs = index_object_dirs(objects_dir)
-    placements = (explicit_placements or geometry).get("objects", [])
+    placements = suppress_duplicate_tabletop_composites((explicit_placements or geometry).get("objects", []))
     scene = new_scene()
     if explicit_placements is not None:
         placement_bounds = explicit_placement_bounds_gltf(placements)
@@ -152,13 +158,12 @@ def compose_scene(
             object_scale_factor=object_scale_factor,
         )
     if background_fit == "room-corner" and placement_bounds is not None:
-        plane_texture_path = room_corner_plane_texture_path(background_vggt_dir)
-        background_stats = add_room_corner_background(
+        background_stats = add_vggt_fitted_room_background(
             scene,
+            vggt_dir=background_vggt_dir or background_path.parent,
             placement_bounds=placement_bounds,
             margin=background_margin,
             depth_offset=background_depth_offset,
-            texture_image_path=plane_texture_path,
             coordinate_contract=coordinate_contract,
         )
     elif background_fit == "camera-clipped" and background_vggt_dir is not None:
@@ -244,6 +249,13 @@ def compose_scene(
     scene_path = output_dir / safe_output_name(output_name)
     scene.export(scene_path)
     overlay_path = output_dir / "input_vs_projection_overlay.png"
+    source_camera_qa = source_camera_visual_acceptance_report(
+        output_dir=output_dir,
+        scene_path=scene_path,
+        source_image_path=source_image_path,
+        records=records,
+        background_stats=background_stats,
+    )
     report = {
         "schema_version": SCHEMA_VERSION,
         "background_path": str(background_path),
@@ -254,6 +266,8 @@ def compose_scene(
         "artifacts": {
             "scene_glb": str(scene_path),
             "scene_alignment": str(output_dir / "scene_alignment.json"),
+            "source_camera_visual_qa": str(output_dir / "source_camera_visual_qa.json"),
+            "source_camera_render": str(output_dir / "source_camera_render.png"),
             "input_vs_projection_overlay": str(overlay_path) if source_image_path is not None else None,
         },
         "coordinate_contract": coordinate_contract,
@@ -279,6 +293,7 @@ def compose_scene(
         "suppressed_objects": suppressed_objects,
         "object_overlap_warnings": object_overlap_warnings,
         "projection_quality": projection_quality_summary(records),
+        "source_camera_visual_qa": source_camera_qa,
         "summary": {
             "placement_count": len(records),
             "composed_count": sum(1 for item in records if item["status"] == "composed"),
@@ -289,8 +304,57 @@ def compose_scene(
     }
     if source_image_path is not None:
         write_projection_overlay(source_image_path, records, overlay_path)
+    (output_dir / "source_camera_visual_qa.json").write_text(json.dumps(source_camera_qa, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (output_dir / "scene_alignment.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
+
+
+def source_camera_visual_acceptance_report(
+    *,
+    output_dir: Path,
+    scene_path: Path,
+    source_image_path: Path | None,
+    records: list[dict[str, Any]],
+    background_stats: dict[str, Any],
+) -> dict[str, Any]:
+    background_flatness = ((background_stats.get("floor_regularization") or {}).get("flatness_before") or {})
+    object_reviews = [
+        {
+            "detection_id": item.get("detection_id"),
+            "detector_label": item.get("detector_label"),
+            "reason": item.get("reason") or ((item.get("placement_quality") or {}).get("review_flags") or [None])[0],
+            "review_flags": (item.get("placement_quality") or {}).get("review_flags") or [],
+            "warnings": (item.get("placement_quality") or {}).get("warnings") or [],
+            "projection_status": item.get("projection_quality", {}).get("status") if isinstance(item.get("projection_quality"), dict) else None,
+        }
+        for item in records
+        if item.get("needs_review") or item.get("status") != "composed"
+    ]
+    render_command = [
+        "python3",
+        "run.py",
+        "render-scene-camera-view",
+        "--scene",
+        str(scene_path),
+        "--output",
+        str(output_dir / "source_camera_render.png"),
+        "--alignment-report",
+        str(output_dir / "scene_alignment.json"),
+    ]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "pending_render" if source_image_path is not None else "missing_source_image",
+        "source_image_path": str(source_image_path) if source_image_path is not None else None,
+        "scene_path": str(scene_path),
+        "render_path": str(output_dir / "source_camera_render.png"),
+        "render_command": render_command,
+        "checks": {
+            "projection_overlay_written": source_image_path is not None,
+            "background_floor_flatness_status": background_flatness.get("status"),
+            "object_review_count": len(object_reviews),
+        },
+        "object_reviews": object_reviews,
+    }
 
 
 def explicit_placement_bounds_gltf(placements: list[dict[str, Any]]) -> np.ndarray | None:
@@ -304,6 +368,72 @@ def explicit_placement_bounds_gltf(placements: list[dict[str, Any]]) -> np.ndarr
     if not bounds:
         return None
     return merge_bounds(bounds)
+
+
+def suppress_duplicate_tabletop_composites(placements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    updated = [dict(item) for item in placements]
+    for plant in updated:
+        plant_id = int(plant.get("detection_id", 0))
+        if plant.get("suppressed_by_composite") or not is_plant_composite_label(plant.get("detector_label")):
+            continue
+        plant_bbox = placement_target_bbox(plant)
+        if plant_bbox is None:
+            continue
+        plant_support = placement_support_detection_id(plant)
+        for vessel in updated:
+            vessel_id = int(vessel.get("detection_id", 0))
+            if vessel_id == plant_id or vessel.get("suppressed_by_composite"):
+                continue
+            if not is_vessel_composite_label(vessel.get("detector_label")):
+                continue
+            vessel_support = placement_support_detection_id(vessel)
+            if plant_support is not None and vessel_support is not None and plant_support != vessel_support:
+                continue
+            vessel_bbox = placement_target_bbox(vessel)
+            if vessel_bbox is None:
+                continue
+            overlap = bbox_overlap_area(plant_bbox, vessel_bbox)
+            vessel_area = max(float((vessel_bbox[2] - vessel_bbox[0]) * (vessel_bbox[3] - vessel_bbox[1])), 1.0)
+            if overlap / vessel_area < TABLETOP_COMPOSITE_SUPPRESSION_MIN_SMALL_OVERLAP:
+                continue
+            vessel["suppressed_by_composite"] = plant_id
+            vessel["composite_id"] = f"tabletop_composite_{plant_id:02d}"
+            vessel["relation_role"] = "suppressed_duplicate_component"
+            vessel["composite_reason"] = "overlapping_plant_vessel_mesh_duplicate"
+            plant["composite_id"] = f"tabletop_composite_{plant_id:02d}"
+            plant["relation_role"] = plant.get("relation_role") or "composite_primary"
+            source_ids = set(int(value) for value in plant.get("source_detection_ids") or [plant_id])
+            source_ids.add(vessel_id)
+            plant["source_detection_ids"] = sorted(source_ids)
+    return updated
+
+
+def placement_target_bbox(placement: dict[str, Any]) -> np.ndarray | None:
+    bbox = placement.get("bbox_xyxy") or placement.get("bbox_xyxy_px")
+    if bbox is None:
+        bbox = (placement.get("render_to_input_optimization") or {}).get("target_bbox_xyxy")
+    return bbox_array(bbox)
+
+
+def placement_support_detection_id(placement: dict[str, Any]) -> int | None:
+    support = placement.get("support") or {}
+    value = placement.get("support_detection_id") or support.get("support_detection_id")
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_plant_composite_label(label: Any) -> bool:
+    normalized = str(label or "").lower()
+    return any(token in normalized for token in PLANT_COMPOSITE_LABELS)
+
+
+def is_vessel_composite_label(label: Any) -> bool:
+    normalized = str(label or "").lower()
+    return any(token in normalized for token in VESSEL_COMPOSITE_LABELS)
 
 
 def explicit_support_targets(
@@ -3550,7 +3680,8 @@ def add_vggt_fitted_room_background(
         z_back_override=plane_overrides.get("z_back"),
         side_x_override=plane_overrides.get("side_x"),
     )
-    stats["source"] = "vggt_textured_fitted_room_planes_expanded"
+    if plane_overrides or room_corner_plane_texture_path(vggt_dir) is not None:
+        stats["source"] = "vggt_textured_fitted_room_planes_expanded"
     stats["plane_detections_path"] = str(plane_path) if plane_path.is_file() else None
     stats["vggt_plane_overrides"] = plane_overrides
     return stats
@@ -3701,7 +3832,10 @@ def add_vggt_background_mesh(
         transform = fit_transform @ orientation_transform
         room_alignment["applied_transform_gltf"] = transform.tolist()
         mesh.apply_transform(fit_transform)
+        floor_flatness = vggt_floor_flatness_metric(mesh)
         floor_regularization = regularize_vggt_floor_vertices(mesh)
+        floor_regularization["flatness_before"] = floor_flatness
+        floor_regularization["flatness_after"] = vggt_floor_flatness_metric(mesh)
         alignment = "plane_camera_guided_room_alignment"
     else:
         floor_regularization = {"status": "skipped", "reason": "missing_placement_bounds"}
@@ -3756,6 +3890,36 @@ def regularize_vggt_floor_vertices(mesh: Any) -> dict[str, Any]:
         "band": float(band),
         "affected_vertex_count": affected,
         "affected_vertex_ratio": float(affected / len(vertices)),
+    }
+
+
+def vggt_floor_flatness_metric(mesh: Any) -> dict[str, Any]:
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) == 0:
+        return {"status": "unavailable", "reason": "empty_mesh"}
+    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    height = float(bounds[1, 1] - bounds[0, 1])
+    if height <= 1e-8:
+        return {"status": "unavailable", "reason": "degenerate_height"}
+    floor_y = float(bounds[0, 1])
+    band = max(0.18, height * 0.30)
+    floor_vertices = vertices[vertices[:, 1] <= floor_y + band]
+    if len(floor_vertices) == 0:
+        return {"status": "unavailable", "reason": "no_floor_band_vertices", "floor_y": floor_y, "band": band}
+    residuals = np.abs(floor_vertices[:, 1] - floor_y)
+    p95 = float(np.percentile(residuals, 95.0))
+    max_residual = float(np.max(residuals))
+    threshold = max(0.01, height * BACKGROUND_FLOOR_FLATNESS_REVIEW_RATIO)
+    return {
+        "status": "review" if p95 > threshold else "accepted",
+        "method": "lower_floor_band_y_residual_to_floor_y",
+        "floor_y": floor_y,
+        "band": float(band),
+        "sample_count": int(len(floor_vertices)),
+        "residual_mean_gltf": float(np.mean(residuals)),
+        "residual_p95_gltf": p95,
+        "residual_max_gltf": max_residual,
+        "review_threshold_gltf": float(threshold),
     }
 
 
@@ -4191,10 +4355,14 @@ def add_room_corner_background(
     x_pad = max(float(extent[0]) * (margin - 1.0), 0.08)
     z_pad = max(float(extent[2]) * (margin - 1.0), 0.08)
     y_pad = max(float(extent[1]) * 0.10, 0.05)
+    x_clearance = max(float(extent[0]) * ROOM_PLANE_OBJECT_CLEARANCE_RATIO, ROOM_PLANE_OBJECT_MIN_CLEARANCE)
+    z_clearance = max(float(extent[2]) * ROOM_PLANE_OBJECT_CLEARANCE_RATIO, ROOM_PLANE_OBJECT_MIN_CLEARANCE)
     x_min = float(placement_bounds[0, 0] - x_pad)
     x_max = float(placement_bounds[1, 0] + x_pad)
     floor_y = float(floor_y_override if floor_y_override is not None else placement_bounds[0, 1] - y_pad)
-    z_back = float(z_back_override if z_back_override is not None else placement_bounds[0, 2] - max(depth_offset, z_pad))
+    requested_z_back = float(z_back_override if z_back_override is not None else placement_bounds[0, 2] - max(depth_offset, z_pad))
+    z_back_limit = float(placement_bounds[0, 2] - z_clearance)
+    z_back = min(requested_z_back, z_back_limit)
     z_front = float(placement_bounds[1, 2] + z_pad)
     camera_frustum_wall_top = max(0.0, -z_back) * 0.56
     wall_top_y = float(
@@ -4203,7 +4371,9 @@ def add_room_corner_background(
             camera_frustum_wall_top,
         )
     )
-    side_x = float(side_x_override if side_x_override is not None else x_max)
+    requested_side_x = float(side_x_override if side_x_override is not None else x_max)
+    side_x_limit = float(placement_bounds[1, 0] + x_clearance)
+    side_x = max(requested_side_x, side_x_limit)
 
     texture_image = Image.open(texture_image_path).convert("RGB") if texture_image_path is not None else None
     texture_contract = room_corner_texture_contract(texture_image, coordinate_contract)
@@ -4303,6 +4473,17 @@ def add_room_corner_background(
             "wall_plane_ids": [],
             "usable_floor_bounds": [[x_min, z_back], [x_max, z_front]],
             "applied_transform_gltf": np.eye(4, dtype=np.float64).tolist(),
+            "room_plane_clearance": {
+                "method": "vggt_plane_outward_clamp_to_object_bounds",
+                "requested_z_back": requested_z_back,
+                "requested_side_x": requested_side_x,
+                "z_back_limit": z_back_limit,
+                "side_x_limit": side_x_limit,
+                "z_clearance": z_clearance,
+                "x_clearance": x_clearance,
+                "adjusted_z_back": z_back != requested_z_back,
+                "adjusted_side_x": side_x != requested_side_x,
+            },
         },
         "placement_bounds": placement_bounds.tolist(),
         "source_bounds": merged.tolist(),
@@ -4318,6 +4499,7 @@ def add_room_corner_background(
         "wall_top_y": wall_top_y,
         "z_back": z_back,
         "z_front": z_front,
+        "side_x": side_x,
     }
 
 

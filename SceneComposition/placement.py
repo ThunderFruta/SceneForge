@@ -27,6 +27,7 @@ from SceneComposition.composer import (
     object_pair_overlap_warning,
     placement_is_composable,
     placement_transform_to_gltf,
+    projected_transform_bbox,
     projection_quality_report,
     resolve_object_mesh_path,
     snap_transform_to_support_bounds,
@@ -65,6 +66,16 @@ STRUCTURAL_FLOOR_SUPPORT_MIN_POINTS = 128
 STRUCTURAL_FLOOR_SUPPORT_BOUNDS_MARGIN_RATIO = 1.0
 OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE = 0.15
 OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE = 0.20
+OCCUPANCY_REFIT_STRONG_OVERLAP_REDUCTION_RATIO = 0.60
+SILHOUETTE_REVIEW_LOSS_THRESHOLD = 0.55
+SCALE_PRIOR_REVIEW_THRESHOLD = 0.22
+VGGT_POINT_REVIEW_LOSS_THRESHOLD = 0.16
+MESH_FACE_WARNING_THRESHOLD = 100000
+MESH_SUPPORT_SHEET_FLATNESS_RATIO = 0.08
+MESH_SUPPORT_SHEET_AREA_RATIO = 0.45
+
+def _optimization_progress(message: str) -> None:
+    print(f"[fit-placements] {message}", flush=True)
 
 
 def choose_object_supports(
@@ -104,6 +115,15 @@ def choose_object_supports(
         object_scale_factor=object_scale_factor,
         floor_y_gltf=floor_y_gltf,
     )
+    stacked_candidates = build_stacked_support_candidates(
+        geometry.get("objects", []),
+        object_dirs=object_dirs,
+        object_mesh_name=object_mesh_name,
+        include_review=include_review,
+        placement_orientation=placement_orientation,
+        object_scale_factor=object_scale_factor,
+        floor_y_gltf=floor_y_gltf,
+    )
 
     objects = [
         choose_support_for_object(
@@ -115,6 +135,7 @@ def choose_object_supports(
             floor_y_gltf=floor_y_gltf,
             wall_plane=wall_plane,
             table_candidates=table_candidates,
+            stacked_candidates=stacked_candidates,
         )
         for placement in geometry.get("objects", [])
     ]
@@ -215,17 +236,24 @@ def fit_object_placements(
     targets = load_json(fit_targets_path)
     support_by_id = {int(item["detection_id"]): item for item in supports.get("objects", [])}
     coordinate_contract = targets.get("coordinate_contract") or supports.get("coordinate_contract")
-    objects = [
-        fit_placement_for_target(
-            target=target,
-            support_record=support_by_id.get(int(target.get("detection_id", 0))),
-            coordinate_contract=coordinate_contract,
-            placement_orientation=placement_orientation,
-            object_scale_factor=object_scale_factor,
-            optimize_placements=optimize_placements,
+    target_items = list(targets.get("objects", []))
+    _optimization_progress(f"starting placement optimization for {len(target_items)} objects (optimize={optimize_placements})")
+    objects = []
+    for index, target in enumerate(target_items, start=1):
+        detection_id = int(target.get("detection_id", 0))
+        label = str(target.get("detector_label") or "object")
+        _optimization_progress(f"{index}/{len(target_items)} initial-fit: id={detection_id} label={label}")
+        objects.append(
+            fit_placement_for_target(
+                target=target,
+                support_record=support_by_id.get(detection_id),
+                coordinate_contract=coordinate_contract,
+                placement_orientation=placement_orientation,
+                object_scale_factor=object_scale_factor,
+                optimize_placements=optimize_placements,
+            )
         )
-        for target in targets.get("objects", [])
-    ]
+    _optimization_progress("resolving dependent floor anchors")
     objects, dependent_resolution = resolve_dependent_support_surfaces(
         objects=objects,
         targets=targets.get("objects", []),
@@ -235,6 +263,7 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    _optimization_progress("resolving repeated-instance size priors")
     objects, size_resolution = resolve_repeated_instance_size_priors(
         objects=objects,
         targets=targets.get("objects", []),
@@ -244,6 +273,7 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    _optimization_progress("resolving asymmetric facing priors")
     objects, facing_resolution = resolve_asymmetric_facing_priors(
         objects=objects,
         targets=targets.get("objects", []),
@@ -253,6 +283,7 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    _optimization_progress("resolving floor occupancy priors")
     objects, occupancy_resolution = resolve_floor_occupancy_priors(
         objects=objects,
         targets=targets.get("objects", []),
@@ -262,6 +293,7 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    _optimization_progress("rendering silhouette visibility annotations")
     visibility_resolution = annotate_visibility_aware_silhouettes(
         objects=objects,
         targets=targets.get("objects", []),
@@ -289,6 +321,10 @@ def fit_object_placements(
             "support_footprint_outside_warning_ratio": SUPPORT_FOOTPRINT_WARNING_RATIO,
             "support_footprint_outside_reject_ratio": SUPPORT_FOOTPRINT_REJECT_RATIO,
             "background_penetration_epsilon": BACKGROUND_PENETRATION_EPSILON,
+            "silhouette_review_loss": SILHOUETTE_REVIEW_LOSS_THRESHOLD,
+            "scale_prior_review_loss": SCALE_PRIOR_REVIEW_THRESHOLD,
+            "vggt_point_review_loss": VGGT_POINT_REVIEW_LOSS_THRESHOLD,
+            "mesh_face_warning_threshold": MESH_FACE_WARNING_THRESHOLD,
         },
         "artifacts": {
             "object_placements": str(output_dir / "object_placements.json"),
@@ -326,6 +362,7 @@ def choose_support_for_object(
     floor_y_gltf: float | None,
     wall_plane: dict[str, Any] | None,
     table_candidates: list[dict[str, Any]],
+    stacked_candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
     detection_id = int(placement.get("detection_id", 0))
     label = str(placement.get("detector_label") or "object")
@@ -334,6 +371,10 @@ def choose_support_for_object(
     warnings: list[str] = []
     if mesh_path is None:
         warnings.append("missing_object_mesh")
+    mesh_bounds = mesh_bounds_for_path(mesh_path)
+    mesh_quality = mesh_quality_report(mesh_path, mesh_bounds)
+    if mesh_quality_needs_review(mesh_quality):
+        warnings.append("mesh_quality_warning")
     if placement.get("box_type") == "failed":
         warnings.append("object_geometry_failed")
     if bool(placement.get("needs_review", False)):
@@ -350,6 +391,7 @@ def choose_support_for_object(
         "support": None,
         "evidence": {
             "mesh_available": mesh_path is not None,
+            "mesh_quality": mesh_quality,
             "box_type": placement.get("box_type"),
             "point_count": int(placement.get("point_count") or 0),
             "valid_point_ratio": float(placement.get("valid_point_ratio") or 0.0),
@@ -367,8 +409,13 @@ def choose_support_for_object(
         return base
 
     table_match = best_table_candidate_for_object(placement.get("bbox_xyxy"), table_candidates)
+    stacked_match = best_stacked_candidate_for_object(
+        placement.get("bbox_xyxy"),
+        detection_id=detection_id,
+        stacked_candidates=stacked_candidates,
+    )
     if is_tabletop_object_label(label) and table_match is not None:
-        base["support"] = tabletop_support(table_match)
+        base["support"] = tabletop_support(stacked_match or table_match)
         return base
 
     if is_wall_object_label(label) and wall_plane is not None:
@@ -426,6 +473,8 @@ def build_fit_target_for_object(
     visible_points_path = write_visible_points_npy(placement, detection_id, label, points_output_dir)
     mesh_bounds = mesh_bounds_for_path(mesh_path)
     mesh_quality = mesh_quality_report(mesh_path, mesh_bounds)
+    if mesh_quality_needs_review(mesh_quality):
+        warnings.append("mesh_quality_warning")
     support = (support_record or {}).get("support") or unknown_support()
     needs_review = bool((support_record or {}).get("needs_review")) or bool(placement.get("needs_review")) or bool(warnings)
     status = "ready" if mesh_path is not None and placement.get("box_type") != "failed" else "failed"
@@ -467,6 +516,9 @@ def fit_placement_for_target(
 ) -> dict[str, Any]:
     detection_id = int(target.get("detection_id", 0))
     label = str(target.get("detector_label") or "object")
+    _optimization_progress(
+        f"fit target id={detection_id} label={label} optimize={optimize_placements}"
+    )
     support = target.get("support") or (support_record or {}).get("support") or unknown_support()
     mesh_path = Path(str(target.get("mesh_path"))) if target.get("mesh_path") else None
     base = {
@@ -487,6 +539,7 @@ def fit_placement_for_target(
         "orientation_search": None,
         "support_contact": None,
         "losses": empty_losses(),
+        "target_mesh_quality": target.get("mesh_quality"),
         "quality": {
             "projection_status": "unavailable",
             "support_status": "unavailable",
@@ -540,6 +593,25 @@ def fit_placement_for_target(
                 enabled=bool(optimize_placements),
             )
         transform = np.asarray(optimization["transform"], dtype=np.float64)
+        transform, support_center_adjustment = constrain_stacked_support_transform(
+            transform=transform,
+            source_bounds=source_bounds,
+            support=support,
+        )
+        if support_center_adjustment.get("status") == "applied":
+            adjusted_bbox = projected_transform_bbox(source_bounds, transform, coordinate_contract)
+            if adjusted_bbox is not None:
+                optimization["report"]["optimized_projected_bbox_xyxy"] = adjusted_bbox.tolist()
+                optimization["report"]["optimized_bbox_loss"] = bbox_projection_loss_safe(
+                    adjusted_bbox,
+                    bbox_array(target.get("bbox_xyxy")),
+                )
+                optimization["report"]["projection_quality"] = projection_quality_report(
+                    adjusted_bbox,
+                    bbox_array(target.get("bbox_xyxy")),
+                    allow_occluded_bottom=support.get("support_kind") == "floor",
+                )
+            optimization["report"]["support_center_adjustment"] = support_center_adjustment
         transformed_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
         support_contact_loss = support_contact_distance(source_bounds, transform, support_y)
         support_contact = mesh_support_contact_report(mesh_path, transform, support.get("support_kind"))
@@ -563,6 +635,12 @@ def fit_placement_for_target(
             source_bounds=source_bounds,
             transform=transform,
         )
+        quality_flags = placement_quality_flags(
+            target=target,
+            silhouette_loss=silhouette_loss,
+            vggt_point_loss=vggt_points.get("loss"),
+            scale_delta=optimization["report"].get("uniform_scale_delta"),
+        )
         needs_review = (
             bool(target.get("needs_review"))
             or mode == "unknown_5dof"
@@ -570,6 +648,7 @@ def fit_placement_for_target(
             or projection_quality.get("status") == "accepted_occluded_bottom"
             or support_status == "rejected"
             or collision_status == "rejected"
+            or bool(quality_flags)
         )
         losses = placement_losses(
             bbox_loss=optimization["report"].get("optimized_bbox_loss", optimization["report"].get("optimized_loss")),
@@ -582,7 +661,7 @@ def fit_placement_for_target(
         )
         base.update(
             status="accepted",
-            reason=None if not needs_review else placement_review_reason(mode, projection_quality, support_status),
+            reason=None if not needs_review else placement_review_reason(mode, projection_quality, support_status, quality_flags),
             needs_review=needs_review,
             transform_gltf=transform.tolist(),
             source_bounds=source_bounds.tolist(),
@@ -602,6 +681,7 @@ def fit_placement_for_target(
                 "support_contact": support_contact,
                 "support_footprint": footprint,
                 "support_penetration": penetration,
+                "review_flags": quality_flags,
                 "warnings": placement_warnings(
                     target,
                     mode,
@@ -610,13 +690,58 @@ def fit_placement_for_target(
                     collision_status,
                     footprint,
                     penetration,
+                    quality_flags,
                 ),
             },
+        )
+        _optimization_progress(
+            f"fit result id={detection_id} label={label}: accepted"
         )
         return base
     except Exception as exc:
         base.update(reason=f"placement_fit_failed: {exc}")
+        _optimization_progress(
+            f"fit result id={detection_id} label={label}: failed"
+        )
         return base
+
+
+def constrain_stacked_support_transform(
+    *,
+    transform: np.ndarray,
+    source_bounds: np.ndarray,
+    support: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    evidence = support.get("evidence") or {}
+    if evidence.get("source") != "stacked_support_object_top_bounds":
+        return transform, {"status": "skipped", "reason": "not_stacked_support"}
+    support_bounds = bounds_array(support.get("support_bounds_gltf"))
+    if support_bounds is None:
+        return transform, {"status": "skipped", "reason": "missing_support_bounds"}
+    current_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    current_center = (current_bounds[0] + current_bounds[1]) / 2.0
+    support_center = (support_bounds[0] + support_bounds[1]) / 2.0
+    adjusted = np.asarray(transform, dtype=np.float64).copy()
+    delta_x = float(support_center[0] - current_center[0])
+    delta_z = float(support_center[2] - current_center[2])
+    adjusted[0, 3] += delta_x
+    adjusted[2, 3] += delta_z
+    return adjusted, {
+        "status": "applied",
+        "method": "stacked_support_center_xz_lock",
+        "support_detection_id": support.get("support_detection_id"),
+        "delta_gltf": [delta_x, 0.0, delta_z],
+        "support_center_gltf": [float(support_center[0]), float(support_center[1]), float(support_center[2])],
+        "previous_center_gltf": [float(current_center[0]), float(current_center[1]), float(current_center[2])],
+    }
+
+
+def bbox_projection_loss_safe(projected: np.ndarray | None, target: np.ndarray | None) -> float | None:
+    if projected is None or target is None:
+        return None
+    from SceneComposition.composer import bbox_projection_loss
+
+    return bbox_projection_loss(projected, target)
 
 
 def resolve_dependent_support_surfaces(
@@ -632,6 +757,7 @@ def resolve_dependent_support_surfaces(
     by_id = {int(item.get("detection_id", 0)): item for item in objects}
     refreshed = list(objects)
     refreshed_ids: list[int] = []
+    max_refits = max(1, len(targets))
     for index, target in enumerate(targets):
         detection_id = int(target.get("detection_id", 0))
         support = dict(target.get("support") or (support_by_id.get(detection_id) or {}).get("support") or {})
@@ -664,6 +790,9 @@ def resolve_dependent_support_surfaces(
         refreshed[index] = record
         by_id[detection_id] = record
         refreshed_ids.append(detection_id)
+        _optimization_progress(
+            f"resolved dependent floor support ({len(refreshed_ids)}/{max_refits} checks): id={detection_id}"
+        )
     return refreshed, {
         "enabled": True,
         "refit_count": len(refreshed_ids),
@@ -696,8 +825,11 @@ def resolve_repeated_instance_size_priors(
     target_by_id = {int(target.get("detection_id", 0)): target for target in targets}
     refreshed = list(objects)
     refit_ids: list[int] = []
+    pending_groups = sum(1 for members in groups.values() if len(members) >= 2)
+    group_index = 0
     group_reports: list[dict[str, Any]] = []
     for (label_key, support_kind), members in sorted(groups.items()):
+        group_index += 1
         if len(members) < 2:
             continue
         extents = []
@@ -746,6 +878,9 @@ def resolve_repeated_instance_size_priors(
             refreshed[index] = record
             refit_ids.append(detection_id)
             group_refit_ids.append(detection_id)
+        _optimization_progress(
+            f"size-prior group {group_index}/{max(1, pending_groups)}: label={label_key} support={support_kind} size-refits={len(group_refit_ids)}"
+        )
         if group_refit_ids:
             group_reports.append(
                 {
@@ -924,6 +1059,7 @@ def resolve_floor_occupancy_priors(
     fixed_anchor_ids = {int(anchor["detection_id"]) for anchor in anchors}
     refit_ids: list[int] = []
     refit_reports: dict[int, dict[str, Any]] = {}
+    pending_items = len(refreshed)
     for index, item in enumerate(list(refreshed)):
         detection_id = int(item.get("detection_id", 0))
         if item.get("status") != "accepted" or detection_id in fixed_anchor_ids:
@@ -962,6 +1098,9 @@ def resolve_floor_occupancy_priors(
             )
         if not avoid:
             continue
+        _optimization_progress(
+            f"occupancy candidate id={detection_id}: checking {len(avoid)} avoidance objects"
+        )
         initial_overlap = total_bounds_overlap_volume(bounds, [entry["bounds_gltf"] for entry in avoid])
         facing_anchor = nearest_facing_anchor(bounds, [anchor for anchor in anchors if int(anchor["detection_id"]) in fixed_anchor_ids])
         record = fit_placement_for_target(
@@ -994,6 +1133,9 @@ def resolve_floor_occupancy_priors(
         refreshed[index] = record
         by_id[detection_id] = record
         refit_ids.append(detection_id)
+        _optimization_progress(
+            f"occupancy refit accepted ({len(refit_ids)}/{pending_items} items): id={detection_id}"
+        )
         refit_reports[detection_id] = {
             "avoid_count": len(avoid),
             "avoid_detection_ids": [int(entry["detection_id"]) for entry in avoid],
@@ -1033,7 +1175,12 @@ def floor_occupancy_refit_acceptance(
     optimized_projection = optimization_bbox_loss(candidate)
     initial_total = optimization_total_loss(initial)
     optimized_total = optimization_total_loss(candidate)
+    overlap_reduction = max(0.0, float(initial_overlap) - float(optimized_overlap))
+    overlap_reduction_ratio = overlap_reduction / max(float(initial_overlap), 1e-8)
+    strong_overlap_fix = overlap_reduction_ratio >= OCCUPANCY_REFIT_STRONG_OVERLAP_REDUCTION_RATIO
     if (
+        not strong_overlap_fix
+        and
         initial_projection is not None
         and optimized_projection is not None
         and optimized_projection > initial_projection + OCCUPANCY_REFIT_PROJECTION_LOSS_TOLERANCE
@@ -1054,6 +1201,7 @@ def floor_occupancy_refit_acceptance(
     )
     if (
         not projection_improved
+        and not strong_overlap_fix
         and initial_total is not None
         and optimized_total is not None
         and optimized_total > initial_total + OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE
@@ -1077,6 +1225,8 @@ def floor_occupancy_refit_acceptance(
         "optimized_total_loss": optimized_total,
         "total_loss_tolerance": OCCUPANCY_REFIT_TOTAL_LOSS_TOLERANCE,
         "projection_improved": bool(projection_improved),
+        "overlap_reduction_ratio": float(overlap_reduction_ratio),
+        "strong_overlap_fix": bool(strong_overlap_fix),
     }
 
 
@@ -1190,6 +1340,13 @@ def reconcile_visibility_explained_projection_reviews(objects: list[dict[str, An
         quality = ensure_quality(item)
         projection_status = quality.get("projection_status")
         if projection_status != "accepted_occluded_bottom":
+            continue
+        blocking_flags = [
+            flag
+            for flag in (quality.get("review_flags") or [])
+            if flag not in {"occluded_bottom_edge_tolerated"}
+        ]
+        if blocking_flags:
             continue
         if quality.get("support_status") != "accepted" or quality.get("collision_status") != "accepted":
             continue
@@ -1390,6 +1547,65 @@ def build_table_support_candidates(
                 "support_bounds_gltf": bounds.tolist(),
                 "support_plane_id": f"object_top_{detection_id:02d}_{slugify(label)}",
                 "support_label": placement.get("detector_label"),
+                "evidence": {
+                    "source": "support_object_mesh_top_bounds",
+                    "support_object_bbox_xyxy_px": placement.get("bbox_xyxy"),
+                    "support_object_bounds_gltf": bounds.tolist(),
+                },
+            }
+        )
+    return candidates
+
+
+def build_stacked_support_candidates(
+    placements: list[dict[str, Any]],
+    *,
+    object_dirs: dict[int, Path],
+    object_mesh_name: str,
+    include_review: bool,
+    placement_orientation: str,
+    object_scale_factor: float,
+    floor_y_gltf: float | None,
+) -> list[dict[str, Any]]:
+    if floor_y_gltf is None:
+        return []
+    candidates: list[dict[str, Any]] = []
+    for placement in placements:
+        if not placement_is_composable(placement, include_review=include_review):
+            continue
+        label = str(placement.get("detector_label") or "")
+        if not is_tabletop_object_label(label):
+            continue
+        detection_id = int(placement.get("detection_id", 0))
+        object_dir = object_dirs.get(int(placement.get("source_object_dir_id") or detection_id))
+        mesh_path = resolve_object_mesh_path(object_dir, object_mesh_name) if object_dir else None
+        if mesh_path is None:
+            continue
+        try:
+            source_bounds = combined_bounds(load_meshes(mesh_path))
+            transform = placement_transform_to_gltf(
+                placement,
+                placement_orientation=placement_orientation,
+                object_scale_factor=object_scale_factor,
+            )
+            transform, _delta = snap_transform_to_support_bounds(source_bounds, transform, floor_y_gltf)
+            bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+        except Exception:
+            continue
+        candidates.append(
+            {
+                "detection_id": detection_id,
+                "detector_label": placement.get("detector_label"),
+                "bbox_xyxy_px": placement.get("bbox_xyxy"),
+                "support_y_gltf": float(bounds[1, 1]),
+                "support_bounds_gltf": bounds.tolist(),
+                "support_plane_id": f"object_top_{detection_id:02d}_{slugify(label)}",
+                "support_label": placement.get("detector_label"),
+                "evidence": {
+                    "source": "stacked_support_object_top_bounds",
+                    "support_object_bbox_xyxy_px": placement.get("bbox_xyxy"),
+                    "support_object_bounds_gltf": bounds.tolist(),
+                },
             }
         )
     return candidates
@@ -1409,8 +1625,74 @@ def best_table_candidate_for_object(bbox_xyxy: Any, table_candidates: list[dict[
         if score > best_score:
             best = dict(candidate)
             best["support_confidence"] = float(score)
+            evidence = dict(best.get("evidence") or {})
+            evidence.update(
+                {
+                    "object_support_overlap_score": float(score),
+                    "object_bbox_xyxy_px": bbox.tolist(),
+                    "support_bbox_xyxy_px": table_bbox.tolist(),
+                    "object_bbox_overlap_area_px": float(bbox_overlap_area(bbox, table_bbox)),
+                    "object_bottom_y_px": float(bbox[3]),
+                    "support_top_y_px": float(table_bbox[1]),
+                }
+            )
+            best["evidence"] = evidence
             best_score = score
     return best
+
+
+def best_stacked_candidate_for_object(
+    bbox_xyxy: Any,
+    *,
+    detection_id: int,
+    stacked_candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    bbox = bbox_array(bbox_xyxy)
+    if bbox is None:
+        return None
+    best: dict[str, Any] | None = None
+    best_score = 0.0
+    for candidate in stacked_candidates:
+        if int(candidate.get("detection_id", 0)) == int(detection_id):
+            continue
+        support_bbox = bbox_array(candidate.get("bbox_xyxy_px"))
+        if support_bbox is None:
+            continue
+        score = stacked_support_score(bbox, support_bbox)
+        if score > best_score:
+            best = dict(candidate)
+            best["support_confidence"] = float(score)
+            evidence = dict(best.get("evidence") or {})
+            evidence.update(
+                {
+                    "object_support_overlap_score": float(score),
+                    "object_bbox_xyxy_px": bbox.tolist(),
+                    "support_bbox_xyxy_px": support_bbox.tolist(),
+                    "object_bbox_overlap_area_px": float(bbox_overlap_area(bbox, support_bbox)),
+                    "object_bottom_y_px": float(bbox[3]),
+                    "support_top_y_px": float(support_bbox[1]),
+                    "support_bottom_y_px": float(support_bbox[3]),
+                }
+            )
+            best["evidence"] = evidence
+            best_score = score
+    return best
+
+
+def stacked_support_score(bbox: np.ndarray, support_bbox: np.ndarray) -> float:
+    object_area = max(float((bbox[2] - bbox[0]) * (bbox[3] - bbox[1])), 1.0)
+    overlap_ratio = bbox_overlap_area(bbox, support_bbox) / object_area
+    center_x = float((bbox[0] + bbox[2]) / 2.0)
+    object_center_y = float((bbox[1] + bbox[3]) / 2.0)
+    support_center_y = float((support_bbox[1] + support_bbox[3]) / 2.0)
+    horizontal_inside = float(support_bbox[0]) <= center_x <= float(support_bbox[2])
+    bottom_y = float(bbox[3])
+    support_height = bbox_height(support_bbox)
+    vertically_supported = float(support_bbox[1]) <= bottom_y <= float(support_bbox[1]) + max(24.0, support_height * 0.35)
+    support_is_under_object = support_center_y > object_center_y
+    if not horizontal_inside or not vertically_supported or not support_is_under_object:
+        return 0.0
+    return float(min(0.92, 0.62 + overlap_ratio * 0.30))
 
 
 def table_support_score(bbox: np.ndarray, table_bbox: np.ndarray) -> float:
@@ -1592,6 +1874,14 @@ def tabletop_support(candidate: dict[str, Any]) -> dict[str, Any]:
         "support_confidence": confidence,
         "support_y_gltf": float(candidate["support_y_gltf"]),
         "support_bounds_gltf": candidate.get("support_bounds_gltf"),
+        "finite_support_plane": {
+            "source": "support_object_top_bounds",
+            "support_detection_id": int(candidate["detection_id"]),
+            "support_bounds_gltf": candidate.get("support_bounds_gltf"),
+            "support_y_gltf": float(candidate["support_y_gltf"]),
+            "footprint_area_gltf": support_bounds_footprint_area(candidate.get("support_bounds_gltf")),
+        },
+        "evidence": candidate.get("evidence") or {},
         "reason": "tabletop_label_with_2d_support_overlap",
     }
 
@@ -2035,7 +2325,12 @@ def empty_losses() -> dict[str, Any]:
     }
 
 
-def placement_review_reason(mode: str, projection_quality: dict[str, Any], support_status: str) -> str:
+def placement_review_reason(
+    mode: str,
+    projection_quality: dict[str, Any],
+    support_status: str,
+    quality_flags: list[str] | None = None,
+) -> str:
     if mode == "unknown_5dof":
         return UNKNOWN_SUPPORT_REVIEW_REASON
     if projection_quality.get("status") == "accepted_occluded_bottom":
@@ -2044,6 +2339,8 @@ def placement_review_reason(mode: str, projection_quality: dict[str, Any], suppo
         return str(projection_quality.get("reason") or "projection_rejected")
     if support_status == "rejected":
         return "support_contact_rejected"
+    if quality_flags:
+        return str(quality_flags[0])
     return "review_required_by_evidence"
 
 
@@ -2055,6 +2352,7 @@ def placement_warnings(
     collision_status: str,
     footprint: dict[str, Any],
     penetration: dict[str, Any],
+    quality_flags: list[str] | None = None,
 ) -> list[str]:
     warnings = list(target.get("warnings") or [])
     if mode == "unknown_5dof":
@@ -2073,7 +2371,36 @@ def placement_warnings(
         warnings.append("support_footprint_rejected")
     if penetration.get("penetrates_support"):
         warnings.append("support_penetration")
+    warnings.extend(quality_flags or [])
     return sorted(set(warnings))
+
+
+def placement_quality_flags(
+    *,
+    target: dict[str, Any],
+    silhouette_loss: Any,
+    vggt_point_loss: Any,
+    scale_delta: Any,
+) -> list[str]:
+    flags: list[str] = []
+    try:
+        if silhouette_loss is not None and float(silhouette_loss) > SILHOUETTE_REVIEW_LOSS_THRESHOLD:
+            flags.append("poor_silhouette_fit")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if vggt_point_loss is not None and float(vggt_point_loss) > VGGT_POINT_REVIEW_LOSS_THRESHOLD:
+            flags.append("weak_visible_point_fit")
+    except (TypeError, ValueError):
+        pass
+    try:
+        if scale_delta not in (None, 0) and abs(float(np.log(float(scale_delta)))) > SCALE_PRIOR_REVIEW_THRESHOLD:
+            flags.append("large_scale_prior")
+    except (TypeError, ValueError):
+        pass
+    if mesh_quality_needs_review(target.get("mesh_quality") or {}):
+        flags.append("mesh_quality_warning")
+    return sorted(set(flags))
 
 
 def annotate_pairwise_collision_metrics(objects: list[dict[str, Any]]) -> None:
@@ -2128,6 +2455,13 @@ def support_bounds_array(value: Any) -> np.ndarray | None:
     return bounds
 
 
+def support_bounds_footprint_area(value: Any) -> float | None:
+    bounds = support_bounds_array(value)
+    if bounds is None:
+        return None
+    return float(max(0.0, bounds[1, 0] - bounds[0, 0]) * max(0.0, bounds[1, 2] - bounds[0, 2]))
+
+
 def matrix_array(value: Any) -> np.ndarray | None:
     try:
         matrix = np.asarray(value, dtype=np.float64)
@@ -2175,15 +2509,97 @@ def mesh_quality_report(mesh_path: Path | None, mesh_bounds: np.ndarray | None) 
             "has_texture": False,
             "has_large_support_sheet": None,
             "bounds_degenerate": True,
+            "face_count": None,
+            "vertex_count": None,
+            "is_manifold": None,
+            "material_count": None,
+            "warnings": ["missing_mesh"],
         }
     bounds_degenerate = True
     if mesh_bounds is not None:
         bounds_degenerate = bool(np.any((mesh_bounds[1] - mesh_bounds[0]) <= 1e-8))
+    face_count = None
+    vertex_count = None
+    is_manifold = None
+    material_count = None
+    has_large_support_sheet = None
+    warnings: list[str] = []
+    try:
+        meshes = load_meshes(mesh_path)
+        face_count = int(sum(array_length(getattr(mesh, "faces", None)) for mesh in meshes))
+        vertex_count = int(sum(array_length(getattr(mesh, "vertices", None)) for mesh in meshes))
+        is_manifold = bool(all(bool(getattr(mesh, "is_watertight", False)) for mesh in meshes)) if meshes else None
+        material_count = int(sum(mesh_material_count(mesh) for mesh in meshes))
+        has_large_support_sheet = bool(any(mesh_has_large_support_sheet(mesh) for mesh in meshes))
+    except Exception:
+        warnings.append("mesh_inspection_failed")
+    if face_count is not None and face_count > MESH_FACE_WARNING_THRESHOLD:
+        warnings.append("dense_mesh")
+    if is_manifold is False:
+        warnings.append("non_manifold_mesh")
+    if bounds_degenerate:
+        warnings.append("degenerate_bounds")
+    if has_large_support_sheet:
+        warnings.append("large_support_sheet")
     return {
         "has_texture": "textured" in mesh_path.name.lower() or mesh_path.suffix.lower() == ".glb",
-        "has_large_support_sheet": None,
+        "has_large_support_sheet": has_large_support_sheet,
         "bounds_degenerate": bounds_degenerate,
+        "face_count": face_count,
+        "vertex_count": vertex_count,
+        "is_manifold": is_manifold,
+        "material_count": material_count,
+        "warnings": sorted(set(warnings)),
     }
+
+
+def mesh_material_count(mesh: Any) -> int:
+    visual = getattr(mesh, "visual", None)
+    material = getattr(visual, "material", None)
+    if material is not None:
+        return 1
+    materials = getattr(visual, "materials", None)
+    if materials is not None:
+        try:
+            return len(materials)
+        except TypeError:
+            return 1
+    return 0
+
+
+def array_length(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(len(value))
+    except TypeError:
+        return 0
+
+
+def mesh_has_large_support_sheet(mesh: Any) -> bool:
+    vertices = np.asarray(getattr(mesh, "vertices", []), dtype=np.float64)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or len(vertices) < 8:
+        return False
+    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    extent = bounds[1] - bounds[0]
+    if not np.isfinite(extent).all() or np.any(extent <= 1e-8):
+        return False
+    bottom_y = float(bounds[0, 1])
+    band = max(float(extent[1]) * MESH_SUPPORT_SHEET_FLATNESS_RATIO, 1e-4)
+    bottom = vertices[vertices[:, 1] <= bottom_y + band]
+    if len(bottom) < 4:
+        return False
+    bottom_bounds = np.stack([bottom.min(axis=0), bottom.max(axis=0)], axis=0)
+    bottom_area = max(0.0, float(bottom_bounds[1, 0] - bottom_bounds[0, 0])) * max(
+        0.0, float(bottom_bounds[1, 2] - bottom_bounds[0, 2])
+    )
+    total_area = max(1e-8, float(extent[0] * extent[2]))
+    return bool(bottom_area / total_area >= MESH_SUPPORT_SHEET_AREA_RATIO and len(bottom) / len(vertices) >= 0.08)
+
+
+def mesh_quality_needs_review(report: dict[str, Any]) -> bool:
+    warnings = set(str(value) for value in (report.get("warnings") or []))
+    return bool({"dense_mesh", "non_manifold_mesh", "degenerate_bounds", "large_support_sheet", "missing_mesh"} & warnings)
 
 
 def first_plane_with_subtype(report: dict[str, Any], subtype: str) -> dict[str, Any] | None:
@@ -2297,6 +2713,7 @@ def placement_quality_report(objects: list[dict[str, Any]]) -> dict[str, Any]:
             "detection_id": item.get("detection_id"),
             "detector_label": item.get("detector_label"),
             "reason": item.get("reason"),
+            "review_flags": (item.get("quality") or {}).get("review_flags") or [],
             "warnings": (item.get("quality") or {}).get("warnings") or [],
         }
         for item in objects
@@ -2323,6 +2740,17 @@ def placement_quality_report(objects: list[dict[str, Any]]) -> dict[str, Any]:
             "silhouette_visibility": silhouette_visibility_statuses,
             "vggt_points": vggt_point_statuses,
             "support_footprint": support_footprint_statuses,
+            "review_reasons": status_counts(
+                reason
+                for item in objects
+                for reason in review_reasons_for_item(item)
+            ),
+            "mesh_quality": status_counts(
+                warning
+                for item in objects
+                for warning in (((item.get("quality") or {}).get("warnings") or []) + ((item.get("target_mesh_quality") or {}).get("warnings") or []))
+                if str(warning).startswith(("mesh_", "dense_", "non_", "large_support", "degenerate"))
+            ),
         },
         "support_modes": status_counts(((item.get("support") or {}).get("mode")) for item in objects),
         "losses": loss_summaries(objects),
@@ -2334,6 +2762,15 @@ def placement_quality_report(objects: list[dict[str, Any]]) -> dict[str, Any]:
         "object_overlap_warning_count": len(overlap_warnings),
         "object_overlap_warnings": overlap_warnings,
     }
+
+
+def review_reasons_for_item(item: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    if item.get("reason"):
+        reasons.append(str(item.get("reason")))
+    reasons.extend(str(flag) for flag in ((item.get("quality") or {}).get("review_flags") or []))
+    reasons.extend(str(warning) for warning in ((item.get("quality") or {}).get("warnings") or []))
+    return sorted(set(reasons)) or ["none"]
 
 
 def status_counts(values: Any) -> dict[str, int]:

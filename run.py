@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
@@ -20,6 +23,58 @@ class CliError(RuntimeError):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="SceneForge staged SAM3/object mesh and empty-room VGGT scene pipeline.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    process_image = subparsers.add_parser(
+        "process-image",
+        aliases=("auto", "run-image"),
+        help="Run the staged SceneForge pipeline end-to-end from one source image.",
+    )
+    process_image.add_argument("--image", required=True)
+    process_image.add_argument("--output-root", default="Output/Latest")
+    process_image.add_argument(
+        "--clean-output",
+        action="store_true",
+        help="Delete the output root before running. Refuses to delete paths outside Output/.",
+    )
+    process_image.add_argument("--detector-backend", choices=PUBLIC_DETECTOR_BACKENDS, default="ram-groundingdino-sam3")
+    process_image.add_argument("--device", default="auto")
+    process_image.add_argument("--open-vocab-root")
+    process_image.add_argument("--text-prompt-preset", default="scene-primitives-v1")
+    process_image.add_argument("--text-prompt")
+    process_image.add_argument("--no-refresh-text-prompt", dest="refresh_text_prompt", action="store_false", default=True)
+    process_image.add_argument("--box-threshold", type=float, default=0.35)
+    process_image.add_argument("--text-threshold", type=float, default=0.25)
+    process_image.add_argument("--groundingdino-repo-dir")
+    process_image.add_argument("--groundingdino-config")
+    process_image.add_argument("--groundingdino-checkpoint")
+    process_image.add_argument("--ram-repo-dir")
+    process_image.add_argument("--ram-checkpoint")
+    process_image.add_argument("--sam3-repo-dir")
+    process_image.add_argument("--sam3-model-dir")
+    process_image.add_argument("--completion-backend", choices=("none", "sdxl-inpaint", "flux-fill", "openai-image"), default="openai-image")
+    process_image.add_argument("--completion-model", default="gpt-5.5")
+    process_image.add_argument("--completion-canvas-size", type=int, default=1024)
+    process_image.add_argument("--completion-max-objects", type=int, default=0)
+    process_image.add_argument("--empty-room-backend", choices=("openai-image", "fake"), default="openai-image")
+    process_image.add_argument("--empty-room-model", default="gpt-image-1.5")
+    process_image.add_argument("--vggt-backend", choices=("vggt", "fake"), default="vggt")
+    process_image.add_argument("--vggt-model", default="facebook/VGGT-1B")
+    process_image.add_argument("--vggt-repo-dir")
+    process_image.add_argument("--vggt-checkpoint")
+    process_image.add_argument("--vggt-cache-dir", default="Models/Geometry/VGGT/hf-cache")
+    process_image.add_argument("--vggt-local-only", action="store_true")
+    process_image.add_argument("--object-backend", choices=("hunyuan3d", "triposr", "sam3d-objects"), default="hunyuan3d")
+    process_image.add_argument("--object-model", default="tencent/Hunyuan3D-2.1")
+    process_image.add_argument("--object-model-dir", default="Models/Mesh/TripoSR")
+    process_image.add_argument("--object-mesh-name", default="hunyuan3d_textured.glb")
+    process_image.add_argument("--max-objects", type=int, default=0)
+    process_image.add_argument("--object-scale-factor", type=float, default=0.85)
+    process_image.add_argument("--placement-orientation", choices=("upright", "obb"), default="upright")
+    process_image.add_argument("--background-fit", choices=("room-corner", "camera-clipped", "placement-bounds", "raw"), default="room-corner")
+    process_image.add_argument("--no-optimize-placements", action="store_true")
+    process_image.add_argument("--render-source-camera", action=argparse.BooleanOptionalAction, default=True)
+    process_image.add_argument("--blender", default="blender")
+    process_image.set_defaults(func=cmd_process_image)
 
 
     preflight = subparsers.add_parser("check-open-vocab-integration", help="Preflight local GroundingDINO/SAM3 repo and model paths.")
@@ -220,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     fit_placements.set_defaults(func=cmd_fit_object_placements)
 
     compose_scene = subparsers.add_parser("compose-scene", help="Combine empty-room VGGT background geometry, object placements, and object meshes into one GLB scene.")
-    compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_mesh.glb")
+    compose_scene.add_argument("--background", default="Output/Latest/background/empty_room_planes.glb")
     compose_scene.add_argument("--objects", default="Output/Latest/objects")
     compose_scene.add_argument("--object-geometry", default="Output/Latest/objects_vggt/object_geometry.json")
     compose_scene.add_argument("--placements", help="Use explicit placement/object_placements.json records instead of fitting directly from object_geometry.json.")
@@ -242,8 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
     compose_scene.add_argument(
         "--background-fit",
         choices=("room-corner", "camera-clipped", "placement-bounds", "raw"),
-        default="camera-clipped",
-        help="Use clipped empty-room VGGT points, a structural room corner, fitted background mesh, or raw GLB background.",
+        default="room-corner",
+        help="Use fitted textured planes by default; camera-clipped keeps the raw VGGT relief mesh as a debug mode.",
     )
     compose_scene.add_argument("--background-vggt-dir")
     compose_scene.add_argument("--background-stride", type=int, default=16)
@@ -364,6 +419,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional external command template for SAM 3D Objects. Supports {image}, {mask}, {output}, {object_dir}, {repo_dir}, {checkpoint}, and {device}.",
     )
     reconstruct_objects.set_defaults(func=cmd_reconstruct_objects)
+
+    texture_objects = subparsers.add_parser(
+        "texture-objects",
+        help="Run Hunyuan3D Paint over existing untextured Hunyuan object meshes.",
+    )
+    texture_objects.add_argument("--objects", default="Output/Latest/objects")
+    texture_objects.add_argument("--device", default="auto")
+    texture_objects.add_argument("--texture-resolution", type=int, default=512)
+    texture_objects.add_argument("--texture-views", type=int, default=6)
+    texture_objects.add_argument("--texture-prompt")
+    texture_objects.add_argument("--texture-reference-mode", choices=("original", "masked-crop"), default="original")
+    texture_objects.add_argument("--texture-remesh", dest="texture_remesh", action="store_true", default=True)
+    texture_objects.add_argument("--no-texture-remesh", dest="texture_remesh", action="store_false")
+    texture_objects.add_argument("--texture-matte-backend", choices=("auto", "bria-rmbg", "mask"), default="auto")
+    texture_objects.add_argument("--texture-matte-model-dir", default="Models/Segmentation/BRIA/RMBG-2.0")
+    texture_objects.add_argument("--max-objects", type=int, default=0)
+    texture_objects.set_defaults(func=cmd_texture_objects)
 
 
     metrics = subparsers.add_parser("compare-metrics", help="Compare original/generated metrics render folders.")
@@ -617,8 +689,290 @@ def cmd_render_scene_camera_view(args: argparse.Namespace) -> int:
         script_args=script_args,
     )
     _run_subprocess(command)
+    qa_path = Path(args.output).parent / "source_camera_visual_qa.json"
+    if qa_path.is_file():
+        try:
+            qa_report = json.loads(qa_path.read_text(encoding="utf-8"))
+            qa_report["status"] = "rendered"
+            qa_report["render_path"] = str(Path(args.output))
+            qa_report["render_exists"] = Path(args.output).is_file()
+            qa_path.write_text(json.dumps(qa_report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except Exception:
+            pass
     print(f"Wrote {Path(args.output)}")
     return 0
+
+
+def cmd_process_image(args: argparse.Namespace) -> int:
+    image_path = _require_file(args.image, "--image")
+    output_root = Path(args.output_root)
+    if args.clean_output:
+        _clean_output_root(output_root)
+    detect_dir = output_root / "detect"
+    objects_dir = output_root / "objects"
+    background_dir = output_root / "background"
+    objects_vggt_dir = output_root / "objects_vggt"
+    placement_dir = output_root / "placement"
+    scene_dir = output_root / "scene"
+
+    print(f"SceneForge automated image pipeline: {image_path}")
+    print(f"Output root: {output_root}")
+
+    _run_pipeline_stage(
+        "detect-shapes",
+        cmd_detect_shapes,
+        argparse.Namespace(
+            image=str(image_path),
+            depth=None,
+            edge_map=None,
+            output=str(detect_dir),
+            backend=args.detector_backend,
+            detector_backend=args.detector_backend,
+            detector_model=None,
+            detector_weights=None,
+            clip_model_dir=None,
+            device=args.device,
+            primitive_source="none",
+            confidence=0.25,
+            overlap_iou_threshold=0.50,
+            rgbd_channel_weights="0.25,0.25,0.25,0.25",
+            open_vocab_root=args.open_vocab_root,
+            text_prompt_preset=args.text_prompt_preset,
+            text_prompt=args.text_prompt,
+            refresh_text_prompt=args.refresh_text_prompt,
+            text_prompt_refresh_path=str(output_root / "qwen_object_vocab.json"),
+            box_threshold=args.box_threshold,
+            text_threshold=args.text_threshold,
+            groundingdino_repo_dir=args.groundingdino_repo_dir,
+            groundingdino_config=args.groundingdino_config,
+            groundingdino_checkpoint=args.groundingdino_checkpoint,
+            ram_repo_dir=args.ram_repo_dir,
+            ram_checkpoint=args.ram_checkpoint,
+            sam3_repo_dir=args.sam3_repo_dir,
+            sam3_model_dir=args.sam3_model_dir,
+            completion_backend=args.completion_backend,
+            completion_model=args.completion_model,
+            completion_device=args.device,
+            completion_steps=28,
+            completion_guidance_scale=6.0,
+            completion_strength=0.55,
+            completion_canvas_size=args.completion_canvas_size,
+            completion_seed=20260528,
+            completion_max_objects=args.completion_max_objects,
+            completion_quantization="4bit",
+            completion_context_mode="reference-square",
+        ),
+    )
+    _require_pipeline_artifact(detect_dir / "detections.json", "detect-shapes")
+    _run_pipeline_stage(
+        "construct-empty-room",
+        cmd_run_empty_room_vggt,
+        argparse.Namespace(
+            image=str(image_path),
+            detections=str(detect_dir / "detections.json"),
+            objects=str(objects_dir),
+            output=str(background_dir),
+            empty_room_backend=args.empty_room_backend,
+            empty_room_model=args.empty_room_model,
+            fill_mode="transparent",
+            mask_dilation_px=10,
+            mask_feather_px=0,
+            include_detection_ids=[],
+            exclude_detection_ids=[],
+            allow_rectangular_fallback_masks=False,
+            max_mask_coverage=0.55,
+            vggt_backend=args.vggt_backend,
+            vggt_model=args.vggt_model,
+            vggt_repo_dir=args.vggt_repo_dir,
+            vggt_checkpoint=args.vggt_checkpoint,
+            vggt_cache_dir=args.vggt_cache_dir,
+            vggt_local_only=args.vggt_local_only,
+            obj_stride=8,
+            mesh_stem="empty_room_mesh",
+            device=args.device,
+        ),
+    )
+    _require_pipeline_artifact(background_dir / "vggt_points.npy", "construct-empty-room")
+    _run_pipeline_stage(
+        "run-vggt",
+        cmd_run_vggt,
+        argparse.Namespace(
+            image=str(image_path),
+            output=str(objects_vggt_dir),
+            backend=args.vggt_backend,
+            model=args.vggt_model,
+            vggt_repo_dir=args.vggt_repo_dir,
+            vggt_checkpoint=args.vggt_checkpoint,
+            vggt_cache_dir=args.vggt_cache_dir,
+            vggt_local_only=args.vggt_local_only,
+            obj_stride=8,
+            mesh_stem="vggt_mesh",
+            device=args.device,
+        ),
+    )
+    _require_pipeline_artifact(objects_vggt_dir / "vggt_points.npy", "run-vggt")
+    _run_pipeline_stage(
+        "fit-vggt-boxes",
+        cmd_fit_vggt_boxes,
+        argparse.Namespace(
+            detections=str(detect_dir / "detections.json"),
+            objects=str(objects_dir),
+            vggt=str(objects_vggt_dir),
+            output=str(objects_vggt_dir),
+            box_mode="auto",
+            min_valid_points=64,
+        ),
+    )
+    _require_pipeline_artifact(objects_vggt_dir / "object_geometry.json", "fit-vggt-boxes")
+    _run_pipeline_stage(
+        "fit-empty-room-planes",
+        cmd_fit_empty_room_planes,
+        argparse.Namespace(
+            background=str(background_dir),
+            output=str(background_dir),
+            stride=8,
+            mesh_name="empty_room_planes.glb",
+            padding_ratio=0.08,
+        ),
+    )
+    _require_pipeline_artifact(background_dir / "plane_detections.json", "fit-empty-room-planes")
+    _require_pipeline_artifact(background_dir / "empty_room_planes.glb", "fit-empty-room-planes")
+    _run_pipeline_stage(
+        "reconstruct-objects",
+        cmd_reconstruct_objects,
+        argparse.Namespace(
+            objects=str(objects_dir),
+            backend=args.object_backend,
+            model_dir=args.object_model_dir,
+            model=args.object_model,
+            device=args.device,
+            source="auto",
+            completed_mask_backend="auto",
+            completed_mask_prompt=None,
+            completed_mask_score_threshold=0.25,
+            completed_mask_sam3_repo_dir=args.sam3_repo_dir or "Models/OpenVocabulary/SAM3/repo",
+            completed_mask_sam3_model_dir=args.sam3_model_dir or "Models/OpenVocabulary/SAM3/hf",
+            max_objects=args.max_objects,
+            with_texture=True,
+            texture_resolution=512,
+            texture_views=6,
+            texture_prompt=None,
+            texture_reference_mode="original",
+            texture_remesh=True,
+            texture_matte_backend="auto",
+            texture_matte_model_dir="Models/Segmentation/BRIA/RMBG-2.0",
+            sam3d_objects_repo_dir=None,
+            sam3d_objects_checkpoint=None,
+            sam3d_objects_command=None,
+        ),
+    )
+    _run_pipeline_stage(
+        "choose-object-supports",
+        cmd_choose_object_supports,
+        argparse.Namespace(
+            object_geometry=str(objects_vggt_dir / "object_geometry.json"),
+            planes=str(background_dir / "plane_detections.json"),
+            detections=str(detect_dir / "detections.json"),
+            objects=str(objects_dir),
+            output=str(placement_dir),
+            object_mesh_name=args.object_mesh_name,
+            placement_orientation=args.placement_orientation,
+            object_scale_factor=args.object_scale_factor,
+            include_review=False,
+        ),
+    )
+    _require_pipeline_artifact(placement_dir / "object_supports.json", "choose-object-supports")
+    _run_pipeline_stage(
+        "build-object-fit-targets",
+        cmd_build_object_fit_targets,
+        argparse.Namespace(
+            object_geometry=str(objects_vggt_dir / "object_geometry.json"),
+            supports=str(placement_dir / "object_supports.json"),
+            objects=str(objects_dir),
+            output=str(placement_dir),
+            object_mesh_name=args.object_mesh_name,
+        ),
+    )
+    _require_pipeline_artifact(placement_dir / "object_fit_targets.json", "build-object-fit-targets")
+    _run_pipeline_stage(
+        "fit-object-placements",
+        cmd_fit_object_placements,
+        argparse.Namespace(
+            supports=str(placement_dir / "object_supports.json"),
+            fit_targets=str(placement_dir / "object_fit_targets.json"),
+            output=str(placement_dir),
+            placement_orientation=args.placement_orientation,
+            object_scale_factor=args.object_scale_factor,
+            no_optimize_placements=args.no_optimize_placements,
+        ),
+    )
+    _require_pipeline_artifact(placement_dir / "object_placements.json", "fit-object-placements")
+    _run_pipeline_stage(
+        "compose-scene",
+        cmd_compose_scene,
+        argparse.Namespace(
+            background=str(background_dir / "empty_room_planes.glb"),
+            objects=str(objects_dir),
+            object_geometry=str(objects_vggt_dir / "object_geometry.json"),
+            placements=str(placement_dir / "object_placements.json"),
+            output=str(scene_dir),
+            output_name="scene.glb",
+            object_mesh_name=args.object_mesh_name,
+            include_review=True,
+            placement_orientation=args.placement_orientation,
+            object_scale_factor=args.object_scale_factor,
+            background_fit=args.background_fit,
+            background_margin=1.0,
+            background_depth_offset=0.12,
+            background_vggt_dir=str(background_dir),
+            background_stride=16,
+            clip_background_masks=False,
+            background_clip_dilation_px=8,
+            no_snap_objects_to_floor=False,
+            no_optimize_placements=args.no_optimize_placements,
+            source_image=str(image_path),
+        ),
+    )
+    _require_pipeline_artifact(scene_dir / "scene.glb", "compose-scene")
+    if args.render_source_camera:
+        _run_pipeline_stage(
+            "render-scene-camera-view",
+            cmd_render_scene_camera_view,
+            argparse.Namespace(
+                scene=str(scene_dir / "scene.glb"),
+                output=str(scene_dir / "source_camera_render.png"),
+                alignment_report=str(scene_dir / "scene_alignment.json"),
+                blender=args.blender,
+                width=None,
+                height=None,
+                fov_degrees=None,
+                camera_mode="source",
+            ),
+        )
+    print(f"End-to-end pipeline complete: {scene_dir / 'scene.glb'}")
+    return 0
+
+
+def _run_pipeline_stage(name: str, func: Any, args: argparse.Namespace) -> None:
+    print(f"\n== {name} ==")
+    status = int(func(args) or 0)
+    if status != 0:
+        raise CliError(f"Pipeline stage failed with exit code {status}: {name}")
+
+
+def _require_pipeline_artifact(path: Path, stage_name: str) -> None:
+    if not path.is_file():
+        raise CliError(f"Pipeline stage did not create required artifact after {stage_name}: {path}")
+
+
+def _clean_output_root(output_root: Path) -> None:
+    normalized = output_root if output_root.is_absolute() else ROOT / output_root
+    try:
+        normalized.relative_to(ROOT / "Output")
+    except ValueError as exc:
+        raise CliError(f"--clean-output refuses to delete outside Output/: {output_root}") from exc
+    if normalized.exists():
+        shutil.rmtree(normalized)
 
 
 def cmd_run_vggt(args: argparse.Namespace) -> int:
@@ -868,6 +1222,8 @@ def cmd_compose_scene(args: argparse.Namespace) -> int:
     output_dir = Path(args.output)
     print(f"Wrote {report['artifacts']['scene_glb']}")
     print(f"Wrote {output_dir / 'scene_alignment.json'}")
+    if report["artifacts"].get("source_camera_visual_qa"):
+        print(f"Wrote {report['artifacts']['source_camera_visual_qa']}")
     if report["artifacts"].get("input_vs_projection_overlay"):
         print(f"Wrote {report['artifacts']['input_vs_projection_overlay']}")
     print(
@@ -1014,6 +1370,96 @@ def cmd_reconstruct_objects(args: argparse.Namespace) -> int:
         print(f"Wrote {Path(args.objects) / 'sam3d_objects_manifest.json'}")
         return 0
     raise CliError(f"Unsupported object reconstruction backend: {args.backend}")
+
+
+def cmd_texture_objects(args: argparse.Namespace) -> int:
+    from ObjectReconstruction.hunyuan3d_objects import (
+        resolve_device,
+        import_torch,
+        texture_records,
+        validate_hunyuan_texture_options,
+        write_manifest,
+    )
+
+    validate_hunyuan_texture_options(args.texture_resolution, args.texture_views)
+    objects_dir = _require_dir(args.objects, "--objects")
+    object_dirs = [path for path in sorted(objects_dir.iterdir()) if path.is_dir()]
+    selected_dirs = object_dirs if args.max_objects <= 0 else object_dirs[: args.max_objects]
+    records = texture_candidate_records(selected_dirs)
+    if not records:
+        raise CliError(f"No untextured Hunyuan meshes found under {objects_dir}")
+
+    torch = import_torch()
+    device = resolve_device(torch=torch, device=args.device)
+    texture_records(
+        objects_dir,
+        records,
+        device=device,
+        resolution=args.texture_resolution,
+        views=args.texture_views,
+        use_remesh=args.texture_remesh,
+        prompt=args.texture_prompt,
+        reference_mode=args.texture_reference_mode,
+        matte_backend=args.texture_matte_backend,
+        matte_model_dir=args.texture_matte_model_dir,
+    )
+    manifest = write_manifest(
+        objects_dir,
+        records,
+        "complete",
+        model="existing_hunyuan3d_meshes",
+        device=device,
+        source="existing_mesh",
+        with_texture=True,
+        texture_resolution=args.texture_resolution,
+        texture_views=args.texture_views,
+        texture_use_remesh=args.texture_remesh,
+        texture_prompt=args.texture_prompt,
+        texture_reference_mode=args.texture_reference_mode,
+        texture_matte_backend=args.texture_matte_backend,
+        texture_matte_model_dir=args.texture_matte_model_dir,
+        completed_mask_backend="existing",
+    )
+    ok_count = sum(1 for item in records if item.get("texture_status") == "ok")
+    print(f"Wrote {objects_dir / 'hunyuan3d_manifest.json'}")
+    print(f"Textured {ok_count}/{manifest['object_count']} objects")
+    return 0
+
+
+def texture_candidate_records(object_dirs: list[Path]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, object_dir in enumerate(object_dirs, start=1):
+        if (object_dir / "hunyuan3d_textured.glb").is_file():
+            continue
+        mesh_path = object_dir / "hunyuan3d_mesh.glb"
+        obj_path = object_dir / "hunyuan3d_mesh.obj"
+        if not mesh_path.is_file() and not obj_path.is_file():
+            continue
+        record = load_hunyuan_object_record(object_dir)
+        record.update(
+            {
+                "object_dir": str(object_dir),
+                "status": "ok",
+                "reason": None,
+                "mesh": obj_path.name if obj_path.is_file() else None,
+                "glb": mesh_path.name if mesh_path.is_file() else None,
+                "order_index": int(record.get("order_index") or index),
+            }
+        )
+        records.append(record)
+    return records
+
+
+def load_hunyuan_object_record(object_dir: Path) -> dict[str, Any]:
+    metadata_path = object_dir / "hunyuan3d_metadata.json"
+    if metadata_path.is_file():
+        try:
+            data = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
 
 
 

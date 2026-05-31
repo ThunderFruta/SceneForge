@@ -6,6 +6,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from run import CliError, _require_pipeline_artifact, _run_pipeline_stage, build_parser
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -95,6 +97,68 @@ def test_cli_retired_depth_edge_object_backend_is_not_public(tmp_path: Path) -> 
 
     assert result.returncode == 2
     assert "invalid choice: 'depth-edge-object'" in result.stderr
+
+
+def test_process_image_parser_accepts_single_image_automation(tmp_path: Path) -> None:
+    parser = build_parser()
+    image_path = tmp_path / "input.jpg"
+    Image.new("RGB", (8, 8), "white").save(image_path)
+
+    args = parser.parse_args(
+        [
+            "process-image",
+            "--image",
+            str(image_path),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--empty-room-backend",
+            "fake",
+            "--vggt-backend",
+            "fake",
+            "--no-render-source-camera",
+        ]
+    )
+
+    assert args.command == "process-image"
+    assert args.image == str(image_path)
+    assert args.output_root == str(tmp_path / "out")
+    assert args.empty_room_backend == "fake"
+    assert args.vggt_backend == "fake"
+    assert args.render_source_camera is False
+
+
+def test_texture_objects_parser_defaults_to_existing_objects() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["texture-objects"])
+
+    assert args.command == "texture-objects"
+    assert args.objects == "Output/Latest/objects"
+    assert args.texture_resolution == 512
+    assert args.texture_views == 6
+    assert args.texture_remesh is True
+
+
+def test_pipeline_stage_raises_on_nonzero_status() -> None:
+    try:
+        _run_pipeline_stage("broken-stage", lambda _args: 3, object())
+    except CliError as exc:
+        assert "broken-stage" in str(exc)
+        assert "exit code 3" in str(exc)
+    else:
+        raise AssertionError("Expected nonzero pipeline stage to raise.")
+
+
+def test_pipeline_artifact_check_names_missing_producer(tmp_path: Path) -> None:
+    missing = tmp_path / "objects_vggt" / "vggt_points.npy"
+
+    try:
+        _require_pipeline_artifact(missing, "run-vggt")
+    except CliError as exc:
+        assert "run-vggt" in str(exc)
+        assert str(missing) in str(exc)
+    else:
+        raise AssertionError("Expected missing pipeline artifact to raise.")
 
 
 

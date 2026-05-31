@@ -8,8 +8,10 @@ from PIL import Image
 from ObjectCompletion.openai_image import (
     build_application_query_prompt,
     build_openai_prompt,
+    call_image_edit_api,
     decode_image_response,
     ensure_transparent_completed_image,
+    flatten_transparency_on_white,
     render_application_query,
     render_target_square,
 )
@@ -29,11 +31,17 @@ class FakeResponse:
         self.output = [FakeImageGenerationCall(base64.b64encode(buffer.getvalue()).decode("ascii"))]
 
 
-def test_openai_prompt_requests_transparent_background() -> None:
+def png_bytes(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_openai_prompt_requests_white_background() -> None:
     prompt = build_openai_prompt("chair")
 
-    assert "transparent background" in prompt
-    assert "fully transparent" in prompt
+    assert "plain white background" in prompt
+    assert "pure white" in prompt
     assert "no floor" in prompt.lower()
     assert "ground plane" in prompt
     assert "plain neutral background" not in prompt
@@ -52,12 +60,25 @@ def test_render_target_square_preserves_transparent_background() -> None:
     assert rendered.getchannel("A").getbbox() is not None
 
 
+def test_openai_input_flattens_transparency_to_white() -> None:
+    crop = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+    for x in range(8, 12):
+        for y in range(6, 14):
+            crop.putpixel((x, y), (120, 80, 40, 255))
+
+    flattened = flatten_transparency_on_white(render_target_square(crop, canvas_size=64))
+
+    assert flattened.mode == "RGB"
+    assert flattened.getpixel((0, 0)) == (255, 255, 255)
+    assert flattened.getpixel((32, 32)) == (120, 80, 40)
+
+
 def test_application_query_prompt_keeps_output_object_only() -> None:
     prompt = build_application_query_prompt("vase")
 
     assert "Application-Querying layout" in prompt
     assert "Extracted Object" in prompt
-    assert "transparent background" in prompt
+    assert "plain white background" in prompt
     assert "two-panel layout" in prompt
     assert "Do not include floor" in prompt
 
@@ -98,3 +119,41 @@ def test_opaque_neutral_background_is_converted_to_transparency() -> None:
     assert transparent.mode == "RGBA"
     assert transparent.getpixel((0, 0))[3] == 0
     assert transparent.getpixel((16, 16))[3] == 255
+
+
+def test_image_edit_requests_opaque_background(tmp_path) -> None:
+    input_path = tmp_path / "input.png"
+    input_path.write_bytes(png_bytes(Image.new("RGBA", (8, 8), (0, 0, 0, 0))))
+    result_image = Image.new("RGB", (8, 8), (245, 245, 240))
+    calls = []
+
+    class FakeImages:
+        def edit(self, **kwargs):
+            calls.append(dict(kwargs))
+            return type(
+                "Result",
+                (),
+                {
+                    "data": [
+                        type(
+                            "Item",
+                            (),
+                            {"b64_json": base64.b64encode(png_bytes(result_image)).decode("ascii")},
+                        )()
+                    ]
+                },
+            )()
+
+    client = type("Client", (), {"images": FakeImages()})()
+
+    image = call_image_edit_api(
+        client=client,
+        model="gpt-image-1.5",
+        prompt="complete object",
+        input_path=input_path,
+        reference_path=None,
+        canvas_size=1024,
+    )
+
+    assert image.mode == "RGBA"
+    assert [call["background"] for call in calls] == ["opaque"]

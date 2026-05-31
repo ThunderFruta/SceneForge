@@ -131,7 +131,8 @@ def complete_object_dir(
     target_input = render_target_square(masked_crop, canvas_size=canvas_size)
     input_path = object_dir / "completion_openai_input.png"
     reference_path = object_dir / "completion_openai_reference.png"
-    target_input.save(input_path)
+    openai_target_input = flatten_transparency_on_white(target_input)
+    openai_target_input.save(input_path)
     application_query_path: Path | None = None
     context_mode_requested = normalize_context_mode(context_mode)
     context_mode_effective = context_mode_requested
@@ -140,7 +141,7 @@ def complete_object_dir(
         application_query_path = object_dir / "application_query.png"
         render_application_query(
             context_crop,
-            target_input,
+            openai_target_input,
             label=label,
             canvas_size=canvas_size,
         ).save(application_query_path)
@@ -164,7 +165,7 @@ def complete_object_dir(
         reference_path=reference_path,
         canvas_size=canvas_size,
     )
-    result_image = ensure_transparent_completed_image(result_image)
+    result_image = result_image.convert("RGB")
     result_image.save(object_dir / "completed_crop.png")
 
     record = {
@@ -187,7 +188,7 @@ def complete_object_dir(
         "application_query": application_query_path.name if application_query_path is not None else None,
         "openai_input": input_path.name,
         "openai_reference": reference_path.name if reference_path is not None else None,
-        "background": "transparent",
+        "background": "white",
         "order_index": index,
     }
     if context_mode_warning:
@@ -219,8 +220,8 @@ def build_openai_prompt(label: str) -> str:
         f"{constraints} "
         "Do not add a room, full scene, extra furniture, text, watermark, or new objects. "
         "No floor under the object. Do not add a floor, ground plane, base slab, platform, plinth, shadow catcher, or support surface under the object; keep only geometry that is part of the target object itself. "
-        "Return one clean square product-style PNG of the single completed target object on a transparent background. "
-        "Keep every non-object background pixel fully transparent."
+        "Return one clean square product-style PNG of the single completed target object on a plain white background. "
+        "Keep every non-object background pixel pure white."
     )
 
 
@@ -236,8 +237,8 @@ def build_application_query_prompt(label: str) -> str:
         "Preserve visible target-object pixels and complete missing or hidden parts conservatively. "
         f"{constraints} "
         "Do not include floor, walls, platforms, shadows, other objects, text, labels, frame borders, or the two-panel layout in the output. "
-        "Return one clean square product-style PNG of the single completed object on a transparent background. "
-        "Keep every non-object background pixel fully transparent."
+        "Return one clean square product-style PNG of the single completed object on a plain white background. "
+        "Keep every non-object background pixel pure white."
     )
 
 
@@ -348,7 +349,7 @@ def call_responses_image_tool(
                     "type": "image_generation",
                     "quality": DEFAULT_OPENAI_IMAGE_QUALITY,
                     "size": f"{canvas_size}x{canvas_size}",
-                    "background": "transparent",
+                    "background": "opaque",
                 }
             ],
             timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
@@ -379,17 +380,18 @@ def call_image_edit_api(
             f"Calling OpenAI Image API edit with {model}, quality={DEFAULT_OPENAI_IMAGE_QUALITY}, timeout {DEFAULT_OPENAI_TIMEOUT_SECONDS:.0f}s.",
             flush=True,
         )
+        kwargs = {
+            "model": model,
+            "image": image_files,
+            "prompt": prompt,
+            "size": f"{canvas_size}x{canvas_size}",
+            "quality": DEFAULT_OPENAI_IMAGE_QUALITY,
+            "output_format": "png",
+            "background": "opaque",
+            "timeout": DEFAULT_OPENAI_TIMEOUT_SECONDS,
+        }
         try:
-            result = client.images.edit(
-                model=model,
-                image=image_files,
-                prompt=prompt,
-                size=f"{canvas_size}x{canvas_size}",
-                quality=DEFAULT_OPENAI_IMAGE_QUALITY,
-                output_format="png",
-                background="transparent",
-                timeout=DEFAULT_OPENAI_TIMEOUT_SECONDS,
-            )
+            result = client.images.edit(**kwargs)
         finally:
             if reference_file is not None:
                 reference_file.close()
@@ -415,6 +417,13 @@ def render_target_square(masked_crop: Image.Image, *, canvas_size: int) -> Image
     y = (canvas_size - source.height) // 2
     canvas.paste(source, (x, y), source.getchannel("A"))
     return canvas
+
+
+def flatten_transparency_on_white(image: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    flattened = Image.new("RGB", rgba.size, (255, 255, 255))
+    flattened.paste(rgba.convert("RGB"), (0, 0), rgba.getchannel("A"))
+    return flattened
 
 
 def render_reference_square(reference_crop: Image.Image, *, canvas_size: int) -> Image.Image:
