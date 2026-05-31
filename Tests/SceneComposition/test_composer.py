@@ -10,12 +10,14 @@ from PIL import Image
 
 from run import build_parser
 from SceneComposition.composer import (
+    candidate_transform,
     facing_prior_loss,
     mesh_facing_prior_from_target,
     physical_size_prior_from_target,
     physical_size_prior_loss,
     placement_transform_to_gltf,
     projection_quality_report,
+    support_plane_pivot_local,
     transformed_bounds_from_source_bounds,
     yaw_rotation_gltf,
     compose_scene,
@@ -108,7 +110,7 @@ def write_plane_detections_fixture(path: Path) -> None:
 
 def test_projection_quality_accepts_occluded_floor_bottom_with_review() -> None:
     target = np.asarray([100.0, 50.0, 180.0, 150.0], dtype=np.float64)
-    projected = np.asarray([98.0, 55.0, 182.0, 205.0], dtype=np.float64)
+    projected = np.asarray([101.0, 54.0, 179.0, 186.0], dtype=np.float64)
     oversized = np.asarray([40.0, 55.0, 240.0, 205.0], dtype=np.float64)
 
     rejected = projection_quality_report(projected, target)
@@ -122,6 +124,28 @@ def test_projection_quality_accepts_occluded_floor_bottom_with_review() -> None:
     assert accepted["reason"] == "occluded_bottom_edge_tolerated"
     assert oversized_rejected["status"] == "rejected"
     assert oversized_rejected["horizontal_edge_error_ratio"] > oversized_rejected["horizontal_threshold"]
+
+
+def test_projection_quality_rejects_too_small_projected_area() -> None:
+    target = np.asarray([100.0, 50.0, 180.0, 150.0], dtype=np.float64)
+    undersized = np.asarray([112.0, 58.0, 168.0, 142.0], dtype=np.float64)
+
+    rejected = projection_quality_report(undersized, target)
+
+    assert rejected["status"] == "rejected"
+    assert rejected["reason"] == "area_error"
+    assert rejected["area_error_ratio"] > rejected["area_error_threshold"]
+
+
+def test_projection_quality_rejects_occluded_bottom_with_large_center_shift() -> None:
+    target = np.asarray([100.0, 50.0, 180.0, 150.0], dtype=np.float64)
+    shifted = np.asarray([98.0, 80.0, 182.0, 180.0], dtype=np.float64)
+
+    rejected = projection_quality_report(shifted, target, allow_occluded_bottom=True)
+
+    assert rejected["status"] == "rejected"
+    assert rejected["reason"] == "vertical_center_error"
+    assert rejected["center_y_error_ratio"] > rejected["center_y_threshold"]
 
 
 def write_plane_report(path: Path, *, floor_z: float = 0.0) -> None:
@@ -1584,3 +1608,27 @@ def test_physical_size_prior_uses_volume_scale_without_label() -> None:
     assert initial_volume < 0.2
     assert corrected_volume == 1.0
     assert physical_size_prior_loss(prior, source_bounds, corrected) == 0.0
+
+
+def test_support_candidate_transform_preserves_bottom_pivot() -> None:
+    source_bounds = np.asarray([[-1.0, 0.0, -1.0], [1.0, 2.0, 1.0]], dtype=np.float64)
+    support = {"support_kind": "floor", "support_y": 0.0}
+    pivot = support_plane_pivot_local(source_bounds, support)
+    assert pivot["method"] == "bottom_center_support_pivot_v1"
+    assert np.allclose(pivot["pivot_local"], [0.0, -0.5, 0.0])
+
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, 3] = [4.0, 5.0, 6.0]
+    delta = np.asarray([0.25, 0.0, -0.5], dtype=np.float64)
+    candidate = candidate_transform(
+        best_transform=transform,
+        delta=delta,
+        yaw=float(np.pi / 2.0),
+        scale=1.35,
+        pivot_local=np.asarray(pivot["pivot_local"], dtype=np.float64),
+    )
+
+    local = np.asarray(pivot["pivot_local"], dtype=np.float64)
+    before = transform[:3, :3] @ local + transform[:3, 3]
+    after = candidate[:3, :3] @ local + candidate[:3, 3]
+    assert np.allclose(after, before + delta)

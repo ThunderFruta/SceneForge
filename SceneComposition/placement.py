@@ -250,6 +250,15 @@ def fit_object_placements(
         object_scale_factor=object_scale_factor,
         optimize_placements=optimize_placements,
     )
+    objects, occupancy_resolution = resolve_floor_occupancy_priors(
+        objects=objects,
+        targets=targets.get("objects", []),
+        support_by_id=support_by_id,
+        coordinate_contract=coordinate_contract,
+        placement_orientation=placement_orientation,
+        object_scale_factor=object_scale_factor,
+        optimize_placements=optimize_placements,
+    )
     visibility_resolution = annotate_visibility_aware_silhouettes(
         objects=objects,
         targets=targets.get("objects", []),
@@ -287,6 +296,7 @@ def fit_object_placements(
         "dependent_support_resolution": dependent_resolution,
         "repeated_instance_size_resolution": size_resolution,
         "asymmetric_facing_resolution": facing_resolution,
+        "floor_occupancy_resolution": occupancy_resolution,
         "visibility_resolution": visibility_resolution,
         "visibility_review_resolution": review_resolution,
         "summary": {
@@ -450,6 +460,7 @@ def fit_placement_for_target(
     optimize_placements: bool,
     facing_target_gltf: Any = None,
     physical_size_target_extent_gltf: Any = None,
+    avoid_bounds_gltf: Any = None,
 ) -> dict[str, Any]:
     detection_id = int(target.get("detection_id", 0))
     label = str(target.get("detector_label") or "object")
@@ -514,6 +525,7 @@ def fit_placement_for_target(
             enabled=bool(optimize_placements),
             facing_target_gltf=facing_target_gltf,
             physical_size_target_extent_gltf=physical_size_target_extent_gltf,
+            avoid_bounds_gltf=avoid_bounds_gltf,
         )
         mode = str(support.get("mode") or "unknown_5dof")
         if support_target is None and mode == "unknown_5dof":
@@ -890,6 +902,117 @@ def nearest_facing_anchor(bounds: np.ndarray, anchors: list[dict[str, Any]]) -> 
             best = anchor
             best_distance = distance
     return best
+
+
+def resolve_floor_occupancy_priors(
+    *,
+    objects: list[dict[str, Any]],
+    targets: list[dict[str, Any]],
+    support_by_id: dict[int, dict[str, Any]],
+    coordinate_contract: dict[str, Any] | None,
+    placement_orientation: str,
+    object_scale_factor: float,
+    optimize_placements: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    refreshed = list(objects)
+    target_by_id = {int(target.get("detection_id", 0)): target for target in targets}
+    by_id = {int(item.get("detection_id", 0)): item for item in refreshed}
+    anchors = asymmetric_facing_anchor_candidates(refreshed)
+    fixed_anchor_ids = {int(anchor["detection_id"]) for anchor in anchors}
+    refit_ids: list[int] = []
+    refit_reports: dict[int, dict[str, Any]] = {}
+    for index, item in enumerate(list(refreshed)):
+        detection_id = int(item.get("detection_id", 0))
+        if item.get("status") != "accepted" or detection_id in fixed_anchor_ids:
+            continue
+        support = item.get("support") or (support_by_id.get(detection_id) or {}).get("support") or {}
+        if support.get("support_kind") != "floor":
+            continue
+        bounds = bounds_array(item.get("transformed_bounds"))
+        target = target_by_id.get(detection_id)
+        if bounds is None or target is None:
+            continue
+        avoid: list[dict[str, Any]] = []
+        for other in by_id.values():
+            other_id = int(other.get("detection_id", 0))
+            if other_id == detection_id or other.get("status") != "accepted":
+                continue
+            other_support = other.get("support") or {}
+            if other_support.get("support_kind") != "floor":
+                continue
+            if other_id not in fixed_anchor_ids and other_id > detection_id:
+                continue
+            other_bounds = bounds_array(other.get("transformed_bounds"))
+            if other_bounds is None:
+                continue
+            overlap = bounds_overlap_volume(bounds, other_bounds)
+            if overlap <= 1e-8:
+                continue
+            avoid.append(
+                {
+                    "detection_id": other_id,
+                    "detector_label": other.get("detector_label"),
+                    "bounds_gltf": other_bounds.tolist(),
+                    "reason": "existing_floor_occupancy_overlap",
+                    "initial_overlap_volume_gltf": overlap,
+                }
+            )
+        if not avoid:
+            continue
+        initial_overlap = total_bounds_overlap_volume(bounds, [entry["bounds_gltf"] for entry in avoid])
+        facing_anchor = nearest_facing_anchor(bounds, [anchor for anchor in anchors if int(anchor["detection_id"]) in fixed_anchor_ids])
+        record = fit_placement_for_target(
+            target=target,
+            support_record={"support": support},
+            coordinate_contract=coordinate_contract,
+            placement_orientation=placement_orientation,
+            object_scale_factor=object_scale_factor,
+            optimize_placements=optimize_placements,
+            facing_target_gltf=(facing_anchor or {}).get("center_gltf"),
+            physical_size_target_extent_gltf=((item.get("render_to_input_optimization") or {}).get("physical_size_prior") or {}),
+            avoid_bounds_gltf=avoid,
+        )
+        if record.get("status") != "accepted":
+            continue
+        new_bounds = bounds_array(record.get("transformed_bounds"))
+        if new_bounds is None:
+            continue
+        optimized_overlap = total_bounds_overlap_volume(new_bounds, [entry["bounds_gltf"] for entry in avoid])
+        avoidance_report = (record.get("render_to_input_optimization") or {}).get("object_avoidance_prior") or {}
+        if optimized_overlap >= initial_overlap - 1e-8 and float(avoidance_report.get("optimized_loss") or 0.0) > 1e-8:
+            continue
+        refreshed[index] = record
+        by_id[detection_id] = record
+        refit_ids.append(detection_id)
+        refit_reports[detection_id] = {
+            "avoid_count": len(avoid),
+            "avoid_detection_ids": [int(entry["detection_id"]) for entry in avoid],
+            "initial_overlap_volume_gltf": float(initial_overlap),
+            "optimized_overlap_volume_gltf": float(optimized_overlap),
+            "avoidance_prior": avoidance_report,
+        }
+    return refreshed, {
+        "enabled": True,
+        "method": "floor_occupied_bounds_avoidance_refit",
+        "fixed_anchor_detection_ids": sorted(fixed_anchor_ids),
+        "refit_count": len(refit_ids),
+        "refit_detection_ids": refit_ids,
+        "refits": refit_reports,
+    }
+
+
+def bounds_overlap_volume(left: np.ndarray, right: np.ndarray) -> float:
+    overlap_extent = np.maximum(0.0, np.minimum(left[1], right[1]) - np.maximum(left[0], right[0]))
+    return float(np.prod(overlap_extent))
+
+
+def total_bounds_overlap_volume(bounds: np.ndarray, others: list[Any]) -> float:
+    total = 0.0
+    for value in others:
+        other = bounds_array(value)
+        if other is not None:
+            total += bounds_overlap_volume(bounds, other)
+    return float(total)
 
 
 def annotate_visibility_aware_silhouettes(

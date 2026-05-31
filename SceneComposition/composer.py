@@ -23,13 +23,18 @@ PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO = 0.55
 PROJECTION_CENTER_REJECT_RATIO = 0.35
 PROJECTION_CENTER_Y_REJECT_RATIO = 0.20
 PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO = 1.60
-PROJECTION_AREA_ERROR_REJECT_RATIO = 0.60
+PROJECTION_AREA_ERROR_REJECT_RATIO = 0.35
 VGGT_CANDIDATE_POINT_SAMPLE_COUNT = 512
+VGGT_POINT_MATCH_MESH_SAMPLE_COUNT = 384
+VGGT_POINT_MATCH_TARGET_SAMPLE_COUNT = 384
 PROJECTED_VERTEX_SAMPLE_COUNT = 2048
 VGGT_CANDIDATE_LOSS_WEIGHT = 1.15
+VGGT_POINT_MATCH_LOSS_WEIGHT = 0.42
 VGGT_YAW_PRIOR_WEIGHT = 0.16
 MESH_FACING_PRIOR_WEIGHT = 0.95
-REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT = 1.40
+REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT = 4.0
+PHYSICAL_SIZE_PRIOR_CANDIDATE_REJECT_LOSS = 0.35
+OBJECT_AVOIDANCE_PRIOR_WEIGHT = 4.0
 MASK_CANDIDATE_LOSS_WEIGHT = 0.45
 MASK_CANDIDATE_POOL_SIZE = 48
 MASK_CANDIDATE_RENDER_MAX_SIZE = 320
@@ -38,6 +43,8 @@ EVIDENCE_SCALE_NEIGHBORS = (0.92, 1.0, 1.08)
 MIN_EVIDENCE_SCALE_CANDIDATE = 0.25
 MAX_EVIDENCE_SCALE_CANDIDATE = 3.0
 DEFAULT_UNIFORM_SCALE_CANDIDATES = (0.50, 0.60, 0.70, 0.82, 0.92, 1.0, 1.08, 1.25, 1.40)
+DEFAULT_TRANSLATION_X_CANDIDATES = (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16)
+DEFAULT_TRANSLATION_Z_CANDIDATES = (-0.56, -0.44, -0.32, -0.24, -0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16)
 DEFAULT_YAW_CANDIDATES = (
     -float(np.pi),
     -float(np.pi) * 0.75,
@@ -652,6 +659,7 @@ def optimize_transform_to_input(
     enabled: bool,
     facing_target_gltf: Any = None,
     physical_size_target_extent_gltf: Any = None,
+    avoid_bounds_gltf: Any = None,
 ) -> dict[str, Any]:
     target_bbox = bbox_array(placement.get("bbox_xyxy"))
     meshes = load_meshes(mesh_path)
@@ -674,6 +682,8 @@ def optimize_transform_to_input(
         target_extent_gltf=physical_size_target_extent_gltf,
     )
     initial_size_prior_loss = physical_size_prior_loss(size_prior, source_bounds, transform)
+    avoidance = object_avoidance_prior_from_bounds(avoid_bounds_gltf)
+    initial_avoidance_loss = object_avoidance_prior_loss(avoidance, source_bounds, transform)
     mask_fit = load_mask_candidate_fit(placement, coordinate_contract)
     mask_loss_weight = MASK_CANDIDATE_LOSS_WEIGHT if mask_fit.get("available") else 0.0
     initial_mask = mask_candidate_transform_loss(
@@ -728,6 +738,12 @@ def optimize_transform_to_input(
             optimized=initial_size_prior_loss,
             candidate=initial_size_prior_loss,
         ),
+        "object_avoidance_prior": object_avoidance_prior_report(
+            avoidance,
+            initial=initial_avoidance_loss,
+            optimized=initial_avoidance_loss,
+            candidate=initial_avoidance_loss,
+        ),
         "mask_candidate_fit": mask_candidate_fit_report(
             mask_fit,
             loss_weight=mask_loss_weight,
@@ -765,6 +781,7 @@ def optimize_transform_to_input(
         yaw_prior_loss=initial_yaw_prior_loss,
         facing_prior_loss=initial_facing_prior_loss,
         physical_size_prior_loss=initial_size_prior_loss,
+        object_avoidance_prior_loss=initial_avoidance_loss,
     )
     initial_quality = projection_quality_report(initial_bbox, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
     scale_candidates, scale_floor_report = scale_candidates_for_target(
@@ -785,6 +802,7 @@ def optimize_transform_to_input(
     best_candidate_yaw_prior_loss = initial_yaw_prior_loss
     best_candidate_facing_prior_loss = initial_facing_prior_loss
     best_candidate_size_prior_loss = initial_size_prior_loss
+    best_candidate_avoidance_loss = initial_avoidance_loss
     best_candidate_delta = np.zeros(3, dtype=np.float64)
     best_candidate_yaw = 0.0
     best_candidate_scale = 1.0
@@ -797,11 +815,13 @@ def optimize_transform_to_input(
     best_accepted_yaw_prior_loss = initial_yaw_prior_loss
     best_accepted_facing_prior_loss = initial_facing_prior_loss
     best_accepted_size_prior_loss = initial_size_prior_loss
+    best_accepted_avoidance_loss = initial_avoidance_loss
     best_accepted_delta = np.zeros(3, dtype=np.float64)
     best_accepted_yaw = 0.0
     best_accepted_scale = 1.0
     best_accepted_quality = initial_quality
     candidate_pool: list[dict[str, Any]] = []
+    support_pivot = support_plane_pivot_local(source_bounds, support_target)
     if initial_quality.get("status") != "rejected":
         keep_mask_candidate(
             candidate_pool,
@@ -813,6 +833,7 @@ def optimize_transform_to_input(
             yaw_prior_loss=initial_yaw_prior_loss,
             facing_prior_loss=initial_facing_prior_loss,
             physical_size_prior_loss=initial_size_prior_loss,
+            object_avoidance_prior_loss=initial_avoidance_loss,
             delta=np.zeros(3, dtype=np.float64),
             yaw=0.0,
             scale=1.0,
@@ -820,12 +841,23 @@ def optimize_transform_to_input(
         )
     candidate_count = 0
     accepted_candidate_count = 0
-    for dx in (-0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
-        for dz in (-0.56, -0.44, -0.32, -0.24, -0.16, -0.08, -0.04, 0.0, 0.04, 0.08, 0.16):
+    dx_candidates, dz_candidates, translation_prior_report = translation_candidates_for_avoidance(
+        source_bounds,
+        transform,
+        avoidance,
+    )
+    for dx in dx_candidates:
+        for dz in dz_candidates:
             for yaw in yaw_candidates:
                 for scale in scale_candidates:
                     candidate_count += 1
-                    candidate = candidate_transform(best_transform=transform, delta=np.array([dx, 0.0, dz]), yaw=yaw, scale=scale)
+                    candidate = candidate_transform(
+                        best_transform=transform,
+                        delta=np.array([dx, 0.0, dz]),
+                        yaw=yaw,
+                        scale=scale,
+                        pivot_local=support_pivot.get("pivot_local"),
+                    )
                     candidate, _delta = snap_transform_to_support_bounds(source_bounds, candidate, support_y)
                     projected = projected_mesh_sample_bbox(projection_vertices, source_bounds, candidate, coordinate_contract)
                     if projected is None:
@@ -839,6 +871,9 @@ def optimize_transform_to_input(
                     yaw_loss = yaw_prior_loss(yaw_prior, transform_yaw_gltf(candidate))
                     facing_loss = facing_prior_loss(facing_prior, candidate)
                     size_loss = physical_size_prior_loss(size_prior, source_bounds, candidate)
+                    if size_loss is not None and float(size_loss) > PHYSICAL_SIZE_PRIOR_CANDIDATE_REJECT_LOSS:
+                        continue
+                    avoidance_loss = object_avoidance_prior_loss(avoidance, source_bounds, candidate)
                     loss = objective_transform_loss(
                         bbox_loss=bbox_loss,
                         support_loss=support_loss,
@@ -848,6 +883,7 @@ def optimize_transform_to_input(
                         yaw_prior_loss=yaw_loss,
                         facing_prior_loss=facing_loss,
                         physical_size_prior_loss=size_loss,
+                        object_avoidance_prior_loss=avoidance_loss,
                     )
                     quality = projection_quality_report(projected, target_bbox, allow_occluded_bottom=allow_occluded_bottom)
                     if loss < best_candidate_loss:
@@ -857,6 +893,7 @@ def optimize_transform_to_input(
                         best_candidate_yaw_prior_loss = yaw_loss
                         best_candidate_facing_prior_loss = facing_loss
                         best_candidate_size_prior_loss = size_loss
+                        best_candidate_avoidance_loss = avoidance_loss
                         best_candidate_transform = candidate
                         best_candidate_bbox = projected
                         best_candidate_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -876,6 +913,7 @@ def optimize_transform_to_input(
                             yaw_prior_loss=yaw_loss,
                             facing_prior_loss=facing_loss,
                             physical_size_prior_loss=size_loss,
+                            object_avoidance_prior_loss=avoidance_loss,
                             delta=np.array([dx, 0.0, dz], dtype=np.float64),
                             yaw=yaw,
                             scale=scale,
@@ -888,6 +926,7 @@ def optimize_transform_to_input(
                             best_accepted_yaw_prior_loss = yaw_loss
                             best_accepted_facing_prior_loss = facing_loss
                             best_accepted_size_prior_loss = size_loss
+                            best_accepted_avoidance_loss = avoidance_loss
                             best_accepted_transform = candidate
                             best_accepted_bbox = projected
                             best_accepted_delta = np.array([dx, 0.0, dz], dtype=np.float64)
@@ -903,6 +942,7 @@ def optimize_transform_to_input(
     final_yaw_prior_loss = best_accepted_yaw_prior_loss if accepted else initial_yaw_prior_loss
     final_facing_prior_loss = best_accepted_facing_prior_loss if accepted else initial_facing_prior_loss
     final_size_prior_loss = best_accepted_size_prior_loss if accepted else initial_size_prior_loss
+    final_avoidance_loss = best_accepted_avoidance_loss if accepted else initial_avoidance_loss
     final_quality = best_accepted_quality if accepted else initial_quality
     final_mask = initial_mask
     mask_fallback_reason = None
@@ -912,6 +952,7 @@ def optimize_transform_to_input(
             candidates=candidate_pool,
             meshes=meshes,
             source_bounds=source_bounds,
+            vggt_fit=vggt_fit,
         )
         mask_fallback_reason = mask_report.get("fallback_reason")
         if selected_mask_candidate is not None:
@@ -923,6 +964,7 @@ def optimize_transform_to_input(
             final_yaw_prior_loss = selected_mask_candidate["yaw_prior_loss"]
             final_facing_prior_loss = selected_mask_candidate["facing_prior_loss"]
             final_size_prior_loss = selected_mask_candidate["physical_size_prior_loss"]
+            final_avoidance_loss = selected_mask_candidate["object_avoidance_prior_loss"]
             final_quality = selected_mask_candidate["quality"]
             best_accepted_delta = np.asarray(selected_mask_candidate["delta"], dtype=np.float64)
             best_accepted_yaw = float(selected_mask_candidate["yaw"])
@@ -961,6 +1003,8 @@ def optimize_transform_to_input(
         candidate_yaw_delta_radians=float(best_candidate_yaw),
         orientation_search=orientation_search_report(
             yaw_candidates=yaw_candidates,
+            dx_candidates=dx_candidates,
+            dz_candidates=dz_candidates,
             selected_yaw=best_accepted_yaw if accepted else 0.0,
             candidate_count=candidate_count,
             accepted_candidate_count=accepted_candidate_count,
@@ -973,7 +1017,10 @@ def optimize_transform_to_input(
             yaw_prior_loss=final_yaw_prior_loss,
             facing_prior_loss=final_facing_prior_loss,
             physical_size_prior_loss=final_size_prior_loss,
+            object_avoidance_prior_loss=final_avoidance_loss,
             mask_loss=final_mask.get("loss"),
+            support_pivot=support_pivot,
+            translation_prior=translation_prior_report,
             fallback_reason=None if accepted else "no_projection_accepted_candidate",
         ),
         vggt_candidate_fit=vggt_candidate_fit_report(
@@ -1008,6 +1055,12 @@ def optimize_transform_to_input(
             initial=initial_size_prior_loss,
             optimized=final_size_prior_loss,
             candidate=best_candidate_size_prior_loss,
+        ),
+        object_avoidance_prior=object_avoidance_prior_report(
+            avoidance,
+            initial=initial_avoidance_loss,
+            optimized=final_avoidance_loss,
+            candidate=best_candidate_avoidance_loss,
         ),
         mask_candidate_fit=mask_candidate_fit_report(
             mask_fit,
@@ -1440,6 +1493,8 @@ def empty_orientation_search_report() -> dict[str, Any]:
 def orientation_search_report(
     *,
     yaw_candidates: Any,
+    dx_candidates: Any | None = None,
+    dz_candidates: Any | None = None,
     selected_yaw: float,
     candidate_count: int,
     accepted_candidate_count: int,
@@ -1452,12 +1507,17 @@ def orientation_search_report(
     yaw_prior_loss: Any = None,
     facing_prior_loss: Any = None,
     physical_size_prior_loss: Any = None,
+    object_avoidance_prior_loss: Any = None,
     mask_loss: Any = None,
+    support_pivot: dict[str, Any] | None = None,
+    translation_prior: dict[str, Any] | None = None,
     fallback_reason: str | None = None,
 ) -> dict[str, Any]:
     scale_prior = abs(float(np.log(float(scale_delta)))) * 0.08 if scale_delta not in (None, 0) else 0.0
     return {
         "yaw_candidates": [float(value) for value in yaw_candidates],
+        "dx_candidates": [float(value) for value in (dx_candidates or [])],
+        "dz_candidates": [float(value) for value in (dz_candidates or [])],
         "selected_yaw": float(selected_yaw),
         "loss_breakdown": {
             "initial_total": float(initial_loss) if initial_loss is not None else None,
@@ -1469,10 +1529,13 @@ def orientation_search_report(
             "vggt_yaw_prior": float(yaw_prior_loss) if yaw_prior_loss is not None else None,
             "mesh_facing_prior": float(facing_prior_loss) if facing_prior_loss is not None else None,
             "physical_size_prior": float(physical_size_prior_loss) if physical_size_prior_loss is not None else None,
+            "object_avoidance_prior": float(object_avoidance_prior_loss) if object_avoidance_prior_loss is not None else None,
             "mask_silhouette": float(mask_loss) if mask_loss is not None else None,
             "candidate_count": int(candidate_count),
             "accepted_candidate_count": int(accepted_candidate_count),
         },
+        "support_pivot": support_pivot,
+        "translation_prior": translation_prior,
         "fallback_reason": fallback_reason,
     }
 
@@ -1488,6 +1551,7 @@ def keep_mask_candidate(
     yaw_prior_loss: float | None,
     facing_prior_loss: float | None,
     physical_size_prior_loss: float | None,
+    object_avoidance_prior_loss: float | None,
     delta: np.ndarray,
     yaw: float,
     scale: float,
@@ -1502,6 +1566,7 @@ def keep_mask_candidate(
         "yaw_prior_loss": float(yaw_prior_loss) if yaw_prior_loss is not None else None,
         "facing_prior_loss": float(facing_prior_loss) if facing_prior_loss is not None else None,
         "physical_size_prior_loss": float(physical_size_prior_loss) if physical_size_prior_loss is not None else None,
+        "object_avoidance_prior_loss": float(object_avoidance_prior_loss) if object_avoidance_prior_loss is not None else None,
         "delta": np.asarray(delta, dtype=np.float64).copy(),
         "yaw": float(yaw),
         "scale": float(scale),
@@ -1518,6 +1583,7 @@ def select_mask_candidate(
     candidates: list[dict[str, Any]],
     meshes: list[Any],
     source_bounds: np.ndarray,
+    vggt_fit: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     if not fit.get("available"):
         return None, unavailable_mask_candidate_report(fit, fallback_reason=(fit.get("report") or {}).get("reason"), candidate_count=len(candidates))
@@ -1525,9 +1591,13 @@ def select_mask_candidate(
         return None, unavailable_mask_candidate_report(fit, fallback_reason="empty_candidate_pool", candidate_count=0)
     best: dict[str, Any] | None = None
     best_mask: dict[str, Any] | None = None
+    best_point_match: dict[str, Any] | None = None
     best_combined = float("inf")
     evaluated = 0
     for candidate in candidates:
+        size_prior_loss = candidate.get("physical_size_prior_loss")
+        if size_prior_loss is not None and float(size_prior_loss) > PHYSICAL_SIZE_PRIOR_CANDIDATE_REJECT_LOSS:
+            continue
         mask_loss = mask_candidate_transform_loss(
             fit,
             meshes=meshes,
@@ -1537,11 +1607,21 @@ def select_mask_candidate(
         if mask_loss.get("status") != "accepted" or mask_loss.get("loss") is None:
             continue
         evaluated += 1
+        point_match = vggt_point_match_transform_loss(
+            vggt_fit or unavailable_vggt_candidate_fit("missing_vggt_fit"),
+            meshes=meshes,
+            source_bounds=source_bounds,
+            transform=np.asarray(candidate["transform"], dtype=np.float64),
+        )
+        point_loss = point_match.get("loss")
         combined = float(candidate["loss"]) + float(mask_loss["loss"]) * MASK_CANDIDATE_LOSS_WEIGHT
+        if point_loss is not None:
+            combined += float(point_loss) * VGGT_POINT_MATCH_LOSS_WEIGHT
         if combined < best_combined:
             best_combined = combined
             best = candidate
             best_mask = mask_loss
+            best_point_match = point_match
     if best is None or best_mask is None:
         return None, unavailable_mask_candidate_report(
             fit,
@@ -1550,8 +1630,6 @@ def select_mask_candidate(
             evaluated_count=evaluated,
         )
     selected = dict(best)
-    selected["mask"] = best_mask
-    selected["combined_loss"] = best_combined
     report = dict(best_mask)
     report.update(
         status="accepted",
@@ -1562,9 +1640,14 @@ def select_mask_candidate(
         base_loss=float(best["loss"]),
         combined_loss=float(best_combined),
         loss_weight=float(MASK_CANDIDATE_LOSS_WEIGHT),
+        vggt_point_match=best_point_match,
+        vggt_point_match_loss_weight=float(VGGT_POINT_MATCH_LOSS_WEIGHT if (best_point_match or {}).get("loss") is not None else 0.0),
         selected_projected_bbox_xyxy=np.asarray(best["bbox"], dtype=np.float64).tolist(),
         fallback_reason=None,
     )
+    selected["mask"] = report
+    selected["vggt_point_match"] = best_point_match
+    selected["combined_loss"] = best_combined
     return selected, report
 
 
@@ -1578,14 +1661,54 @@ def triangle_area_2d(points: np.ndarray) -> float:
     )
 
 
-def candidate_transform(*, best_transform: np.ndarray, delta: np.ndarray, yaw: float, scale: float) -> np.ndarray:
+def candidate_transform(
+    *,
+    best_transform: np.ndarray,
+    delta: np.ndarray,
+    yaw: float,
+    scale: float,
+    pivot_local: np.ndarray | None = None,
+) -> np.ndarray:
     transform = np.asarray(best_transform, dtype=np.float64).copy()
-    center = transform[:3, 3].copy()
-    linear = transform[:3, :3] * float(scale)
+    old_linear = transform[:3, :3].copy()
+    old_translation = transform[:3, 3].copy()
+    linear = old_linear * float(scale)
     rotation = yaw_rotation_gltf(float(yaw))
-    transform[:3, :3] = rotation @ linear
-    transform[:3, 3] = center + delta
+    new_linear = rotation @ linear
+    pivot = np.asarray(pivot_local if pivot_local is not None else np.zeros(3, dtype=np.float64), dtype=np.float64)
+    if pivot.shape != (3,) or not np.isfinite(pivot).all():
+        pivot = np.zeros(3, dtype=np.float64)
+    pivot_world = old_linear @ pivot + old_translation
+    transform[:3, :3] = new_linear
+    transform[:3, 3] = pivot_world + np.asarray(delta, dtype=np.float64) - new_linear @ pivot
     return transform
+
+
+def support_plane_pivot_local(source_bounds: np.ndarray, support_target: dict[str, Any] | None) -> dict[str, Any]:
+    support_kind = normalized_support_kind((support_target or {}).get("support_kind"))
+    bounds = np.asarray(source_bounds, dtype=np.float64)
+    if bounds.shape != (2, 3) or not np.isfinite(bounds).all() or support_kind not in {"floor", "tabletop"}:
+        return {
+            "method": "normalized_center_pivot",
+            "support_kind": support_kind,
+            "pivot_source": None,
+            "pivot_local": [0.0, 0.0, 0.0],
+        }
+    pivot_source = np.array(
+        [
+            (bounds[0, 0] + bounds[1, 0]) / 2.0,
+            bounds[0, 1],
+            (bounds[0, 2] + bounds[1, 2]) / 2.0,
+        ],
+        dtype=np.float64,
+    )
+    pivot_local = transform_points(pivot_source.reshape(1, 3), normalization_transform(bounds))[0]
+    return {
+        "method": "bottom_center_support_pivot_v1",
+        "support_kind": support_kind,
+        "pivot_source": pivot_source.tolist(),
+        "pivot_local": pivot_local.tolist(),
+    }
 
 
 def support_penalty(source_bounds: np.ndarray, transform: np.ndarray, support_y: float) -> float:
@@ -1604,6 +1727,7 @@ def objective_transform_loss(
     yaw_prior_loss: Any = None,
     facing_prior_loss: Any = None,
     physical_size_prior_loss: Any = None,
+    object_avoidance_prior_loss: Any = None,
 ) -> float:
     total = float(bbox_loss) + float(support_loss) + float(scale_loss)
     if vggt_loss is not None and vggt_loss_weight > 0:
@@ -1614,6 +1738,8 @@ def objective_transform_loss(
         total += float(facing_prior_loss) * MESH_FACING_PRIOR_WEIGHT
     if physical_size_prior_loss is not None:
         total += float(physical_size_prior_loss) * REPEATED_INSTANCE_SIZE_PRIOR_WEIGHT
+    if object_avoidance_prior_loss is not None:
+        total += float(object_avoidance_prior_loss) * OBJECT_AVOIDANCE_PRIOR_WEIGHT
     return float(total)
 
 
@@ -1799,6 +1925,69 @@ def vggt_candidate_transform_loss(
     }
 
 
+def vggt_point_match_transform_loss(
+    fit: dict[str, Any],
+    *,
+    meshes: list[Any],
+    source_bounds: np.ndarray,
+    transform: np.ndarray,
+) -> dict[str, Any]:
+    if not fit.get("available"):
+        return {
+            "status": "unavailable",
+            "reason": (fit.get("report") or {}).get("reason"),
+            "loss": None,
+            "visible_to_mesh_median": None,
+            "visible_to_mesh_p90": None,
+            "mesh_sample_count": 0,
+            "visible_point_sample_count": 0,
+        }
+    visible_points = sample_point_rows(
+        np.asarray(fit["points_gltf"], dtype=np.float64),
+        VGGT_POINT_MATCH_TARGET_SAMPLE_COUNT,
+    )
+    mesh_points = sample_mesh_vertices_for_projection(meshes, VGGT_POINT_MATCH_MESH_SAMPLE_COUNT)
+    if len(visible_points) == 0 or len(mesh_points) == 0:
+        return {
+            "status": "unavailable",
+            "reason": "empty_point_sample",
+            "loss": None,
+            "visible_to_mesh_median": None,
+            "visible_to_mesh_p90": None,
+            "mesh_sample_count": int(len(mesh_points)),
+            "visible_point_sample_count": int(len(visible_points)),
+        }
+    asset_transform = np.asarray(transform, dtype=np.float64) @ normalization_transform(source_bounds)
+    mesh_points = transform_points(mesh_points, asset_transform)
+    mesh_points = mesh_points[np.isfinite(mesh_points).all(axis=1)]
+    visible_points = visible_points[np.isfinite(visible_points).all(axis=1)]
+    if len(visible_points) == 0 or len(mesh_points) == 0:
+        return {
+            "status": "unavailable",
+            "reason": "nonfinite_point_sample",
+            "loss": None,
+            "visible_to_mesh_median": None,
+            "visible_to_mesh_p90": None,
+            "mesh_sample_count": int(len(mesh_points)),
+            "visible_point_sample_count": int(len(visible_points)),
+        }
+    diagonal = max(float(fit.get("diagonal_gltf") or 0.0), 1e-6)
+    nearest = nearest_point_distances(visible_points, mesh_points)
+    median = float(np.median(nearest) / diagonal)
+    p90 = float(np.percentile(nearest, 90.0) / diagonal)
+    loss = 0.60 * median + 0.40 * p90
+    return {
+        "status": "accepted",
+        "reason": None,
+        "method": "visible_vggt_to_mesh_vertex_distance_v1",
+        "loss": float(loss),
+        "visible_to_mesh_median": median,
+        "visible_to_mesh_p90": p90,
+        "mesh_sample_count": int(len(mesh_points)),
+        "visible_point_sample_count": int(len(visible_points)),
+    }
+
+
 def vggt_candidate_fit_report(
     fit: dict[str, Any],
     *,
@@ -1892,6 +2081,128 @@ def unavailable_mask_candidate_fit(reason: str, *, mask_path: Path | None = None
             "render_size": None,
             "target_area_px": None,
         },
+    }
+
+
+def object_avoidance_prior_from_bounds(value: Any) -> dict[str, Any]:
+    bounds_items = value if isinstance(value, list) else []
+    records: list[dict[str, Any]] = []
+    for item in bounds_items:
+        bounds_value = item.get("bounds_gltf") if isinstance(item, dict) else item
+        bounds = bounds_array(bounds_value)
+        if bounds is None:
+            continue
+        records.append(
+            {
+                "bounds_gltf": bounds.tolist(),
+                "detection_id": item.get("detection_id") if isinstance(item, dict) else None,
+                "detector_label": item.get("detector_label") if isinstance(item, dict) else None,
+                "reason": item.get("reason") if isinstance(item, dict) else None,
+            }
+        )
+    return {
+        "available": bool(records),
+        "method": "occupied_bounds_avoidance_prior_v1",
+        "avoid_bounds": records,
+    }
+
+
+def object_avoidance_prior_loss(prior: dict[str, Any], source_bounds: np.ndarray, transform: np.ndarray) -> float | None:
+    if not prior.get("available"):
+        return None
+    candidate_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+    candidate_extent = np.maximum(candidate_bounds[1] - candidate_bounds[0], 1e-8)
+    candidate_volume = float(np.prod(candidate_extent))
+    candidate_footprint = float(candidate_extent[0] * candidate_extent[2])
+    losses = []
+    for item in prior.get("avoid_bounds") or []:
+        avoid_bounds = bounds_array(item.get("bounds_gltf"))
+        if avoid_bounds is None:
+            continue
+        overlap_extent = np.maximum(0.0, np.minimum(candidate_bounds[1], avoid_bounds[1]) - np.maximum(candidate_bounds[0], avoid_bounds[0]))
+        overlap_volume = float(np.prod(overlap_extent))
+        overlap_footprint = float(overlap_extent[0] * overlap_extent[2])
+        volume_ratio = overlap_volume / max(candidate_volume, 1e-8)
+        footprint_ratio = overlap_footprint / max(candidate_footprint, 1e-8)
+        if volume_ratio > 0.0 or footprint_ratio > 0.0:
+            losses.append(0.70 * volume_ratio + 0.30 * footprint_ratio)
+    if not losses:
+        return 0.0
+    return float(sum(losses))
+
+
+def object_avoidance_prior_report(
+    prior: dict[str, Any],
+    *,
+    initial: float | None,
+    optimized: float | None,
+    candidate: float | None,
+) -> dict[str, Any]:
+    if not prior.get("available"):
+        return {
+            "status": "unavailable",
+            "reason": "missing_avoid_bounds",
+            "method": "occupied_bounds_avoidance_prior_v1",
+            "avoid_count": 0,
+            "loss_weight": 0.0,
+            "initial_loss": None,
+            "optimized_loss": None,
+            "candidate_loss": None,
+        }
+    return {
+        "status": "accepted",
+        "reason": None,
+        "method": prior.get("method"),
+        "avoid_count": len(prior.get("avoid_bounds") or []),
+        "avoid_bounds": prior.get("avoid_bounds"),
+        "loss_weight": float(OBJECT_AVOIDANCE_PRIOR_WEIGHT),
+        "initial_loss": float(initial) if initial is not None else None,
+        "optimized_loss": float(optimized) if optimized is not None else None,
+        "candidate_loss": float(candidate) if candidate is not None else None,
+    }
+
+
+def translation_candidates_for_avoidance(
+    source_bounds: np.ndarray,
+    transform: np.ndarray,
+    prior: dict[str, Any],
+) -> tuple[tuple[float, ...], tuple[float, ...], dict[str, Any]]:
+    dx_values = {float(value) for value in DEFAULT_TRANSLATION_X_CANDIDATES}
+    dz_values = {float(value) for value in DEFAULT_TRANSLATION_Z_CANDIDATES}
+    added: list[dict[str, Any]] = []
+    if prior.get("available"):
+        candidate_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
+        extent = np.maximum(candidate_bounds[1] - candidate_bounds[0], 1e-8)
+        clearance = max(min(float(extent[0]), float(extent[2])) * 0.08, 0.015)
+        for item in prior.get("avoid_bounds") or []:
+            avoid_bounds = bounds_array(item.get("bounds_gltf"))
+            if avoid_bounds is None:
+                continue
+            overlap_extent = np.maximum(0.0, np.minimum(candidate_bounds[1], avoid_bounds[1]) - np.maximum(candidate_bounds[0], avoid_bounds[0]))
+            if float(overlap_extent[1]) <= 1e-8 or float(overlap_extent[0] * overlap_extent[2]) <= 1e-8:
+                continue
+            suggestions = [
+                ("x_min", float(avoid_bounds[0, 0] - candidate_bounds[1, 0] - clearance), dx_values),
+                ("x_max", float(avoid_bounds[1, 0] - candidate_bounds[0, 0] + clearance), dx_values),
+                ("z_min", float(avoid_bounds[0, 2] - candidate_bounds[1, 2] - clearance), dz_values),
+                ("z_max", float(avoid_bounds[1, 2] - candidate_bounds[0, 2] + clearance), dz_values),
+            ]
+            for axis, value, bucket in suggestions:
+                rounded = round(value, 4)
+                if np.isfinite(rounded):
+                    bucket.add(float(rounded))
+                    added.append(
+                        {
+                            "axis": axis,
+                            "delta": float(rounded),
+                            "avoid_detection_id": item.get("detection_id"),
+                            "reason": "clear_occupied_bounds_overlap",
+                        }
+                    )
+    return tuple(sorted(dx_values)), tuple(sorted(dz_values)), {
+        "method": "occupied_bounds_clearance_translation_candidates_v1",
+        "added_candidate_count": len(added),
+        "added_candidates": added,
     }
 
 
@@ -2062,6 +2373,8 @@ def mask_candidate_loss_summary(loss: dict[str, Any]) -> dict[str, Any]:
         "selected_projected_bbox_xyxy",
         "base_loss",
         "combined_loss",
+        "vggt_point_match",
+        "vggt_point_match_loss_weight",
     )
     return {key: loss.get(key) for key in keys}
 
@@ -2071,6 +2384,20 @@ def point_aabb_outside_distances(points: np.ndarray, bounds: np.ndarray) -> np.n
     upper = np.maximum(points - bounds[1], 0.0)
     offsets = np.maximum(lower, upper)
     return np.sqrt(np.sum(offsets * offsets, axis=1))
+
+
+def nearest_point_distances(source: np.ndarray, target: np.ndarray, *, chunk_size: int = 128) -> np.ndarray:
+    source = np.asarray(source, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    if len(source) == 0 or len(target) == 0:
+        return np.empty((0,), dtype=np.float64)
+    distances: list[np.ndarray] = []
+    for start in range(0, len(source), chunk_size):
+        chunk = source[start : start + chunk_size]
+        delta = chunk[:, None, :] - target[None, :, :]
+        squared = np.sum(delta * delta, axis=2)
+        distances.append(np.sqrt(np.min(squared, axis=1)))
+    return np.concatenate(distances, axis=0)
 
 
 def sample_point_rows(values: np.ndarray, max_count: int) -> np.ndarray:
@@ -2179,7 +2506,7 @@ def bbox_projection_loss(projected: np.ndarray, target: np.ndarray) -> float:
     area_loss = abs(np.log(projected_area / target_area))
     target_height = max(float(target[3] - target[1]), 1.0)
     edge_loss = (abs(float(projected[1] - target[1])) + abs(float(projected[3] - target[3]))) / target_height
-    return float((1.0 - iou) + 0.55 * center_loss + 0.15 * area_loss + 0.35 * edge_loss)
+    return float((1.0 - iou) + 0.55 * center_loss + 0.35 * area_loss + 0.45 * edge_loss)
 
 
 def projection_quality_report(
@@ -2230,6 +2557,7 @@ def projection_quality_report(
         and bottom_ratio > PROJECTION_VERTICAL_EDGE_REJECT_RATIO
         and horizontal_edge_ratio <= PROJECTION_HORIZONTAL_EDGE_REJECT_RATIO
         and center_x_ratio <= PROJECTION_CENTER_REJECT_RATIO
+        and center_y_ratio <= PROJECTION_CENTER_Y_REJECT_RATIO
         and area_ratio <= PROJECTION_OCCLUDED_BOTTOM_AREA_REJECT_RATIO
     )
     area_error_ratio = abs(area_ratio - 1.0)
