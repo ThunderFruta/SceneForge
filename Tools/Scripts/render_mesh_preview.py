@@ -34,11 +34,14 @@ def mesh_bounds(meshes: list[bpy.types.Object]) -> tuple[Vector, Vector]:
     return min_v, max_v
 
 
-def frame_camera(center: Vector, radius: float) -> None:
+def frame_camera(center: Vector, radius: float, view: str) -> None:
     camera_data = bpy.data.cameras.new("PreviewCamera")
     camera = bpy.data.objects.new("PreviewCamera", camera_data)
     bpy.context.collection.objects.link(camera)
-    camera.location = center + Vector((2.2 * radius, -3.2 * radius, 1.6 * radius))
+    if view == "top":
+        camera.location = center + Vector((0.0, 0.0, 3.2 * radius))
+    else:
+        camera.location = center + Vector((2.2 * radius, -3.2 * radius, 1.6 * radius))
     direction = center - camera.location
     camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
     camera_data.lens = 45
@@ -54,7 +57,7 @@ def add_light(center: Vector, radius: float) -> None:
     light_data.size = max(radius, 1.0)
 
 
-def render_preview(input_path: Path, output_path: Path, resolution: int) -> None:
+def render_preview(input_path: Path, output_path: Path, resolution: int, view: str) -> None:
     clear_scene()
     import_mesh(input_path)
     meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
@@ -65,7 +68,7 @@ def render_preview(input_path: Path, output_path: Path, resolution: int) -> None
     center = (min_v + max_v) / 2
     radius = max((max_v - min_v).length / 2, 0.1)
     add_light(center, radius)
-    frame_camera(center, radius)
+    frame_camera(center, radius, view)
 
     engines = {item.identifier for item in bpy.context.scene.render.bl_rna.properties["engine"].enum_items}
     bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
@@ -80,9 +83,10 @@ def main() -> None:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--resolution", type=int, default=900)
+    parser.add_argument("--view", choices=("orbit", "top"), default="orbit")
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else sys.argv[1:]
     args = parser.parse_args(argv)
-    render_preview(args.input, args.output, args.resolution)
+    render_preview(args.input, args.output, args.resolution, args.view)
 
 
 if __name__ == "__main__":

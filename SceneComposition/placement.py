@@ -22,6 +22,7 @@ from SceneComposition.composer import (
     is_tabletop_object_label,
     load_json,
     load_meshes,
+    mesh_support_contact_report,
     normalization_transform,
     placement_is_composable,
     placement_transform_to_gltf,
@@ -279,6 +280,7 @@ def fit_object_placements(
     return report
 
 
+
 def choose_support_for_object(
     *,
     placement: dict[str, Any],
@@ -424,6 +426,7 @@ def fit_placement_for_target(
     placement_orientation: str,
     object_scale_factor: float,
     optimize_placements: bool,
+    facing_target_gltf: Any = None,
 ) -> dict[str, Any]:
     detection_id = int(target.get("detection_id", 0))
     label = str(target.get("detector_label") or "object")
@@ -433,6 +436,7 @@ def fit_placement_for_target(
         "detection_id": detection_id,
         "detector_label": target.get("detector_label"),
         "mesh_path": str(mesh_path) if mesh_path else None,
+        "mask_path": target.get("mask_path"),
         "status": "failed",
         "reason": None,
         "needs_review": True,
@@ -443,6 +447,8 @@ def fit_placement_for_target(
         "transformed_bounds": None,
         "support_snap_delta": None,
         "render_to_input_optimization": None,
+        "orientation_search": None,
+        "support_contact": None,
         "losses": empty_losses(),
         "quality": {
             "projection_status": "unavailable",
@@ -483,6 +489,7 @@ def fit_placement_for_target(
             support_target=support_target,
             coordinate_contract=coordinate_contract,
             enabled=bool(optimize_placements),
+            facing_target_gltf=facing_target_gltf,
         )
         mode = str(support.get("mode") or "unknown_5dof")
         if support_target is None and mode == "unknown_5dof":
@@ -496,6 +503,7 @@ def fit_placement_for_target(
         transform = np.asarray(optimization["transform"], dtype=np.float64)
         transformed_bounds = transformed_bounds_from_source_bounds(source_bounds, transform)
         support_contact_loss = support_contact_distance(source_bounds, transform, support_y)
+        support_contact = mesh_support_contact_report(mesh_path, transform, support.get("support_kind"))
         projection_quality = optimization["report"].get("projection_quality") or projection_quality_report(None, None)
         footprint = support_footprint_report(transformed_bounds, support)
         penetration = support_penetration_report(transformed_bounds, support)
@@ -542,6 +550,8 @@ def fit_placement_for_target(
             transformed_bounds=transformed_bounds.tolist(),
             support_snap_delta=float(support_snap_delta),
             render_to_input_optimization=optimization["report"],
+            orientation_search=optimization["report"].get("orientation_search"),
+            support_contact=support_contact,
             losses=losses,
             quality={
                 "projection_status": projection_quality.get("status"),
@@ -550,6 +560,7 @@ def fit_placement_for_target(
                 "silhouette_proxy": silhouette,
                 "silhouette_render": silhouette_render,
                 "vggt_points": vggt_points,
+                "support_contact": support_contact,
                 "support_footprint": footprint,
                 "support_penetration": penetration,
                 "warnings": placement_warnings(
@@ -924,6 +935,12 @@ def optimize_unknown_5dof_transform(
         "yaw_delta_radians": 0.0,
         "uniform_scale_delta": 1.0,
         "candidate_count": 0,
+        "orientation_search": {
+            "yaw_candidates": [],
+            "selected_yaw": None,
+            "loss_breakdown": {},
+            "fallback_reason": "search_not_run",
+        },
         "projection_quality": projection_quality_report(initial_bbox, target_bbox, accepted=True),
     }
     if not enabled or target_bbox is None or initial_bbox is None:
@@ -971,6 +988,21 @@ def optimize_unknown_5dof_transform(
         yaw_delta_radians=float(best_yaw),
         uniform_scale_delta=float(best_scale),
         candidate_count=int(candidate_count),
+        orientation_search={
+            "yaw_candidates": [-0.35, 0.0, 0.35],
+            "selected_yaw": float(best_yaw),
+            "loss_breakdown": {
+                "initial_total": float(initial_loss),
+                "optimized_total": float(best_loss),
+                "bbox_projection": float(best_loss),
+                "support_contact": 0.0,
+                "scale_prior": float(scale_prior_loss(best_scale)),
+                "vggt_points": None,
+                "candidate_count": int(candidate_count),
+                "accepted_candidate_count": int(candidate_count),
+            },
+            "fallback_reason": None,
+        },
         projection_quality=quality,
     )
     return {"transform": best_transform, "report": base_report}
@@ -1083,6 +1115,7 @@ def placement_record_from_target(target: dict[str, Any]) -> dict[str, Any]:
         "detection_id": target.get("detection_id"),
         "detector_label": target.get("detector_label"),
         "bbox_xyxy": target.get("bbox_xyxy_px"),
+        "mask_path": target.get("mask_path"),
         "box_type": geometry.get("box_type"),
         "center_xyz": geometry.get("center_xyz"),
         "extent_xyz": geometry.get("extent_xyz"),

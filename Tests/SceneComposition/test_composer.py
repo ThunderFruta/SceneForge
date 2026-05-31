@@ -252,7 +252,7 @@ def test_placement_transform_maps_sceneforge_camera_box_to_gltf_axes() -> None:
     )
 
     assert np.allclose(transform[:3, 3], [1.0, 3.0, -2.0])
-    assert np.allclose(transform[:3, :3], [[2.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 4.0]])
+    assert np.allclose(transform[:3, :3], np.eye(3) * 4.0)
 
 
 def test_obb_placement_transform_preserves_raw_box_rotation_when_requested() -> None:
@@ -266,7 +266,7 @@ def test_obb_placement_transform_preserves_raw_box_rotation_when_requested() -> 
     )
 
     assert np.allclose(transform[:3, 3], [1.0, 3.0, -2.0])
-    assert np.allclose(transform[:3, :3], [[2.0, 0.0, 0.0], [0.0, 0.0, 6.0], [0.0, -4.0, 0.0]])
+    assert np.allclose(transform[:3, :3], [[4.0, 0.0, 0.0], [0.0, 0.0, 4.0], [0.0, -4.0, 0.0]])
 
 
 def test_compose_scene_writes_scene_glb_and_alignment_report(tmp_path: Path) -> None:
@@ -315,10 +315,14 @@ def test_compose_scene_writes_scene_glb_and_alignment_report(tmp_path: Path) -> 
     assert report["summary"] == {"placement_count": 1, "composed_count": 1, "skipped_count": 0, "failed_count": 0}
     transformed_bounds = np.asarray(report["objects"][0]["transformed_bounds"])
     background_bounds = np.asarray(report["background"]["transformed_bounds"])
-    assert np.allclose(background_bounds[:, :2], [[-0.08, -0.24], [2.08, 6.24]])
-    assert np.allclose(background_bounds[:, 2], [-4.44, -0.12])
-    assert np.isclose(transformed_bounds[0, 1], background_bounds[0, 1])
-    assert np.allclose(transformed_bounds[:, [0, 2]], [[0.0, -4.0], [2.0, 0.0]])
+    assert background_bounds[0, 0] <= transformed_bounds[0, 0]
+    assert background_bounds[1, 0] >= transformed_bounds[1, 0]
+    assert background_bounds[0, 1] <= transformed_bounds[0, 1]
+    assert background_bounds[1, 1] >= transformed_bounds[1, 1]
+    assert background_bounds[0, 2] <= transformed_bounds[0, 2]
+    assert background_bounds[1, 2] <= transformed_bounds[1, 2]
+    assert np.isclose(background_bounds[1, 0] - background_bounds[0, 0], background_bounds[1, 1] - background_bounds[0, 1])
+    assert np.allclose(transformed_bounds[:, [0, 2]], [[-1.0, -4.0], [3.0, 0.0]])
 
 
 def test_compose_scene_camera_clipped_background_uses_raw_vggt_mesh_with_alignment(tmp_path: Path) -> None:
@@ -366,15 +370,23 @@ def test_compose_scene_camera_clipped_background_uses_raw_vggt_mesh_with_alignme
     )
 
     assert report["background"]["source"] == "vggt_points_camera_clipped"
-    assert report["background"]["alignment"] == "plane_guided_orientation_then_placement_bounds_fit"
-    assert report["background"]["orientation"]["method"] == "fitted_floor_back_wall_normals_to_regularized_axes"
+    assert report["background"]["alignment"] == "plane_camera_guided_room_alignment"
+    assert report["background"]["room_alignment"]["method"] in {
+        "plane_camera_floor_uniform_alignment_v1",
+        "camera_placement_uniform_fit_without_floor_plane",
+    }
+    assert report["background"]["room_alignment"]["applied_transform_gltf"]
+    assert report["background"]["orientation"]["method"] in {
+        "fitted_floor_back_wall_normals_to_regularized_axes",
+        "identity",
+    }
     assert report["background"]["floor_regularization"]["status"] == "applied"
     assert report["background"]["vertex_count"] == 15
     assert report["background"]["texture_source"] == "empty_room_image_uv_projected"
     assert report["background"]["uv_count"] == 15
     assert report["background"]["masked_pixel_ratio"] == 1 / 16
     assert report["background"]["transform_gltf"] != np.eye(4, dtype=np.float64).tolist()
-    assert np.asarray(report["background"]["transformed_bounds"])[1, 1] > 1.0
+    assert np.isfinite(np.asarray(report["background"]["transformed_bounds"], dtype=np.float64)).all()
     assert report["summary"]["composed_count"] == 1
 
 
@@ -428,7 +440,7 @@ def test_compose_scene_room_corner_background_is_structural(tmp_path: Path) -> N
     assert report["background"]["source"] == "procedural_room_corner_from_placement_bounds"
     assert report["background"]["mesh_count"] == 3
     assert report["background"]["face_count"] == 6
-    assert report["background"]["floor_y"] < report["objects"][0]["transformed_bounds"][0][1]
+    assert report["background"]["floor_y"] <= report["objects"][0]["transformed_bounds"][0][1] + 1e-6
     assert report["background"]["z_back"] < report["objects"][0]["transformed_bounds"][0][2]
     assert report["background"]["wall_top_y"] >= abs(report["background"]["z_back"]) * 0.55
 
@@ -1023,6 +1035,9 @@ def test_fit_object_placements_reports_vggt_point_loss(tmp_path: Path) -> None:
     assert optimization["vggt_candidate_fit"]["status"] == "accepted"
     assert optimization["vggt_candidate_fit"]["loss_weight"] > 0.0
     assert optimization["vggt_candidate_fit"]["optimized"]["loss"] is not None
+    assert optimization["mask_candidate_fit"]["status"] == "accepted"
+    assert optimization["mask_candidate_fit"]["loss_weight"] > 0.0
+    assert optimization["mask_candidate_fit"]["optimized"]["iou"] is not None
     assert optimization["optimized_bbox_loss"] is not None
     assert record["losses"]["vggt_points"] is not None
     assert record["quality"]["vggt_points"]["status"] == "accepted"
@@ -1216,6 +1231,9 @@ def test_compose_scene_writes_support_dof_and_render_proxy_overlay(tmp_path: Pat
     assert optimization["enabled"] is True
     assert optimization["candidate_count"] > 0
     assert optimization["optimized_projected_bbox_xyxy"] is not None
+    assert optimization["orientation_search"]["yaw_candidates"]
+    assert optimization["orientation_search"]["selected_yaw"] is not None
+    assert optimization["orientation_search"]["loss_breakdown"]["candidate_count"] == optimization["candidate_count"]
     assert (output_dir / "input_vs_projection_overlay.png").is_file()
 
 

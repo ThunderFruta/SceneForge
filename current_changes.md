@@ -4,9 +4,13 @@ This file tracks notable project changes while SceneForge is still small.
 
 ## 2026-05-30
 
+- Removed the later scene-specific composition fixes from active placement/composition: chair labels no longer get special yaw or seat-group normalization, floor snapping no longer uses table-only `stable_floor`, and VGGT room background reports now include plane/camera-informed `room_alignment` diagnostics.
+- Added `Docs/remove_scene_composition_quick_fixes_design.md` to define the cleanup plan for removing chair/table/room-specific composition hacks in favor of object-agnostic yaw search, generic stable support-contact snapping, and plane/camera-informed VGGT room alignment.
+- Changed mesh normalization to preserve source aspect ratio with uniform max-extent normalization, and changed room-boundary clamping to report recommended X/Z movement without applying it after placement.
+- Changed object placement transforms to use uniform scale instead of per-axis fit-box scale, preventing any reconstructed mesh from being stretched by object placement or composition.
 - Changed raw VGGT background coloring from vertex-color-only sampling to real UV projection of `empty_room.png` as a GLB texture material, keeping sampled vertex colors as fallback metadata.
 - Added floor regularization for raw empty-room VGGT background meshes so the lower floor band is flattened to the fitted VGGT floor after orientation/scale, preventing wavy background floor geometry from cutting through furniture legs.
-- Changed floor-supported object snapping to use the actual mesh bottom extent instead of a stable-contact quantile, preventing furniture legs and table bases from penetrating the VGGT floor.
+- Changed floor-supported object snapping to use the generic stable-contact estimator, falling back to raw bottom only when no stable footprint evidence is available.
 - Added composition-time room-boundary clamping for explicit placements so objects are translated in X/Z into the transformed VGGT room mesh bounds after snapping to the VGGT floor/support plane.
 - Changed raw VGGT room-background scaling to fit a room-sized visual envelope instead of tightly matching object bounds, adding width/depth padding and a minimum wall height while keeping the floor aligned to object supports.
 - Added plane-guided orientation correction for raw empty-room VGGT background meshes: fitted floor and back-wall normals are rotated to the regularized SceneForge room axes before scale/translation to placement bounds.
@@ -16,7 +20,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Disabled object-mask clipping for the default empty-room VGGT visual background because the AI-generated empty-room image already fills removed-object regions; `compose-scene --clip-background-masks` remains available for debugging source-image backgrounds.
 - Changed the `camera-clipped` VGGT visual background to align and scale the empty-room VGGT mesh to the placed-object scene bounds before composition, instead of inserting raw VGGT camera-space points with an identity transform.
 - Changed `compose-scene` defaults to use the empty-room VGGT mesh with `background_fit=camera-clipped`, leaving fitted/textured planes as an explicit debug/background option while still using plane detections for support placement.
-- Changed tabletop prop snapping to use the mesh bottom extent instead of a stable-contact quantile, preventing small tabletop objects such as lamps, vases, flowers, and plants from sinking into table meshes.
+- Changed tabletop prop snapping to share the same generic stable-contact estimator as floor support, with raw-bottom fallback only when stable footprint evidence is unavailable.
 - Changed `compose-scene` to include review-marked placements by default, with `--no-include-review` available for strict accepted-only scene composition.
 - Added design-doc empty-room artifact aliases `foreground_removal_mask.png` and `empty_room_edit_input.png` alongside the existing OpenAI-specific filenames, with metadata paths for both contracts.
 - Added an optional `sam3d-objects` object reconstruction backend scaffold for `reconstruct-objects`, preparing per-object image/mask inputs and backend-neutral metadata while requiring an explicit external SAM 3D Objects command before any heavyweight model execution.
@@ -31,6 +35,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Removed hardcoded chair scale, spacing, and pose overrides plus their no-op report fields from scene composition; also removed the automatic table-label floor-contact mesh cleanup so object sizing and placement come from support, projection, mask, and VGGT evidence instead of per-object fixes.
 - Added a generic visible-VGGT-point consistency term to the support-plane placement objective so candidate scale/translation is scored against object point evidence without object-name-specific rules.
 - Added a large-image-target scale floor to the generic support-plane optimizer so near-camera objects are not allowed to use extreme shrink candidates when their target box covers a large fraction of the source image.
+- Added generic evidence-derived scale candidates and SAM-mask silhouette re-ranking for support-plane placement, so size and yaw are selected from projected mesh fit plus VGGT/support evidence instead of coarse bbox-only acceptance.
 - Added projected empty-room image textures to procedural room-corner planes so composed GLBs can carry textured floor and wall planes instead of flat fallback colors.
 
 ## 2026-05-29
@@ -200,6 +205,7 @@ SceneForge is shifting to the staged SAM3/GroundingDINO-SAM3 object proposal, ob
 The primitive-proxy enrichment/fitting path is retired from public execution. Its old public commands have been removed from the active CLI and should not produce `object_enrichment.json`, `primitive_fits.json`, `fit_overlay.png`, or `fitted_scene.blend` as active deliverables. Reusable implementation ideas are preserved in git history or a local ignored archive while new work targets empty-room VGGT planes, object OBB/contact placement, mesh snapping, and explicit alignment reports.
 
 Use `BEFORE_README.md` for the original project idea, then update these docs when the new direction becomes more concrete.
+
 
 ## 2026-05-23
 
