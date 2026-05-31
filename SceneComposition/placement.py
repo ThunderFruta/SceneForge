@@ -24,6 +24,7 @@ from SceneComposition.composer import (
     load_meshes,
     mesh_support_contact_report,
     normalization_transform,
+    object_pair_overlap_warning,
     placement_is_composable,
     placement_transform_to_gltf,
     projection_quality_report,
@@ -2086,22 +2087,9 @@ def annotate_pairwise_collision_metrics(objects: list[dict[str, Any]]) -> None:
             right_bounds = bounds_array(right.get("transformed_bounds"))
             if right_bounds is None:
                 continue
-            overlap_min = np.maximum(left_bounds[0], right_bounds[0])
-            overlap_max = np.minimum(left_bounds[1], right_bounds[1])
-            overlap_extent = np.maximum(0.0, overlap_max - overlap_min)
-            overlap_volume = float(np.prod(overlap_extent))
-            if overlap_volume <= 1e-8:
+            warning = object_pair_overlap_warning(left, right, left_bounds, right_bounds)
+            if warning is None:
                 continue
-            warning = {
-                "detection_ids": [left.get("detection_id"), right.get("detection_id")],
-                "labels": [left.get("detector_label"), right.get("detector_label")],
-                "overlap_extent_gltf": [float(value) for value in overlap_extent],
-                "overlap_volume_gltf": overlap_volume,
-                "tabletop_pair": bool(
-                    is_tabletop_object_label(str(left.get("detector_label") or ""))
-                    or is_tabletop_object_label(str(right.get("detector_label") or ""))
-                ),
-            }
             overlap_warnings[int(left["detection_id"])].append(warning)
             overlap_warnings[int(right["detection_id"])].append(warning)
     for item in objects:

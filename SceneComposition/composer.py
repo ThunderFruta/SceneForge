@@ -49,6 +49,19 @@ PROJECTION_TRANSLATION_STEP_RATIO = 0.16
 PROJECTION_TRANSLATION_MIN_STEP = 0.04
 PROJECTION_TRANSLATION_MAX_STEP = 0.12
 PROJECTION_TRANSLATION_NEIGHBORS = (1.0,)
+SUPPORT_FOOTPRINT_OCCUPANCY_HEIGHT_RATIO = 0.35
+SUPPORT_FOOTPRINT_OCCUPANCY_SAMPLE_LIMIT = 20000
+SUPPORT_FOOTPRINT_OCCUPANCY_MIN_POINTS = 16
+SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_CELLS = 3
+SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_RATIO = 0.03
+SUPPORT_FOOTPRINT_OCCUPANCY_MIN_CELL_SIZE = 0.015
+SUPPORT_FOOTPRINT_OCCUPANCY_GRID_DIVISIONS = 64
+MESH_SURFACE_OCCUPANCY_SAMPLE_LIMIT = 20000
+MESH_SURFACE_OCCUPANCY_MIN_POINTS = 16
+MESH_SURFACE_OCCUPANCY_MIN_SHARED_CELLS = 3
+MESH_SURFACE_OCCUPANCY_MIN_SHARED_RATIO = 0.02
+MESH_SURFACE_OCCUPANCY_MIN_CELL_SIZE = 0.01
+MESH_SURFACE_OCCUPANCY_GRID_DIVISIONS = 48
 DEFAULT_YAW_CANDIDATES = (
     -float(np.pi),
     -float(np.pi) * 0.75,
@@ -3009,25 +3022,281 @@ def object_overlap_warnings_report(records: list[dict[str, Any]]) -> list[dict[s
             right_bounds = bounds_array(right.get("transformed_bounds"))
             if right_bounds is None:
                 continue
-            overlap_min = np.maximum(left_bounds[0], right_bounds[0])
-            overlap_max = np.minimum(left_bounds[1], right_bounds[1])
-            overlap_extent = np.maximum(0.0, overlap_max - overlap_min)
-            overlap_volume = float(np.prod(overlap_extent))
-            if overlap_volume <= 1e-8:
-                continue
-            warnings.append(
-                {
-                    "detection_ids": [left.get("detection_id"), right.get("detection_id")],
-                    "labels": [left.get("detector_label"), right.get("detector_label")],
-                    "overlap_extent_gltf": [float(value) for value in overlap_extent],
-                    "overlap_volume_gltf": overlap_volume,
-                    "tabletop_pair": bool(
-                        is_tabletop_object_label(str(left.get("detector_label") or ""))
-                        or is_tabletop_object_label(str(right.get("detector_label") or ""))
-                    ),
-                }
-            )
+            warning = object_pair_overlap_warning(left, right, left_bounds, right_bounds)
+            if warning is not None:
+                warnings.append(warning)
     return warnings
+
+
+def object_pair_overlap_warning(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    left_bounds: np.ndarray,
+    right_bounds: np.ndarray,
+) -> dict[str, Any] | None:
+    overlap_min = np.maximum(left_bounds[0], right_bounds[0])
+    overlap_max = np.minimum(left_bounds[1], right_bounds[1])
+    overlap_extent = np.maximum(0.0, overlap_max - overlap_min)
+    overlap_volume = float(np.prod(overlap_extent))
+    if overlap_volume <= 1e-8:
+        return None
+    if direct_support_pair(left, right):
+        return None
+
+    footprint_overlap = support_footprint_occupancy_overlap_report(left, right, left_bounds, right_bounds)
+    if footprint_overlap.get("status") == "clear":
+        return None
+    surface_overlap = None
+    if footprint_overlap.get("status") == "unavailable":
+        surface_overlap = mesh_surface_occupancy_overlap_report(left, right, left_bounds, right_bounds)
+        if surface_overlap.get("status") == "clear":
+            return None
+
+    return {
+        "detection_ids": [left.get("detection_id"), right.get("detection_id")],
+        "labels": [left.get("detector_label"), right.get("detector_label")],
+        "overlap_extent_gltf": [float(value) for value in overlap_extent],
+        "overlap_volume_gltf": overlap_volume,
+        "overlap_method": (
+            "support_footprint_occupancy"
+            if footprint_overlap.get("status") == "warning"
+            else "mesh_surface_occupancy"
+            if surface_overlap is not None and surface_overlap.get("status") == "warning"
+            else "aabb_volume"
+        ),
+        "support_footprint_overlap": footprint_overlap,
+        "mesh_surface_overlap": surface_overlap,
+        "tabletop_pair": bool(
+            is_tabletop_object_label(str(left.get("detector_label") or ""))
+            or is_tabletop_object_label(str(right.get("detector_label") or ""))
+        ),
+    }
+
+
+def support_footprint_occupancy_overlap_report(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    left_bounds: np.ndarray,
+    right_bounds: np.ndarray,
+) -> dict[str, Any]:
+    left_support = record_support_kind(left)
+    right_support = record_support_kind(right)
+    if left_support != "floor" or right_support != "floor":
+        return {
+            "status": "unavailable",
+            "reason": "non_floor_support_pair",
+            "method": "support_footprint_occupancy_v1",
+            "left_support_kind": left_support,
+            "right_support_kind": right_support,
+        }
+
+    pair_extent = np.maximum(np.maximum(left_bounds[1], right_bounds[1]) - np.minimum(left_bounds[0], right_bounds[0]), 1e-8)
+    cell_size = max(
+        float(max(pair_extent[0], pair_extent[2])) / SUPPORT_FOOTPRINT_OCCUPANCY_GRID_DIVISIONS,
+        SUPPORT_FOOTPRINT_OCCUPANCY_MIN_CELL_SIZE,
+    )
+    left_cells, left_report = support_footprint_occupancy_cells(left, left_bounds, cell_size)
+    right_cells, right_report = support_footprint_occupancy_cells(right, right_bounds, cell_size)
+    base = {
+        "method": "support_footprint_occupancy_v1",
+        "cell_size_gltf": float(cell_size),
+        "height_ratio": float(SUPPORT_FOOTPRINT_OCCUPANCY_HEIGHT_RATIO),
+        "left": left_report,
+        "right": right_report,
+    }
+    if left_cells is None or right_cells is None:
+        return {**base, "status": "unavailable", "reason": "missing_footprint_occupancy"}
+
+    shared_cells = left_cells.intersection(right_cells)
+    reference_cells = max(min(len(left_cells), len(right_cells)), 1)
+    shared_ratio = float(len(shared_cells) / reference_cells)
+    status = (
+        "warning"
+        if len(shared_cells) >= SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_CELLS
+        and shared_ratio >= SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_RATIO
+        else "clear"
+    )
+    return {
+        **base,
+        "status": status,
+        "reason": "support_footprint_overlap" if status == "warning" else "aabb_overlap_without_support_footprint_overlap",
+        "shared_cell_count": len(shared_cells),
+        "shared_cell_ratio": shared_ratio,
+        "min_shared_cells": SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_CELLS,
+        "min_shared_ratio": SUPPORT_FOOTPRINT_OCCUPANCY_MIN_SHARED_RATIO,
+    }
+
+
+def support_footprint_occupancy_cells(
+    record: dict[str, Any],
+    bounds: np.ndarray,
+    cell_size: float,
+) -> tuple[set[tuple[int, int]] | None, dict[str, Any]]:
+    points = transformed_record_vertices(record)
+    if points is None:
+        return None, {"status": "unavailable", "reason": "missing_transformed_vertices"}
+    height = max(float(bounds[1, 1] - bounds[0, 1]), 1e-8)
+    y_max = float(bounds[0, 1] + height * SUPPORT_FOOTPRINT_OCCUPANCY_HEIGHT_RATIO)
+    band = points[points[:, 1] <= y_max]
+    if len(band) < SUPPORT_FOOTPRINT_OCCUPANCY_MIN_POINTS:
+        return None, {
+            "status": "unavailable",
+            "reason": "insufficient_footprint_points",
+            "point_count": int(len(band)),
+            "min_point_count": int(SUPPORT_FOOTPRINT_OCCUPANCY_MIN_POINTS),
+        }
+    keys = np.floor(band[:, [0, 2]] / float(cell_size)).astype(np.int64)
+    cells = {tuple(int(value) for value in key) for key in keys}
+    return cells, {
+        "status": "accepted",
+        "point_count": int(len(band)),
+        "cell_count": int(len(cells)),
+        "y_max_gltf": y_max,
+    }
+
+
+def mesh_surface_occupancy_overlap_report(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    left_bounds: np.ndarray,
+    right_bounds: np.ndarray,
+) -> dict[str, Any]:
+    overlap_min = np.maximum(left_bounds[0], right_bounds[0])
+    overlap_max = np.minimum(left_bounds[1], right_bounds[1])
+    overlap_extent = np.maximum(0.0, overlap_max - overlap_min)
+    if float(np.prod(overlap_extent)) <= 1e-8:
+        return {
+            "status": "clear",
+            "reason": "no_aabb_overlap",
+            "method": "mesh_surface_occupancy_v1",
+        }
+    cell_size = max(
+        float(max(overlap_extent)) / MESH_SURFACE_OCCUPANCY_GRID_DIVISIONS,
+        MESH_SURFACE_OCCUPANCY_MIN_CELL_SIZE,
+    )
+    left_cells, left_report = mesh_surface_occupancy_cells(left, overlap_min, overlap_max, cell_size)
+    right_cells, right_report = mesh_surface_occupancy_cells(right, overlap_min, overlap_max, cell_size)
+    base = {
+        "method": "mesh_surface_occupancy_v1",
+        "cell_size_gltf": float(cell_size),
+        "left": left_report,
+        "right": right_report,
+    }
+    if left_cells is None or right_cells is None:
+        if left_report.get("reason") == "no_points_in_overlap" or right_report.get("reason") == "no_points_in_overlap":
+            return {**base, "status": "clear", "reason": "no_mesh_surface_points_in_overlap"}
+        return {**base, "status": "unavailable", "reason": "missing_surface_occupancy"}
+    shared_cells = left_cells.intersection(right_cells)
+    reference_cells = max(min(len(left_cells), len(right_cells)), 1)
+    shared_ratio = float(len(shared_cells) / reference_cells)
+    status = (
+        "warning"
+        if len(shared_cells) >= MESH_SURFACE_OCCUPANCY_MIN_SHARED_CELLS
+        and shared_ratio >= MESH_SURFACE_OCCUPANCY_MIN_SHARED_RATIO
+        else "clear"
+    )
+    return {
+        **base,
+        "status": status,
+        "reason": "mesh_surface_overlap" if status == "warning" else "aabb_overlap_without_mesh_surface_overlap",
+        "shared_cell_count": len(shared_cells),
+        "shared_cell_ratio": shared_ratio,
+        "min_shared_cells": MESH_SURFACE_OCCUPANCY_MIN_SHARED_CELLS,
+        "min_shared_ratio": MESH_SURFACE_OCCUPANCY_MIN_SHARED_RATIO,
+    }
+
+
+def mesh_surface_occupancy_cells(
+    record: dict[str, Any],
+    overlap_min: np.ndarray,
+    overlap_max: np.ndarray,
+    cell_size: float,
+) -> tuple[set[tuple[int, int, int]] | None, dict[str, Any]]:
+    points = transformed_record_vertices(record, sample_limit=MESH_SURFACE_OCCUPANCY_SAMPLE_LIMIT)
+    if points is None:
+        return None, {"status": "unavailable", "reason": "missing_transformed_vertices"}
+    margin = float(cell_size)
+    in_overlap = np.all((points >= overlap_min - margin) & (points <= overlap_max + margin), axis=1)
+    clipped = points[in_overlap]
+    if len(clipped) == 0:
+        return None, {"status": "clear", "reason": "no_points_in_overlap", "point_count": 0}
+    if len(clipped) < MESH_SURFACE_OCCUPANCY_MIN_POINTS:
+        return None, {
+            "status": "unavailable",
+            "reason": "insufficient_overlap_points",
+            "point_count": int(len(clipped)),
+            "min_point_count": int(MESH_SURFACE_OCCUPANCY_MIN_POINTS),
+        }
+    keys = np.floor(clipped / float(cell_size)).astype(np.int64)
+    cells = {tuple(int(value) for value in key) for key in keys}
+    return cells, {
+        "status": "accepted",
+        "point_count": int(len(clipped)),
+        "cell_count": int(len(cells)),
+    }
+
+
+def transformed_record_vertices(record: dict[str, Any], *, sample_limit: int = SUPPORT_FOOTPRINT_OCCUPANCY_SAMPLE_LIMIT) -> np.ndarray | None:
+    mesh_path = record_mesh_path(record)
+    transform = matrix_array(record.get("transform_gltf"))
+    if mesh_path is None or transform is None:
+        return None
+    try:
+        meshes = load_meshes(mesh_path)
+        source_bounds = bounds_array(record.get("source_bounds"))
+        if source_bounds is None:
+            source_bounds = combined_bounds(meshes)
+        points = transformed_mesh_vertices(meshes, source_bounds, transform)
+    except Exception:
+        return None
+    if len(points) > sample_limit:
+        stride = int(np.ceil(len(points) / sample_limit))
+        points = points[::stride]
+    return np.asarray(points, dtype=np.float64)
+
+
+def record_mesh_path(record: dict[str, Any]) -> Path | None:
+    value = record.get("object_mesh") or record.get("mesh_path")
+    if not value:
+        return None
+    path = Path(str(value))
+    return path if path.is_file() else None
+
+
+def record_support_kind(record: dict[str, Any]) -> str | None:
+    support = record.get("support") or {}
+    return normalized_support_kind(
+        record.get("support_kind")
+        or support.get("support_kind")
+        or support.get("mode")
+        or ((record.get("placement_quality") or {}).get("support_kind"))
+    )
+
+
+def direct_support_pair(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    left_id = record_detection_id(left)
+    right_id = record_detection_id(right)
+    if left_id is None or right_id is None:
+        return False
+    return record_support_detection_id(left) == right_id or record_support_detection_id(right) == left_id
+
+
+def record_detection_id(record: dict[str, Any]) -> int | None:
+    try:
+        return int(record.get("detection_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def record_support_detection_id(record: dict[str, Any]) -> int | None:
+    support = record.get("support") or {}
+    value = record.get("support_detection_id")
+    if value is None:
+        value = support.get("support_detection_id")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def object_support_targets(
@@ -3189,6 +3458,16 @@ def bounds_array(value: Any) -> np.ndarray | None:
     if np.any(bounds[1] <= bounds[0]):
         return None
     return bounds
+
+
+def matrix_array(value: Any) -> np.ndarray | None:
+    try:
+        matrix = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError):
+        return None
+    if matrix.shape != (4, 4) or not np.isfinite(matrix).all():
+        return None
+    return matrix
 
 
 def bbox_overlap_area(a: np.ndarray, b: np.ndarray) -> float:

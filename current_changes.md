@@ -47,6 +47,7 @@ This file tracks notable project changes while SceneForge is still small.
 - Added projected empty-room image textures to procedural room-corner planes so composed GLBs can carry textured floor and wall planes instead of flat fallback colors.
 - Added a generic projected-box residual refinement report for support-plane placement, using a local planar translation Jacobian after candidate selection to test small evidence-driven X/Z corrections without object-label-specific pose or scale patches.
 - Gated floor-occupancy refits by projection and total objective quality as well as overlap reduction, so AABB collision cleanup cannot discard stronger image-scale/pose evidence.
+- Changed object-overlap reporting to use generic support-footprint and mesh-surface occupancy checks, and to ignore direct support-object pairs, so table overhangs and tabletop props are not treated as hard collisions from AABB overlap alone.
 
 ## 2026-05-29
 

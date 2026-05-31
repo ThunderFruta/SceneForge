@@ -13,6 +13,7 @@ from SceneComposition.composer import (
     candidate_transform,
     facing_prior_loss,
     mesh_facing_prior_from_target,
+    object_pair_overlap_warning,
     physical_size_prior_from_target,
     physical_size_prior_loss,
     placement_transform_to_gltf,
@@ -1442,6 +1443,28 @@ def test_compose_scene_reports_object_overlap_warnings(tmp_path: Path) -> None:
     warning = report["object_overlap_warnings"][0]
     assert warning["detection_ids"] == [1, 2]
     assert warning["overlap_volume_gltf"] > 0.0
+
+
+def test_object_overlap_ignores_direct_support_pair_without_label() -> None:
+    support_bounds = np.asarray([[-0.5, 0.0, -0.5], [0.5, 0.2, 0.5]], dtype=np.float64)
+    prop_bounds = np.asarray([[-0.1, 0.15, -0.1], [0.1, 0.4, 0.1]], dtype=np.float64)
+    support = {
+        "detection_id": 3,
+        "detector_label": "surface",
+        "transformed_bounds": support_bounds.tolist(),
+        "support_kind": "floor",
+    }
+    prop = {
+        "detection_id": 4,
+        "detector_label": "object",
+        "transformed_bounds": prop_bounds.tolist(),
+        "support_kind": "tabletop",
+        "support_detection_id": 3,
+    }
+
+    warning = object_pair_overlap_warning(prop, support, prop_bounds, support_bounds)
+
+    assert warning is None
 
 
 def test_compose_scene_can_keep_raw_background_transform(tmp_path: Path) -> None:
